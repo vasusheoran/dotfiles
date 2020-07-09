@@ -38,11 +38,11 @@ sudo apt-get update && sudo apt-get install -y \
     tmux \
     curl \
     golang-go \
+    ripgrep \
     # vim-gtk \
     # gpg \
     # rsync \
     # unzip \
-    # ripgrep \
     # pass \
 
 # Install zsh
@@ -79,49 +79,28 @@ case `zsh --version  2>&1 >/dev/null; echo $?` in
 esac
 
 # Setting up git
-echo "Setting up git config"
-git config --global user.name "Vasu Sheoran"
-git config --global user.email "gokusayon@gmail.com"
-git config --global core.autocrlf false
-git config --list --show-origin
+echo "Setting up config"
+git clone https://github.com/vasusheoran/dotfiles.git
 
-# Install Go Lang
-echo "Installing Go"
-case `go version 2>&1 >/dev/null; echo $?` in
-    0)
-        # git found
-        echo "go found. Skipping Installation.."
-        ;;
-    *)
-        # code if an error occurred
-        echo "Installing go"
-        sudo apt install -y golang-go
-        ;;
-esac
+cp ~/dotfiles/shell/.gitconfig.user ~/.gitconfig.user
+#   && ln -s ~/dotfiles/.tmux.conf ~/.tmux.conf \
+# git config --global core.autocrlf false
+# git config --list --show-origin
 
-# Export Go path
-String="GOPATH"
-FILE_LIST='./.zshrc ./.profile'
+# Install FZF
+git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && ~/.fzf/install
 
-cd ~
-for i in $FILE_LIST; do
-    case `grep -Fq "$String" "$i" >/dev/null; echo $?` in
-        0)
-            # code if found
-            echo "Go path already exists in $i. Skipping .."
-            ;;
-        1)
-            # code if not found
-            echo "Appending GO env variable to $i"
-            echo "\n" >> "$i"
-            echo "# Go variables" >> "$i"
-            echo "export GOPATH=$HOME/go" >> "$i"
-            echo "export PATH=\$PATH:/usr/local/go/bin:\$GOPATH/bin" >> "$i"
-            ;;
-        *)
-            # code if an error occurred
-            echo "Error finding go path in $i. Please add manually"
-            ;;
-    esac
-done
+# Install AWS CLI v2.
+# curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+#   && unzip awscliv2.zip && sudo ./aws/Install && rm awscliv2.zip
 
+  
+ln -s ~/dotfiles/shell/.aliasrc ~/..aliasrc \
+  && ln -s ~/dotfiles/shell/.bashrc ~/.bashrc \
+  && ln -s ~/dotfiles/shell/.profile ~/.profile \
+  && ln -s ~/dotfiles/shell/.p10k.zsh ~/.p10k.zsh \
+  && ln -s ~/dotfiles/shell/.zshrc ~/.zshrc \
+#   && ln -s ~/dotfiles/shell/.fsh.zsh ~/.fsh.zsh \
+  && sudo ln -s ~/dotfiles/etc/.wslconf /etc/wsl.conf
+
+[[ ! -f ~/.zshrc ]] || source ~/.zshrc

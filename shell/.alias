@@ -1,5 +1,4 @@
 # fzf
-export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
 alias -g Z='| fzf' # change Z to whatever you like
 
 # Export conifguration
@@ -10,7 +9,7 @@ function export_config {
         else
             location="/home/vasu/github.com/gokusayon/dotfiles/shell"
     fi
-    cd ~ && cp -v -t $location  .aliasrc .p10k.zsh .zshrc 
+    cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fsh.zsh
 }
 alias ec="export_config"
 
