@@ -9,7 +9,7 @@ function export_config {
         else
             location="/home/vasu/github.com/gokusayon/dotfiles/shell"
     fi
-    cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fsh.zsh
+    cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fzf.zsh .fzf.bash
 }
 alias ec="export_config"
 

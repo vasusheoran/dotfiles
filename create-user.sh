@@ -25,3 +25,6 @@ for i in $USERS; do
     esac
 done
 
+# Check
+sudo -i -u vasu bash << EOF
+whoami

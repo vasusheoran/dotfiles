@@ -124,7 +124,7 @@ export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 [[ ! -f ~/.alias ]] || source ~/.alias
-[[ ! -f ~/.fsh.zsh ]] || source ~/.fsh.zsh
+[[ ! -f ~/.fsh.zsh ]] || source ~/.fzf.zsh
 
 # FZF Configuration
 export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'

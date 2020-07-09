@@ -13,5 +13,5 @@ Function GetUserID ($distro="Ubuntu", $user="vasu")
 
 };
 
-WSL-SetDefaultUser -distro Ubuntu -user vasu;
+WSL-SetDefaultUser -distro Ubuntu-20.04 -user vasu;
 #GetUserID -distro Ubuntu -user vasu;
