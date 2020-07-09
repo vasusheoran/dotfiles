@@ -3,24 +3,28 @@ alias -g Z='| fzf' # change Z to whatever you like
 
 # Export conifguration
 function export_config {
+    user=$(whoami)
     if [[ -v $1 ]]
         then
             location=$1
         else
-            location="/home/vasu/github.com/gokusayon/dotfiles/shell"
+            location="/home/$user/dotfiles/shell"
     fi
+    echo "Exporting config to $location"
     cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fzf.zsh .fzf.bash
 }
 alias ec="export_config"
 
 # Import Config
 function import_config {
+    user=$(whoami)
     if [[ -v $1 ]]
         then
             location=$1
         else
-            location="/home/vasu/github.com/gokusayon/dotfiles/shell"
+            location="/home/$user/dotfiles/shell"
     fi
+    echo "Importing config from $location"
     cp -v $location/.* ~;
 }
 alias ic="import_config"
