@@ -47,6 +47,7 @@ ln -sf ~/dotfiles/shell/.alias ~/.alias \
   && ln -sf ~/dotfiles/shell/.zshrc ~/.zshrc \
   && ln -sf ~/dotfiles/shell/.p10k.zsh ~/.p10k.zsh \
   && sudo ln -sf ~/dotfiles/etc/.wslconf /etc/wsl.conf \
-  && ln -sf ~/dotfiles/.tmux.conf ~/.tmux.conf \
+  && ln -s ~/dotfiles/.gitconfig ~/.gitconfig \
+  # && ln -sf ~/dotfiles/shell/.tmux.conf ~/.tmux.conf \
 
 [[ ! -f ~/.zshrc ]] || source ~/.zshrc
