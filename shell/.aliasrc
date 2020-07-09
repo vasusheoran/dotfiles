@@ -1,0 +1,48 @@
+# fzf
+export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
+alias -g Z='| fzf' # change Z to whatever you like
+
+# Export conifguration
+function export_config {
+    if [[ -v $1 ]]
+        then
+            location=$1
+        else
+            location="/home/vasu/github.com/gokusayon/dotfiles/shell"
+    fi
+    cd ~ && cp -v -t $location  .aliasrc .p10k.zsh .zshrc 
+}
+alias ec="export_config"
+
+# Import Config
+function import_config {
+    if [[ -v $1 ]]
+        then
+            location=$1
+        else
+            location="/home/vasu/github.com/gokusayon/dotfiles/shell"
+    fi
+    cp -v $location/.* ~;
+}
+alias ic="import_config"
+
+
+
+#  vmmem high cache solution
+alias drop_cache="sudo sh -c \"echo 3 >'/proc/sys/vm/drop_caches' && swapoff -a && swapon -a && printf '\n%s\n' 'Ram-cache and Swap Cleared'\""
+
+# Docker Compose
+# DCF="/home/vasu/github.com/gokusayon/docker-compose.yml"
+alias dcu="docker-compose up"
+alias dcd="docker-compose down"
+alias dcb="docker-compose build"
+alias dps="docker ps -a"
+
+# Docker 
+alias drc="sh -c \"docker rm $(docker ps -aq)\""
+alias dsc="sh -c \"docker stop $(docker ps -aq)\""
+alias dri="sh -c \"docker rmi $(docker images -q)\""
+alias drf="ds; drm"
+alias dri="drmi;  ds; dr"
+alias drv="docker volume rm "
+
