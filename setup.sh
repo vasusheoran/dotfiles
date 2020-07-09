@@ -1,30 +1,3 @@
-# Set up new user
-echo "Creating new user vasu"
-
-default_user=vasu
-USERS="$default_user"
-
-for i in $USERS; do
-    case `id -u $i > /dev/null 2>&1; echo $?` in
-        0)
-            # user found
-            echo "user '$i' found. Skipping .."
-            ;;
-        1)
-            # user not found
-            echo "Adding user '$i' with root privilages"
-            adduser $default_user
-            usermod -aG sudo $default_user
-            su - $default_user
-            sudo ls -la /root
-            ;;
-        *)
-            # code if an error occurred
-            echo "Error finding go path. Please add manually"
-            ;;
-    esac
-done
-
 # Update
 echo "Updating necessary packages .. "
 # I would consider these packages essential or very nice to have. The GTK
@@ -47,41 +20,26 @@ sudo apt-get update && sudo apt-get install -y \
 
 # Install zsh
 echo "Setting up plugins and themes for zsh"
-case `zsh --version  2>&1 >/dev/null; echo $?` in
-    0)
-        # zsh found
-        echo "zsh found. Skipping Installation.."
-        ;;
-    1)
-        zsh --version
-        chsh -s $(which zsh) # Make it default
 
-        # Installing oh-my-zsh
-        echo "Installing oh-my-zsh"
-        sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+# Installing oh-my-zsh
+echo "Installing oh-my-zsh"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 
-        echo "Installing Powerlevel10k theme"
-        git clone https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
+echo "Installing Powerlevel10k theme"
+git clone https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
 
-        # Install zsh-plugins
-        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-        git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-        # git clone https://github.com/zsh-users/zsh-completions ${ZSH_CUSTOM:=~/.oh-my-zsh/custom}/plugins/zsh-completions
-        
-        # Copy zsh/oh-my-zsh settiings
-        cd zshrc
-        cp -r -v . ~
-        ;;
-    *)
-        # code if an error occurred
-        echo "Error install zsh manually"
-        ;;
-esac
+# Install zsh-plugins
+git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+# git clone https://github.com/zsh-users/zsh-completions ${ZSH_CUSTOM:=~/.oh-my-zsh/custom}/plugins/zsh-completions
+
+# Copy zsh/oh-my-zsh settiings
+cd zshrc
+cp -r -v . ~
 
 # Setting up git
 echo "Setting up config"
 git clone https://github.com/vasusheoran/dotfiles.git
-
 cp ~/dotfiles/shell/.gitconfig.user ~/.gitconfig.user
 # git config --global core.autocrlf false
 # git config --list --show-origin
