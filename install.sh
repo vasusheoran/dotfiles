@@ -26,7 +26,7 @@ cp ~/dotfiles/shell/.gitconfig.user ~/.gitconfig.user
 
 # Installing oh-my-zsh
 echo "Installing oh-my-zsh"
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)" && exit
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 sudo chsh -s $(which zsh) $(whoami)
 
 echo "Installing Powerlevel10k theme"
