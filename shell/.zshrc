@@ -130,18 +130,18 @@ export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
 export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
 export FZF_DEFAULT_COMMAND="rg --files --hidden --follow --glob '!.git'"
 
-# # WSL 2 specific settings.
-# if grep -q "microsoft" /proc/version &>/dev/null; then
-#     # Requires: https://sourceforge.net/projects/vcxsrv/ (or alternative)
-#     export DISPLAY="$(/sbin/ip route | awk '/default/ { print $3 }'):0"
-# fi
+# WSL 2 specific settings.
+if grep -q "microsoft" /proc/version &>/dev/null; then
+    # Requires: https://sourceforge.net/projects/vcxsrv/ (or alternative)
+    export DISPLAY="$(/sbin/ip route | awk '/default/ { print $3 }'):0"
+fi
 
-# # WSL 1 specific settings.
-# if grep -qE "(Microsoft|WSL)" /proc/version &>/dev/null; then
-#     if [ "$(umask)" = "0000" ]; then
-#         umask 0022
-#     fi
+# WSL 1 specific settings.
+if grep -qE "(Microsoft|WSL)" /proc/version &>/dev/null; then
+    if [ "$(umask)" = "0000" ]; then
+        umask 0022
+    fi
 
-#     # Requires: https://sourceforge.net/projects/vcxsrv/ (or alternative)
-#     export DISPLAY=:0
-# fi
+    # Requires: https://sourceforge.net/projects/vcxsrv/ (or alternative)
+    export DISPLAY=:0
+fi
