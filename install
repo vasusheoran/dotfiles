@@ -90,7 +90,7 @@ else
   git clone --depth 1 https://github.com/junegunn/fzf.git
 fi
 
-printf "\nDo you want to setup FZF. (y/n): " && read -r opt
+printf "\nDo you want to setup FZF? ([y]/n) " && read -r opt
 if [[ $opt =~ ^[Yy]$ ]]; then
   $dir/install
 else
@@ -107,6 +107,6 @@ ln -sf ~/dotfiles/shell/.alias ~/.alias \
   && ln -sf ~/dotfiles/.gitconfig ~/.gitconfig \
   && ln -sf ~/dotfiles/shell/.zshrc ~/.zshrc
 
-printf "\n\nFinished setup.\nLogin to shell again to apply the changes or use the command below.\n #   source ~/.zshrc \n"
+printf "\n\nFinished setup.\nLogin to shell again to apply the changes. \n"
 
-echo
+
