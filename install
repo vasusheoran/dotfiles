@@ -1,0 +1,115 @@
+#!/bin/env bash
+
+user=$(whoami)
+base_path="/home/$user"
+
+set -u
+
+# Update
+echo "Updating necessary packages .. "
+# I would consider these packages essential
+# sudo apt-get update && 
+sudo apt-get install -y \
+    zsh \
+    git \
+    # ripgrep \
+    # python3-pip \
+    # htop \
+    # shellcheck \
+    # curl \
+    # golang-go \
+    # tmux \
+    # vim-gtk \
+    # gpg \
+    # rsync \
+    # unzip \
+    # pass \
+
+
+# Setting up git
+# ---------------
+printf "\nSetting up dotfiles\n"
+dir="$base_path/dotfiles" 
+if [ -d "$dir" ]; then
+   printf "\t - Already exists. Skipping download\n"
+else
+  git clone https://github.com/vasusheoran/dotfiles.git
+fi
+cp ~/dotfiles/shell/.gitconfig.user ~/.gitconfig.user
+
+# Installing oh-my-zsh
+# ---------------
+dir="$base_path/.oh-my-zsh" 
+printf "\nSetting up oh-my-zsh\n"
+if [ -d "$dir" ]; then
+   printf "\t - Already exists. Skipping Installation\n"
+else
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+fi
+
+# Setting default shell
+# ---------------
+sudo chsh -s $(which zsh) $(whoami)
+
+# Installing Powerlevel10k
+# ---------------
+dir="$base_path/.oh-my-zsh/custom/themes/powerlevel10k" 
+if [ -d "$dir" ]; then
+   printf "\t - powerlevel10k already exists.\n"
+else
+  git clone https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
+fi
+
+# /home/vasu/.oh-my-zsh/custom/themes/powerlevel10k
+# Installing zsh-plugins
+# ---------------
+zsh_plugins(){
+  plugins="$base_path/.oh-my-zsh/custom/plugins" 
+
+  dir="$plugins/zsh-syntax-highlighting"
+  if [ -d "$dir" ]; then
+    printf "\t - zsh-syntax-highlighting already exists.\n"
+  else
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+  fi
+
+  dir="$plugins/zsh-autosuggestions"
+  if [ -d "$dir" ]; then
+    printf "\t - zsh-autosuggestions already exists.\n"
+  else
+    git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+  fi
+
+}
+zsh_plugins
+
+# Installing FZF
+# ---------------
+printf "\nInstalling FZF\n"
+dir="$base_path/fzf" 
+if [ -d "$dir" ]; then
+   printf "\t - fzf already exists.\n"
+else
+  git clone --depth 1 https://github.com/junegunn/fzf.git
+fi
+
+printf "\nDo you want to setup FZF. (y/n): " && read -r opt
+if [[ $opt =~ ^[Yy]$ ]]; then
+  $dir/install
+else
+  printf "\t - skipping fzf setup.\n"
+fi
+
+# Add symbolic links to config files 
+# --------------- 
+printf "\nCreating symbolic links to config files "
+ln -sf ~/dotfiles/shell/.alias ~/.alias \
+  && ln -sf ~/dotfiles/shell/.profile ~/.profile \
+  && ln -sf ~/dotfiles/shell/.p10k.zsh ~/.p10k.zsh \
+  && sudo ln -sf ~/dotfiles/etc/.wslconf /etc/wsl.conf \
+  && ln -sf ~/dotfiles/.gitconfig ~/.gitconfig \
+  && ln -sf ~/dotfiles/shell/.zshrc ~/.zshrc
+
+printf "\n\nFinished setup.\nLogin to shell again to apply the changes or use the command below.\n #   source ~/.zshrc \n"
+
+echo
