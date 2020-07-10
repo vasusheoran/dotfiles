@@ -1,7 +1,7 @@
 #!/bin/env bash
 
 user=$(whoami)
-/home/$user/.fzf/uninstall
+/home/$user/fzf/uninstall
 sudo chsh -s $(which bash) $(whoami)
 # sudo rm -r ~/.oh-my-zsh/
 # sudo rm -r ~/.fzf*
