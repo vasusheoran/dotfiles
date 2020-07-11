@@ -14,7 +14,8 @@ sudo apt-get update && sudo apt-get install -y \
     htop \
     shellcheck \
     curl \
-    golang-go
+    golang-go \
+    protobuf-compiler
     # tmux \
     # vim-gtk \
     # gpg \
@@ -106,6 +107,12 @@ ln -sf ~/dotfiles/shell/.alias ~/.alias \
   && sudo ln -sf ~/dotfiles/etc/.wslconf /etc/wsl.conf \
   && ln -sf ~/dotfiles/.gitconfig ~/.gitconfig \
   && ln -sf ~/dotfiles/shell/.zshrc ~/.zshrc
+
+
+# Downloading protobufs for go
+# https://developers.google.com/protocol-buffers/docs/reference/go-generated
+# --------------- 
+go install google.golang.org/protobuf/cmd/protoc-gen-go
 
 printf "\n\nFinished setup.\nLogin to shell again to apply the changes. \n"
 
