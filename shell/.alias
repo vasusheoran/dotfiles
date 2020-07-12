@@ -55,11 +55,8 @@ function kill_process_at_port {
         then
             echo "Please enter the port number"
         else
-            #sudo lsof -t -i:$1
-            #echo "kill -9 $(sudo lsof -t -i:$1)"
-            #sudo kill -9 $(sudo lsof -t -i:$1)
             if ( sudo lsof -t -i:$1 2>&1 >/dev/null ); then
-                echo 'Port Online. Killing process'
+                echo 'Port Online. Killing process ...'
                 sudo kill -9 $(sudo lsof -t -i:$1)
             else
                 echo 'Port Offline'
