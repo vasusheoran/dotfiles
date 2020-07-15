@@ -1,6 +1,9 @@
  # dotfiles
 
- ### Use command below to intialize default config
+ ### Create User
+ sh -c "$(curl -fsSL https://raw.githubusercontent.com/vasusheoran/dotfiles/master/create-user.sh)"
+
+ ### Set up default configurations
  sh -c "$(curl -fsSL https://raw.githubusercontent.com/vasusheoran/dotfiles/master/install)"
 
  ### Set default user 
