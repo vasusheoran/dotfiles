@@ -41,12 +41,22 @@ alias dcd="docker-compose down"
 alias dcb="docker-compose build"
 alias dps="docker ps -a"
 
-# Docker 
-alias drc="sh -c \"docker rm $(docker ps -aq)\""
-alias dsc="sh -c \"docker stop $(docker ps -aq)\""
-alias dri="sh -c \"docker rmi $(docker images -q)\""
-alias drf="ds; drm"
-alias dri="drmi;  ds; dr"
+
+function docker_remove_container {
+	docker rm $(docker ps -aq)
+} 
+alias drc="docker_remove_container"
+
+function docker_stop_container {
+        docker stop $(docker ps -aq)
+}
+alias dsc="docker_stop_container"
+
+function docker_remove_images {
+        docker rmi $(docker images -q)
+}
+alias dri="docker_remove_images"
+alias drf="dsc; drc"
 alias drv="docker volume rm "
 
 # Process
