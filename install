@@ -40,12 +40,11 @@ docker() {
   echo "\nCMd > apt install docker-ce"
   sudo apt install docker-ce
   
-  echo "\nCMd > systemctl status docker"
-  sudo systemctl status docker
-  
   echo "\nCMd > sudo usermod -aG docker $(whoami)"
   sudo usermod -aG docker $(whoami)
 
+  # echo "\nCMd > systemctl status docker"
+  # sudo systemctl status docker
 }
 
 printf "\nDo you want to setup docker? ([y]/n) " && read -r opt
