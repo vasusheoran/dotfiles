@@ -39,5 +39,6 @@ Enjoy a prepped and productive development environment tailored just for you!
 * Customize application versions and preferred tools through the `.env` file.
 * Explore the `scripts` directory for further configuration options.
 * Feel free to contribute your own scripts and improvements to the project!
+* This dotfiles project draws inspiration from the excellent WSL setup script by Samuel Ramox ([https://github.com/samuelramox/wsl-setup](https://github.com/samuelramox/wsl-setup))
 
 We hope you find these dotfiles as useful as we do!
