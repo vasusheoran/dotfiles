@@ -17,7 +17,7 @@ git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/p
 git clone https://github.com/zsh-users/zsh-completions ~/.oh-my-zsh/custom/plugins/zsh-completions
 
 # Install plugin F-Sy-H
-git clone https://github.com/z-shell/F-Sy-H.git ~/.oh-my-zsh/custom/plugins/F-Sy-H
+# git clone https://github.com/z-shell/F-Sy-H.git ~/.oh-my-zsh/custom/plugins/F-Sy-H
 
 # Install powerlevel10k
 git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
@@ -29,7 +29,7 @@ git clone https://github.com/asdf-vm/asdf.git ~/.asdf
 replace "./scripts/.zshrc" ".zshrc"
 
 # Set Zsh as default shell in Linux
-chsh -s $(which zsh)
+# chsh -s $(which zsh)
 
 # Fix “zsh compinit: insecure directories” warnings
 fpath=(/usr/local/share/zsh-completions $fpath)

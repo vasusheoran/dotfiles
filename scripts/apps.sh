@@ -2,21 +2,26 @@
 
 source ./scripts/utils.sh
 
-# Update Ubuntu
-sudo apt update && sudo apt upgrade -y
+# Install home brew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Ubuntu WSL
-# sudo apt install -y ubuntu-wsl
+brew tap homebrew/cask-fonts                     # You only need to do this once!
+brew search nerd-font                            # Search for font packages
 
-# Essential package
-sudo apt install -y build-essential
+# Install nerd fonts
+brew install --cask font-jetbrains-mono-nerd-font
 
-# Common packages
-sudo apt install -y apt-transport-https ca-certificates curl gawk ssh-askpass tree unzip wget zsh
+brew install ripgrep
 
-# Git
-sudo add-apt-repository -y ppa:git-core/ppa
-sudo apt update && sudo apt install -y git
+brew install tmux
+
+brew install fzf
+
+# To install useful keybindings and fuzzy completion:
+#   /opt/homebrew/opt/fzf/install
+
+# To use fzf in Vim, add the following line to your .vimrc:
+#   set rtp+=/opt/homebrew/opt/fzf
 
 # Finish
 success "Finished applications installation."

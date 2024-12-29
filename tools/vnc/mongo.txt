@@ -1,0 +1,13 @@
+cd /var/lib/docker/volumes/cloudmanager_snapcenter_volume/_data
+cd /opt/application/netapp/cloudmanager/sbt/bin
+
+
+curl -X POST "http://localhost:30161/api/saphana/backup/policies" -H "accept: application/hal+json" -d '{ name: "policy1",is_active: true,description : "hourly schedule","backup_type": 2,"backup_schedules": [{"schedule_id": "71bea9e3-7407-4d82-aa69-227ee9096078","schedule_type": "Hourly","hours_interval": 18,"minutes_interval": 59,"days_interval": 1,"days_of_week": ["Sunday", "Monday"],"days_of_month": [1, 7, 14],"months":["May", "June"],"retention": {"retention_type": "Days","retention_count": 20}}]}'
+
+
+db.hanaBackupPolicy.insert({ name: "policy2",isActive: true,description : "hourly schedule",backupType: 2, backupSchedules : [ { "scheduleID" : "71bea9e3-7407-4d82-aa69-227ee9096078", "schedule" : { "scheduleType" : 2, "startTime" : ISODate("0001-01-01T00:00:00Z"), "endTime" : ISODate("0001-01-01T00:00:00Z"), "hoursInterval" : 18, "minutesInterval" : 59, "daysInterval" : 1, "daysOfWeek" : [ 2, 3 ], "daysOfMonth" : [ 1, 7, 14 ], "months" : [ 6, 7 ], "scheduleStatus" : 0 }, "retentionSettings" : { "retentionType" : 3, "retentionValue" : 20 } } ]})
+db.hanaBackupPolicy.insert({ name: "policy3",isActive: true,description : "hourly schedule",backupType: 2, backupSchedules : [ { "scheduleID" : "71bea9e3-7407-4d82-aa69-227ee9096078", "schedule" : { "scheduleType" : 2, "startTime" : ISODate("0001-01-01T00:00:00Z"), "endTime" : ISODate("0001-01-01T00:00:00Z"), "hoursInterval" : 18, "minutesInterval" : 59, "daysInterval" : 1, "daysOfWeek" : [ 2, 3 ], "daysOfMonth" : [ 1, 7, 14 ], "months" : [ 6, 7 ], "scheduleStatus" : 0 }, "retentionSettings" : { "retentionType" : 3, "retentionValue" : 20 } } ]})
+
+db.hanaBackupPolicy.remove({ name: "policy3"})
+db.hanaBackupPolicy.remove({ name: "policy4"})
+

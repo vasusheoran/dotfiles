@@ -1,0 +1,374 @@
+# fzf
+# alias -g Z='| fzf' # change Z to whatever you like
+
+# Export conifguration
+function export_config {
+    user=$(whoami)
+    if [ -v $1 ]
+        then
+            location=$1
+        else
+            location="/home/$user/dotfiles/shell"
+    fi
+    echo "Exporting config to $location"
+    cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fzf.zsh .fzf.bash
+}
+alias ec="export_config"
+
+# Import Config
+function import_config {
+    user=$(whoami)
+    if [ -v $1 ]
+        then
+            location=$1
+        else
+            location="/home/$user/dotfiles/shell"
+    fi
+    echo "Importing config from $location"
+    cp -v $location/.* ~;
+}
+alias ic="import_config"
+
+
+
+#  vmmem high cache solution
+alias drop_cache="sudo sh -c \"echo 3 >'/proc/sys/vm/drop_caches' && swapoff -a && swapon -a && printf '\n%s\n' 'Ram-cache and Swap Cleared'\""
+
+# git
+alias gco="git checkout"
+
+# Docker Compose
+alias dc="docker-compose"
+# DCF="/home/vasu/github.com/gokusayon/docker-compose.yml"
+alias dcu="docker-compose up"
+alias dcd="docker-compose down"
+alias dcb="docker-compose build"
+alias dps="docker ps -a"
+
+# function docker_remove_dangling_images(){
+#     docker rmi -f $(docker images -f "dangling=true" -q)
+# }
+# alias drdi="docker_remove_dangling_images"
+
+# function docker_remove_container {
+#     docker kill $(docker ps -aq)
+# } 
+# alias drc="docker_remove_container"
+
+# function docker_stop_container {
+#         docker stop $(docker ps -aq)
+# }
+# alias dsc="docker_stop_container"
+
+# function docker_remove_images {
+#         docker rmi $(docker images -q)
+# }
+# alias dri="docker_remove_images"
+# alias drf="dsc; drc"
+# alias drv="docker volume rm "
+
+# Process
+function kill_process_at_port {
+    if [ -v $1 ]
+        then
+            echo "Please enter the port number"
+        else
+            if ( sudo lsof -t -i:$1 2>&1 >/dev/null ); then
+                echo 'Port Online. Killing process ...'
+                sudo kill -9 $(sudo lsof -t -i:$1)
+            else
+                echo 'Port Offline'
+            fi
+    fi
+}
+alias kpp="kill_process_at_port"
+
+
+
+# kubectl
+# Make all kubectl completion fzf
+# command -v fzf >/dev/null 2>&1 && { 
+# 	source <(kubectl completion zsh | sed 's#${requestComp} 2>/dev/null#${requestComp} 2>/dev/null | head -n -1 | fzf  --multi=0 #g')
+# }
+
+# k8s
+alias k="kubectl"
+
+# kubectl
+export KUBE_EDITOR='code --wait'
+
+# Evicted Pods
+alias kdevicted="kubectl get pods --all-namespaces -o json | jq '.items[] | select(.status.reason!=null) | select(.status.reason | contains(\"Evicted\")) | \"kubectl delete pods \(.metadata.name) -n \(.metadata.namespace)\"' | xargs -n 1 bash -c"
+
+# Context
+
+# fco - checkout git branch/tag
+kc() {
+  kubectl config use-context $(kubectl config get-contexts -o name | fzf --height=10 --prompt="Kubernetes Context> ")
+}
+
+kn() {
+  kubectl config set-context --current --namespace "$(kubectl get ns -o name | fzf -d/ --with-nth=2 | cut -d/ -f2)"
+}
+
+# Pods
+# alias kn="kubectl config set-context --current --namespace"
+# alias kc="kubectl config use-context " 
+
+# Logs
+alias kl="kubectl logs "
+
+# get
+alias kgp="kubectl get pod "
+alias kgd="kubectl get deployment "
+alias kgs="kubectl get svc "
+alias kgn="kubectl get nodes"
+alias kgcm="kubectl get configmaps "
+alias kg="kubectl get "
+
+# describe
+alias kdp="kubectl describe pod "
+alias kdd="kubectl describe deployment "
+alias kds="kubectl describe svc "
+alias kdn="kubectl describe nodes"
+alias kgcm="kubectl describe configmaps "
+alias kd="kubectl describe "
+
+# delete
+alias kdlp="kubectl delete pod "
+alias kdld="kubectl delete deployment "
+alias kdls="kubectl delete svc "
+alias kdln="kubectl delete nodes"
+alias kgcm="kubectl delete configmaps "
+alias kdl="kubectl delete "
+
+# edit
+alias kep="kubectl edit pod "
+alias ked="kubectl edit deployment "
+alias kes="kubectl edit svc "
+alias ken="kubectl edit nodes"
+alias kecm="kubectl edit configmaps "
+alias ke="kubectl edit "
+
+# rsync
+alias syncapp="echo /scripts/sync_to_server.sh"
+
+#### Kubernetes Snapcenter ####
+alias kni="kn istio-system"
+alias knm="kn mesh-control-plane"
+alias knt="kn mesh-control-plane-test"
+
+#### Pod Names ######
+alias cmap="kubectl get pods jsonpath=\"{.items[0].metadata.name}\""
+
+# Adapter
+alias ka="kubectl apply -f "
+
+# minikube
+alias mk="minikube"
+alias mkpl="minikube profile list"
+alias mkstop="minikube stop -p mop-playground"
+alias mkstart="minikube start -p mop-playground"
+alias mkd="minikube delete -p "
+alias mks="minikube status"
+
+# helm
+alias helm-docker="docker-compose up -d -f /Users/vsheoran/workspace/repos/helm-docker"
+
+# fzf
+# alias fapp="open -a \"$(find /Applications -name '*app' -maxdepth 1 | sed 's|/Applications/||;s|\.app||' | fzf --preview=)\""
+
+# Another fd - cd into the selected directory
+# This one differs from the above, by only showing the sub directories and not
+#  showing the directories within those.
+fd() {
+  DIR=`find * -maxdepth 0 -type d -print 2> /dev/null | fzf-tmux` \
+    && cd "$DIR"
+}
+
+# fda - including hidden directories
+fda() {
+  local dir
+  dir=$(find ${1:-.} -type d 2> /dev/null | fzf +m) && cd "$dir"
+}
+
+# fe [FUZZY PATTERN] - Open the selected file with the default editor
+#   - Bypass fuzzy finder if there's only one match (--select-1)
+#   - Exit if there's no match (--exit-0)
+fe() {
+  IFS=$'\n' files=($(fzf-tmux --query="$1" --multi --select-1 --exit-0))
+  [[ -n "$files" ]] && ${EDITOR:-code} "${files[@]}"
+}
+
+# Modified version where you can press
+#   - CTRL-O to open with `open` command,
+#   - CTRL-E or Enter key to open with the $EDITOR
+fo() {
+  IFS=$'\n' out=("$(fzf-tmux --query="$1" --exit-0 --expect=ctrl-o,ctrl-e)")
+  key=$(head -1 <<< "$out")
+  file=$(head -2 <<< "$out" | tail -1)
+  if [ -n "$file" ]; then
+    [ "$key" = ctrl-o ] && ${EDITOR:-vim} "$file" || open "$file"
+  fi
+}
+
+# cdf - cd into the directory of the selected file
+cdf() {
+   local file
+   local dir
+   file=$(fzf +m -q "$1") && dir=$(dirname "$file") && cd "$dir"
+}
+
+# using ripgrep combined with preview
+# find-in-file - usage: fif <searchTerm>
+fif() {
+  if [ ! "$#" -gt 0 ]; then echo "Need a string to search for!"; return 1; fi
+  rg --files-with-matches --no-messages "$1" | fzf --preview "highlight -O ansi -l {} 2> /dev/null | rg --colors 'match:bg:yellow' --ignore-case --pretty --context 10 '$1' || rg --ignore-case --pretty --context 10 '$1' {}"
+}
+
+# fkill - kill processes - list only the ones you can kill. Modified the earlier script.
+fkill() {
+    local pid 
+    if [ "$UID" != "0" ]; then
+        pid=$(ps -f -u $UID | sed 1d | fzf -m | awk '{print $2}')
+    else
+        pid=$(ps -ef | sed 1d | fzf -m | awk '{print $2}')
+    fi  
+
+    if [ "x$pid" != "x" ]
+    then
+        echo $pid | xargs kill -${1:-9}
+    fi  
+}
+
+# fco - checkout git branch/tag
+gc() {
+  local tags branches target
+  branches=$(
+    git --no-pager branch --all \
+      --format="%(if)%(HEAD)%(then)%(else)%(if:equals=HEAD)%(refname:strip=3)%(then)%(else)%1B[0;34;1mbranch%09%1B[m%(refname:short)%(end)%(end)" \
+    | sed '/^$/d') || return
+  tags=$(
+    git --no-pager tag | awk '{print "\x1b[35;1mtag\x1b[m\t" $1}') || return
+  target=$(
+    (echo "$branches"; echo "$tags") |
+    fzf --no-hscroll --no-multi -n 2 \
+        --ansi) || return
+  git checkout $(awk '{print $2}' <<<"$target" )
+}
+
+alias gcn="/Users/vsheoran/workspace/repos/utility-scripts/nomad/gc.sh"
+# gcn(){
+#   main_branch_exists=$(git branch -a | grep -q "main")
+#   master_branch_exists=$(git branch -a | grep -q "master")
+
+#   echo "Checking out 1 $main_branch_exists $master_branch_exists"
+
+#   if [[ $main_branch_exists || $master_branch_exists ]]; then
+
+#   echo "Checking out 2 $main_branch"
+#     if [[ $main_branch_exists ]]; then
+#       main_branch="origin/main"
+#     else
+#       main_branch="origin/master"
+#     fi
+    
+#     git checkout "$main_branch"
+#   fi
+#   return
+  
+#   # Get the current branch name
+#   branch_name=$(git branch --show-current)
+#   read "Do you want to remove the current branch $branch_name (yes/no)? " confirm
+#   if [[ "$confirm" == "yes" || "$confirm" == "y" ]]; then
+
+#     # Delete the branch
+#     git branch -D "$branch_name"
+
+#     echo "Branch '$branch_name' deleted successfully."
+#   else
+#     echo "Branch deletion canceled."
+#   fi
+
+#   git rebase "$main_branch"
+# }
+
+# fshow - git commit browser
+fshow() {
+  git log --graph --color=always \
+      --format="%C(auto)%h%d %s %C(black)%C(bold)%cr" "$@" |
+  fzf --ansi --no-sort --reverse --tiebreak=index --bind=ctrl-s:toggle-sort \
+      --bind "ctrl-m:execute:
+                (grep -o '[a-f0-9]\{7\}' | head -1 |
+                xargs -I % sh -c 'git show --color=always % | less -R') << 'FZF-EOF'
+                {}
+FZF-EOF"
+}
+
+gs() {
+  # "Nothing to see here, move along"
+  is_in_git_repo || return
+
+  local cmd="${FZF_CTRL_T_COMMAND:-"command git status -s"}"
+
+  eval "$cmd" | FZF_DEFAULT_OPTS="--height ${FZF_TMUX_HEIGHT:-40%} --reverse $FZF_DEFAULT_OPTS $FZF_CTRL_T_OPTS" fzf -m "$@" | while read -r item; do
+    echo "$item" | awk '{print $2}'
+  done
+  echo
+}
+
+# Select a docker container to start and attach to
+function da() {
+  local cid
+  cid=$(docker ps -a | sed 1d | fzf -1 -q "$1" | awk '{print $1}')
+
+  [ -n "$cid" ] && docker start "$cid" && docker attach "$cid"
+}
+
+# Select a running docker container to stop
+function ds() {
+  local cid
+  cid=$(docker ps | sed 1d | fzf -q "$1" | awk '{print $1}')
+
+  [ -n "$cid" ] && docker stop "$cid"
+}
+
+# Select a docker container to remove
+# function drm() {
+#   local cid
+#   cid=$(docker ps -a | sed 1d | fzf -q "$1" | awk '{print $1}')
+
+#   [ -n "$cid" ] && docker rm "$cid"
+# }
+
+# Same as above, but allows multi selection:
+function drm() {
+  docker ps -a | sed 1d | fzf -q "$1" --no-sort -m --tac | awk '{ print $1 }' | xargs -r docker rm
+}
+
+# Select a docker image or images to remove
+function drmi() {
+  docker images | sed 1d | fzf -q "$1" --no-sort -m --tac | awk '{ print $3 }' | xargs -r docker rmi
+}
+
+# Same as above, but with previews and works correctly with man pages in different sections.
+function fman() {
+    man -k . | fzf -q "$1" --prompt='man> '  --preview $'echo {} | tr -d \'()\' | awk \'{printf "%s ", $2} {print $1}\' | xargs -r man' | tr -d '()' | awk '{printf "%s ", $2} {print $1}' | xargs -r man
+}
+
+#### thefuck
+alias fk="fuck"
+eval $(thefuck --alias) 
+
+
+# For the system Java wrappers to find this JDK, symlink it with
+#   sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+
+# openjdk@17 is keg-only, which means it was not symlinked into /opt/homebrew,
+# because this is an alternate version of another formula.
+
+# If you need to have openjdk@17 first in your PATH, run:
+#   echo 'export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"' >> ~/.zshrc
+
+# For compilers to find openjdk@17 you may need to set:
+#   export CPPFLAGS="-I/opt/homebrew/opt/openjdk@17/include"

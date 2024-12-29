@@ -4,7 +4,7 @@ source .env
 source ./scripts/utils.sh
 
 # Install applications
-bash ./scripts/apps.sh
+# bash ./scripts/apps.sh
 
 # Install cli mods
 bash ./scripts/cli.sh
@@ -15,13 +15,13 @@ if [[ $SSH_EMAIL ]]; then
 fi
 
 # Create a directory for projects and development
-mkdir ${HOME}/dev
+mkdir -p ${HOME}/workspace/repos
 
 # Cleanup cached downloads and remove the installation zip and folder
 info "Removing unnecessary files..."
-sudo apt -y autoremove
-rm -rf ../scripts.zip
-rm -rf ${DOTFILES_DIR}
+# sudo apt -y autoremove
+# rm -rf ../scripts.zip
+# rm -rf ${DOTFILES_DIR}
 
 # Finish
 success "Finished!"
