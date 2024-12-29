@@ -1,0 +1,10 @@
+#!/bin/env bash
+
+user=$(whoami)
+/home/$user/fzf/uninstall
+sudo chsh -s $(which bash) $(whoami)
+# sudo rm -r ~/.oh-my-zsh/
+# sudo rm -r ~/.fzf*
+# sudo rm -r ~/.z*
+# sudo rm -r ~/.p10*
+# sudo rm -r ~/.alias

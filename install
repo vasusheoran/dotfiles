@@ -1,0 +1,201 @@
+#!/bin/env bash
+
+user=$(whoami)
+base_path="/home/$user"
+
+set -u
+
+# Update essential packages
+sudo apt-get update && sudo apt-get install -y \
+    zsh \
+    git \
+    htop \
+    shellcheck \
+    curl \
+    #tmux
+   
+   
+# Installing docker
+# ---------------
+docker() {
+  echo "Update/upgrade System"
+  sudo apt update
+  sudo apt upgrade
+  
+  echo "\nCMd > apt-get install curl apt-transport-https ca-certificates software-properties-common"
+  sudo apt-get install curl apt-transport-https ca-certificates software-properties-common
+  
+  echo "\nCMd > curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -"
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  
+  echo "\nCMd > add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable""
+  sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  
+  echo "\nCMd > apt update"
+  sudo apt update
+  
+  echo "\nCMd > apt-cache policy docker-ce"
+  apt-cache policy docker-ce
+  
+  echo "\nCMd > apt install docker-ce"
+  sudo apt install docker-ce
+  
+  echo "\nCMd > systemctl status docker"
+  sudo systemctl status docker
+  
+  echo "\nCMd > sudo usermod -aG docker $(whoami)"
+  sudo usermod -aG docker $(whoami)
+
+}
+
+printf "\nDo you want to setup docker? ([y]/n) " && read -r opt
+if [ $opt = "Y" ] || [ $opt = "y" ]
+then
+	docker
+else
+  printf "\t - skipping docker setup.\n"
+fi
+
+
+# Setting up git
+# ---------------
+printf "\nSetting up dotfiles\n"
+dir="$base_path/dotfiles" 
+if [ -d "$dir" ]; then
+   printf "\t - Already exists. Skipping download\n"
+else
+  git clone https://github.com/vasusheoran/dotfiles.git
+fi
+cp ~/dotfiles/shell/.gitconfig.user ~/.gitconfig.user
+
+# Installing oh-my-zsh
+# ---------------
+oh_my_zsh() {
+dir="$base_path/.oh-my-zsh" 
+printf "\nSetting up oh-my-zsh\n"
+if [ -d "$dir" ]; then
+   printf "\t - Already exists. Skipping Installation\n"
+else
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+fi
+}
+
+printf "\nDo you want to setup oh-my-zsh? ([y]/n) " && read -r opt
+if [ $opt = "Y" ] || [ $opt = "y" ]
+then
+	oh_my_zsh
+else
+  printf "\t - skipping oh-my-zsh setup.\n"
+fi
+
+# Installing Powerlevel10k
+# ---------------
+Powerlevel10k(){
+dir="$base_path/.oh-my-zsh/custom/themes/powerlevel10k" 
+if [ -d "$dir" ]; then
+  printf "\t - powerlevel10k already exists.\n"
+else
+  git clone https://github.com/romkatv/powerlevel10k.git ~/.oh-my-zsh/custom/themes/powerlevel10k
+fi
+}
+
+# /home/vasu/.oh-my-zsh/custom/themes/powerlevel10k
+# Installing zsh-plugins
+# ---------------
+zsh_plugins(){
+  plugins="$base_path/.oh-my-zsh/custom/plugins" 
+
+  dir="$plugins/zsh-syntax-highlighting"
+  if [ -d "$dir" ]; then
+    printf "\t - zsh-syntax-highlighting already exists.\n"
+  else
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+  fi
+
+  dir="$plugins/zsh-autosuggestions"
+  if [ -d "$dir" ]; then
+    printf "\t - zsh-autosuggestions already exists.\n"
+  else
+    git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+  fi
+
+}
+
+printf "\nDo you want to setup powerlevel10k? ([y]/n) " && read -r opt
+if [ $opt = "Y" ] || [ $opt = "y" ]
+then
+	Powerlevel10k
+	zsh_plugins
+else
+  printf "\t - skipping oh-my-zsh setup.\n"
+fi
+
+# Installing FZF
+# ---------------
+printf "\nInstalling FZF\n"
+dir="$base_path/fzf" 
+if [ -d "$dir" ]; then
+   printf "\t - fzf already exists.\n"
+else
+  git clone --depth 1 https://github.com/junegunn/fzf.git
+fi
+
+printf "\nDo you want to setup FZF? ([y]/n) " && read -r opt
+if [ $opt = "Y" ] || [ $opt = "y" ]
+then
+	echo "CMD > $dir/install"
+      	$dir/install
+else
+  printf "\t - skipping fzf setup.\n"
+fi
+
+# Add symbolic links to config files 
+# --------------- 
+printf "\nCreating symbolic links to config files "
+ln -sf ~/dotfiles/shell/.alias ~/.alias \
+  && ln -sf ~/dotfiles/shell/.profile ~/.profile \
+  && ln -sf ~/dotfiles/shell/.p10k.zsh ~/.p10k.zsh \
+  && ln -sf ~/dotfiles/.gitconfig ~/.gitconfig \
+  && ln -sf ~/dotfiles/shell/.zshrc ~/.zshrc \
+  && sudo ln -sf ~/dotfiles/shell/chsh /etc/pam.d/chsh
+#  && sudo ln -sf ~/dotfiles/etc/.wslconf /etc/wsl.conf \
+
+# Setting default shell
+# ---------------
+sudo chsh -s $(which zsh) $(whoami)
+
+# Downloading protobufs for go
+# https://developers.google.com/protocol-buffers/docs/reference/go-generated
+# --------------- 
+
+# Installing go
+# --------------- 
+install_go(){
+  if [ -d "tmp/go1.14.1.linux-amd64.tar.gz" ]; then
+     printf "\t - go tar already exists.\n"
+  else
+    mkdir -p tmp
+    cd tmp   
+    sudo rm -r go 
+    wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
+  fi
+  sudo tar -xf go1.14.1.linux-amd64.tar.gz
+  
+  if [ -d "/usr/local/go" ]; then
+    printf "\t - Removing golang already present.\n"
+    sudo rm -r /usr/local/go
+  fi
+  sudo mv go /usr/local
+  go get -t google.golang.org/protobuf/cmd/protoc-gen-go
+}
+printf "\nDo you want to setup golang ver : 14.1? ([y]/n) " && read -r opt
+if [ $opt = "Y" ] || [ $opt = "y" ]
+then
+	install_go
+else
+  printf "\t - skipping golang setup.\n"
+fi
+
+printf "\n\nFinished setup.\nLogin to shell again to apply the changes. \n"
+
+
