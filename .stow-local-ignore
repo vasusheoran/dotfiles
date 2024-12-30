@@ -2,6 +2,7 @@
 
 scripts
 Brewfile
+install.sh
 
 ^/README.*
 ^/LICENSE.*

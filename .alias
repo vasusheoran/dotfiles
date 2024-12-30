@@ -358,7 +358,7 @@ function fman() {
 
 #### thefuck
 alias fk="fuck"
-eval $(thefuck --alias) 
+# eval $(thefuck --alias) 
 
 
 # For the system Java wrappers to find this JDK, symlink it with
