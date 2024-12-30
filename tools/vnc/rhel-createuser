@@ -1,5 +1,0 @@
-#!/bin/bash
-useradd vasu
-passwd vasu
-usermod -aG wheel vasu
-

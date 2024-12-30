@@ -1,9 +1,0 @@
-{
-    "telemetry.enableCrashReporter": false,
-    "remote.SSH.remotePlatform": {
-        "10.193.161.159": "linux"
-    },
-    "go.formatTool": "goimports",
-    "remote.SSH.enableAgentForwarding": false,
-    "remote.SSH.showLoginTerminal": true
-}

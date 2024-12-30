@@ -42,3 +42,9 @@ Enjoy a prepped and productive development environment tailored just for you!
 * This dotfiles project draws inspiration from the excellent WSL setup script by Samuel Ramox ([https://github.com/samuelramox/wsl-setup](https://github.com/samuelramox/wsl-setup))
 
 We hope you find these dotfiles as useful as we do!
+
+
+## nvim
+```shell
+git clone https://github.com/vasusheoran/nvim-config.git "${XDG_CONFIG_HOME:-$HOME/.config}"/nvim
+```
