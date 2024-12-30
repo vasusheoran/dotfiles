@@ -1,7 +1,9 @@
-\.git
+.git
 
 scripts
 Brewfile
 
 ^/README.*
 ^/LICENSE.*
+
+Google\ Drive
