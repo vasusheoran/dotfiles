@@ -1,0 +1,7 @@
+\.git
+
+scripts
+Brewfile
+
+^/README.*
+^/LICENSE.*
