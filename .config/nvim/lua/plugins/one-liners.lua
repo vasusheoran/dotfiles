@@ -1,4 +1,7 @@
 return {
+    {
+        "ThePrimeagen/vim-be-good",
+    },
     { -- This helps with php/html for indentation
         'captbaritone/better-indent-support-for-php-with-html',
     },
