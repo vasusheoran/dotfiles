@@ -1,0 +1,23 @@
+# This file is generated from information provided by the datasource.  Changes
+# to it will not persist across an instance reboot.  To disable cloud-init's
+# network configuration capabilities, write a file
+# /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg with the following:
+# network: {config: disabled}
+network:
+    ethernets: {} # Empty the ethernet section as the request is for wifi
+    version: 2
+    wifis:
+        wlp2s0: # Replace with your actual Wi-Fi interface name (e.g., wlan0, wlp3s0)
+            dhcp4: no # Set to 'yes' if you want to use DHCP for IP address
+            addresses:
+                - 192.168.0.250/24 # Your desired static IP address and subnet mask
+            nameservers:
+                search: [Dlink] # Your search domains
+                addresses: [192.168.0.1] # Your DNS servers
+            routes:
+                - to: default
+                  via: 192.168.0.1 # Your gateway IP address
+            access-points:
+                "Kartar singh-5G": # Replace with your Wi-Fi network name (SSID)
+                    password: "vidya@mani" # Replace with your Wi-Fi password
+
