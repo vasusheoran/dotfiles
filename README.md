@@ -1,50 +1,69 @@
-# Ubuntu Dotfiles
+## 📑 Dotfiles Management Guide
 
-## Features
+This guide provides instructions for managing your system configuration files (dotfiles) using the `stow` utility and helper scripts.
 
-These dotfiles make setting up your new Ubuntu VM for development a breeze. They configure essential applications, customize your command-line experience, and even generate SSH keys for secure access.
+Your dotfiles repository structure is assumed to be flat, with each application's configuration directory placed directly under the repository root (e.g., `$HOME/dotfiles/hyprland`, `$HOME/dotfiles/kitty`).
 
-**Here's what you get:**
+### Prerequisites
 
-* **Essential applications:** Install popular IDEs, development tools, and utilities with ease using `apps.sh`.
-* **Command-line power:** Enhance your terminal with `Oh My Zsh!`, custom `.zshrc` configurations, and Git settings from `cli.sh`.
-* **Secure access:** Generate SSH keys with `ssh.sh` and simplify remote development workflows.
-* **Dedicated workspace:** Organize your projects with a dedicated `dev` directory created automatically.
-* **Persistent customization:** After installation, your `.zshrc` settings remain intact for a personalized terminal experience.
+Ensure you have the following installed:
 
-## Installation files
+  * **`stow`**: A package manager for creating and managing symbolic links.
+  * **Bash** and standard core utilities (`mv`, `mkdir`, etc.).
+  * The helper scripts (`configure.sh` and `clean.sh`) must be located in the root of this repository and made executable (`chmod +x *.sh`).
 
-The magic happens under the hood with these helpful scripts:
+-----
 
-* `apps.sh`: Installs essential development applications.
-* `cli.sh`: Sets up `Oh My Zsh!`, configures your `.zshrc`, and tweaks Git settings.
-* `install.sh`: The main installer script that orchestrates the setup process.
-* `ssh.sh`: Generates SSH keys based on your email address (configured in `.env`).
-* `utils.sh`: Provides useful helper functions for other installers.
-* `.zshrc`: Your personalized terminal configuration file (becomes permanent after installation).
+### 1\. Repository Structure Overview
 
-## Install dotfiles
+The scripts rely on this basic relationship:
 
-Follow these simple steps to transform your VM into a developer haven:
+| Source Directory (in `$HOME/dotfiles`) | Target Directory (System Config) |
+| :--- | :--- |
+| `backgrounds` | `$HOME/.config/backgrounds` |
+| `hyprland` | `$HOME/.config/hyprland` |
+| `kitty` | `$HOME/.config/kitty` |
+| ... (and so on) | ... |
 
-1. **Make the scripts executable:** Run `chmod 700 dotfiles/ -R` in your terminal.
-2. **Navigate to the dotfiles directory:** `cd dotfiles`.
-3. **Run the setup script:** Execute `./install.sh`.
-4. **Sit back and relax:** The script will handle the rest, informing you of its progress.
+-----
 
-Enjoy a prepped and productive development environment tailored just for you!
+### 2\. Deployment: Running `configure.sh`
 
-**Additional notes:**
+The `configure.sh` script handles the initial setup:
 
-* Customize application versions and preferred tools through the `.env` file.
-* Explore the `scripts` directory for further configuration options.
-* Feel free to contribute your own scripts and improvements to the project!
-* This dotfiles project draws inspiration from the excellent WSL setup script by Samuel Ramox ([https://github.com/samuelramox/wsl-setup](https://github.com/samuelramox/wsl-setup))
+1.  **Backup**: Moves existing configurations in the repository to a `.bak` extension.
+2.  **Preparation**: Creates the necessary target directories under `$HOME/.config/`.
+3.  **Stow**: Runs `stow` to create symbolic links from the source directories to the target directories.
 
-We hope you find these dotfiles as useful as we do!
+#### **Command**
 
+Run the script from your dotfiles directory:
 
-## nvim
-```shell
-git clone https://github.com/vasusheoran/nvim-config.git "${XDG_CONFIG_HOME:-$HOME/.config}"/nvim
+```bash
+cd $HOME/dotfiles
+./configure.sh
 ```
+
+-----
+
+### 3\. Cleanup: Running `clean.sh`
+
+The `clean.sh` script handles the safe removal of the deployed configurations:
+
+1.  **Destow**: Runs `stow -D` to safely remove the symbolic links.
+2.  **Restore**: Restores the backed-up directories (ending in `.bak`) to their original names.
+
+#### **Command**
+
+Run the script from your dotfiles directory:
+
+```bash
+cd $HOME/dotfiles
+./clean.sh
+```
+
+-----
+
+### Appendix: Script Contents
+
+For reference, the packages managed by these scripts are: `backgrounds`, `hyprland`, `kitty`, `nvim`, `rofi`, `swaync`, `waybar`, and `wlogout`.
