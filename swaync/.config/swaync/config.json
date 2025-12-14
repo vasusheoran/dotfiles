@@ -80,14 +80,6 @@
           "command": "amixer set Capture toggle"
         },
         {
-          "label": " ",
-          "command": "nm-connection-editor"
-        },
-        {
-          "label": "󰂯",
-          "command": "blueman-manager"
-        },
-        {
           "label": "󰏘",
           "command": "nwg-look"
         }

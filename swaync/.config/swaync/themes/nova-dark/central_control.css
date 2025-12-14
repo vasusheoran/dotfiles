@@ -3,7 +3,7 @@
 @define-color background-sec  @base;
 @define-color background      @base;
 @define-color selected        @lavender;
-@define-color hover           @yellow;
+@define-color hover           @mauve;
 @define-color urgent          @red;
 
 * {
