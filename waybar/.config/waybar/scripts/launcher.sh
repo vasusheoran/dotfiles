@@ -2,6 +2,8 @@
 
 killall -9 waybar
 killall -9 swaync 
+killall -9 hyprpaper
 
 waybar &
 swaync &
+hyprpaper &

@@ -42,6 +42,7 @@ Run the script from your dotfiles directory:
 ```bash
 cd $HOME/dotfiles
 ./configure.sh
+cp -r hyprland/scripts ~/.config/hypr
 ```
 
 -----
