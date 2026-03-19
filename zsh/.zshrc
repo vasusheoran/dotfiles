@@ -1,9 +1,3 @@
-# Auto-launch tmux: attach to existing session or create a new one
-if command -v tmux &>/dev/null && [[ -z "$TMUX" ]] && [[ "$TERM_PROGRAM" != "vscode" ]]; then
-    tmux attach 2>/dev/null || tmux new-session
-    exit
-fi
-
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 # Initialization code that may require console input (password prompts, [y/n]
 # confirmations, etc.) must go above this block; everything else may go below.
@@ -136,6 +130,12 @@ alias dev="${HOME}/Developer"
 
 # PATH
 export PATH=/opt/homebrew/bin:$PATH
+
+# Auto-launch tmux: attach to existing session or create a new one
+if command -v tmux &>/dev/null && [[ -z "$TMUX" ]] && [[ "$TERM_PROGRAM" != "vscode" ]]; then
+    tmux attach 2>/dev/null || tmux new-session
+    exit
+fi
 
 # Custom config
 [ -f ~/.alias ] && source ~/.alias
