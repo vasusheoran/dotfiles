@@ -30,5 +30,3 @@ fi
 if [ -f ~/.sdb/.sdb-completion.bash ]; then
  source ~/.sdb/.sdb-completion.bash
 fi
-
-alias remote-arch="pve-spice -p usav@321 \"202\" \"pve\"  \"192.168.1.150\""

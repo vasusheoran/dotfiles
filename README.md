@@ -1,70 +1,77 @@
-## 📑 Dotfiles Management Guide
+## Dotfiles
 
-This guide provides instructions for managing your system configuration files (dotfiles) using the `stow` utility and helper scripts.
+Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
+Supports **macOS**, **Ubuntu/Debian**, and **Arch Linux**.
 
-Your dotfiles repository structure is assumed to be flat, with each application's configuration directory placed directly under the repository root (e.g., `$HOME/dotfiles/hyprland`, `$HOME/dotfiles/kitty`).
+---
 
-### Prerequisites
+### Quick Start
 
-Ensure you have the following installed:
+Run this one-liner to clone the repo and run the full setup (installs tools + deploys configs):
 
-  * **`stow`**: A package manager for creating and managing symbolic links.
-  * **Bash** and standard core utilities (`mv`, `mkdir`, etc.).
-  * The helper scripts (`configure.sh` and `clean.sh`) must be located in the root of this repository and made executable (`chmod +x *.sh`).
-
------
-
-### 1\. Repository Structure Overview
-
-The scripts rely on this basic relationship:
-
-| Source Directory (in `$HOME/dotfiles`) | Target Directory (System Config) |
-| :--- | :--- |
-| `backgrounds` | `$HOME/.config/backgrounds` |
-| `hyprland` | `$HOME/.config/hyprland` |
-| `kitty` | `$HOME/.config/kitty` |
-| ... (and so on) | ... |
-
------
-
-### 2\. Deployment: Running `configure.sh`
-
-The `configure.sh` script handles the initial setup:
-
-1.  **Backup**: Moves existing configurations in the repository to a `.bak` extension.
-2.  **Preparation**: Creates the necessary target directories under `$HOME/.config/`.
-3.  **Stow**: Runs `stow` to create symbolic links from the source directories to the target directories.
-
-#### **Command**
-
-Run the script from your dotfiles directory:
-
+**curl:**
 ```bash
-cd $HOME/dotfiles
-./configure.sh
-cp -r hyprland/scripts ~/.config/hypr
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/vasusheoran/dotfiles/feature/stow/configure.sh)"
 ```
 
------
+**wget:**
+```bash
+bash -c "$(wget -qO- https://raw.githubusercontent.com/vasusheoran/dotfiles/feature/stow/configure.sh)"
+```
 
-### 3\. Cleanup: Running `clean.sh`
+> This will install all required tools for your OS, set up Oh My Zsh + Powerlevel10k, and symlink all configs via stow.
 
-The `clean.sh` script handles the safe removal of the deployed configurations:
+To skip tool installation and only deploy configs (if tools are already installed):
+```bash
+git clone git@github.com:vasusheoran/dotfiles.git ~/dotfiles
+cd ~/dotfiles && ./configure.sh --no-install
+```
 
-1.  **Destow**: Runs `stow -D` to safely remove the symbolic links.
-2.  **Restore**: Restores the backed-up directories (ending in `.bak`) to their original names.
+---
 
-#### **Command**
+### What Gets Installed
 
-Run the script from your dotfiles directory:
+| Tool | macOS | Ubuntu | Arch |
+| :--- | :---: | :---: | :---: |
+| zsh, git, stow | ✓ | ✓ | ✓ |
+| fzf, zoxide, thefuck | ✓ | ✓ | ✓ |
+| tmux, neovim, ripgrep | ✓ | ✓ | ✓ |
+| kitty, eza | ✓ | ✓ | ✓ |
+| Oh My Zsh + Powerlevel10k | ✓ | ✓ | ✓ |
+| Hyprland desktop stack | ✗ | ✗ | ✓ |
+
+---
+
+### Repository Structure
+
+Each top-level directory is a stow package that maps to `~` or `~/.config/`:
+
+| Package | Target | Platforms |
+| :--- | :--- | :--- |
+| `shell/` | `~/` (.alias, .bashrc, .profile) | All |
+| `zsh/` | `~/` (.zshrc, .fzf.zsh) | All |
+| `nvim/` | `~/.config/nvim/` | All |
+| `tmux/` | `~/` (.tmux.conf) | All |
+| `kitty/` | `~/.config/kitty/` | All |
+| `hyprland/` | `~/.config/hyprland/` | Arch |
+| `hyprpaper/`, `hyprlock/`, `hyprmocha/` | `~/.config/` | Arch |
+| `rofi/`, `waybar/`, `swaync/`, `wlogout/` | `~/.config/` | Arch |
+| `backgrounds/` | `~/.config/backgrounds/` | Arch |
+
+---
+
+### Manual Deployment
 
 ```bash
-cd $HOME/dotfiles
+git clone git@github.com:vasusheoran/dotfiles.git ~/dotfiles
+cd ~/dotfiles
+./configure.sh
+```
+
+### Cleanup
+
+To remove all symlinks:
+```bash
+cd ~/dotfiles
 ./clean.sh
 ```
-
------
-
-### Appendix: Script Contents
-
-For reference, the packages managed by these scripts are: `backgrounds`, `hyprland`, `kitty`, `nvim`, `rofi`, `swaync`, `waybar`, and `wlogout`.
