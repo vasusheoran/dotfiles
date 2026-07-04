@@ -128,6 +128,9 @@ alias copyssh="cat < ~/.ssh/id_ed25519.pub | clip.exe | echo '=> Public SSH key 
 # Open developer directory
 alias dev="${HOME}/Developer"
 
+# direnv shell hook
+eval "$(direnv hook zsh)"
+
 # PATH
 export PATH=/opt/homebrew/bin:$PATH
 
@@ -156,4 +159,11 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
-export NODE_EXTRA_CA_CERTS=$HOME/.claude/certs/salesforce-ca-bundle.pem
+
+# >>> aisuite >>>
+export NODE_EXTRA_CA_CERTS="/Users/vsheoran/.aisuite/conf/npm-sfdc-certs.pem"
+export PATH="$PATH:/Users/vsheoran/.aisuite/bin:/Users/vsheoran/.aisuite/bin/aliases"
+# <<< aisuite <<<
+# devbar-managed-start
+export NODE_EXTRA_CA_CERTS="$HOME/.devbar/certs/corporate-ca-bundle.pem"
+# devbar-managed-end
