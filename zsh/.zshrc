@@ -134,10 +134,13 @@ eval "$(direnv hook zsh)"
 # PATH
 export PATH=/opt/homebrew/bin:$PATH
 
-# Auto-launch tmux: attach to existing session or create a new one
-if command -v tmux &>/dev/null && [[ -z "$TMUX" ]] && [[ "$TERM_PROGRAM" != "vscode" ]]; then
-    tmux attach 2>/dev/null || tmux new-session
-    exit
+# Optional tmux: Use 'tm' alias to attach/create session
+# Auto-start is disabled to prevent terminal quit on detach
+if command -v tmux &>/dev/null; then
+    alias tm='tmux attach 2>/dev/null || tmux new-session'
+    alias tl='tmux list-sessions'
+    alias ta='tmux attach -t'
+    alias tn='tmux new-session -s'
 fi
 
 # Custom config
