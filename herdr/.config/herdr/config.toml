@@ -1,0 +1,39 @@
+onboarding = false
+
+[theme]
+name = "catppuccin-latte"
+
+[ui.toast]
+delivery = "system"
+
+# Unified shortcuts matching tmux config
+[keys]
+prefix = "ctrl+b"
+
+# Session/Workspace management (matching tmux)
+new_workspace = "prefix+ctrl+n"       # tmux: C-b C-n
+rename_workspace = "prefix+ctrl+r"    # tmux: C-b C-r
+workspace_picker = "prefix+ctrl+l"    # tmux: C-b C-l (list/switch)
+close_workspace = "prefix+shift+k"    # tmux: C-b K (confirm kill)
+
+# Window/Tab management (matching tmux)
+new_tab = "prefix+c"                  # tmux: C-b c (already default)
+rename_tab = "prefix+ctrl+w"          # tmux: C-b C-w
+close_tab = "prefix+shift+x"          # herdr default (tmux uses & but less intuitive)
+previous_tab = "prefix+p"             # already default
+next_tab = "prefix+n"                 # already default
+
+# Pane navigation (vim-style, matching tmux)
+focus_pane_left = "prefix+h"          # tmux: C-b h
+focus_pane_down = "prefix+j"          # tmux: C-b j
+focus_pane_up = "prefix+k"            # tmux: C-b k
+focus_pane_right = "prefix+l"         # tmux: C-b l
+
+# Pane splits (herdr style - more intuitive)
+split_vertical = "prefix+v"           # v for vertical split
+split_horizontal = "prefix+minus"     # - for horizontal split
+
+# Other useful defaults
+close_pane = "prefix+x"               # tmux: C-b x
+zoom_pane = "prefix+z"                # tmux: C-b z
+detach = "prefix+q"                   # herdr default (tmux uses d)
