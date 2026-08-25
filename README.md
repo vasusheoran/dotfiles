@@ -1,50 +1,77 @@
-# Ubuntu Dotfiles
+## Dotfiles
 
-## Features
+Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
+Supports **macOS**, **Ubuntu/Debian**, and **Arch Linux**.
 
-These dotfiles make setting up your new Ubuntu VM for development a breeze. They configure essential applications, customize your command-line experience, and even generate SSH keys for secure access.
+---
 
-**Here's what you get:**
+### Quick Start
 
-* **Essential applications:** Install popular IDEs, development tools, and utilities with ease using `apps.sh`.
-* **Command-line power:** Enhance your terminal with `Oh My Zsh!`, custom `.zshrc` configurations, and Git settings from `cli.sh`.
-* **Secure access:** Generate SSH keys with `ssh.sh` and simplify remote development workflows.
-* **Dedicated workspace:** Organize your projects with a dedicated `dev` directory created automatically.
-* **Persistent customization:** After installation, your `.zshrc` settings remain intact for a personalized terminal experience.
+Run this one-liner to clone the repo and run the full setup (installs tools + deploys configs):
 
-## Installation files
+**curl:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/vasusheoran/dotfiles/feature/stow/configure.sh)"
+```
 
-The magic happens under the hood with these helpful scripts:
+**wget:**
+```bash
+bash -c "$(wget -qO- https://raw.githubusercontent.com/vasusheoran/dotfiles/feature/stow/configure.sh)"
+```
 
-* `apps.sh`: Installs essential development applications.
-* `cli.sh`: Sets up `Oh My Zsh!`, configures your `.zshrc`, and tweaks Git settings.
-* `install.sh`: The main installer script that orchestrates the setup process.
-* `ssh.sh`: Generates SSH keys based on your email address (configured in `.env`).
-* `utils.sh`: Provides useful helper functions for other installers.
-* `.zshrc`: Your personalized terminal configuration file (becomes permanent after installation).
+> This will install all required tools for your OS, set up Oh My Zsh + Powerlevel10k, and symlink all configs via stow.
 
-## Install dotfiles
+To skip tool installation and only deploy configs (if tools are already installed):
+```bash
+git clone git@github.com:vasusheoran/dotfiles.git ~/dotfiles
+cd ~/dotfiles && ./configure.sh --no-install
+```
 
-Follow these simple steps to transform your VM into a developer haven:
+---
 
-1. **Make the scripts executable:** Run `chmod 700 dotfiles/ -R` in your terminal.
-2. **Navigate to the dotfiles directory:** `cd dotfiles`.
-3. **Run the setup script:** Execute `./install.sh`.
-4. **Sit back and relax:** The script will handle the rest, informing you of its progress.
+### What Gets Installed
 
-Enjoy a prepped and productive development environment tailored just for you!
+| Tool | macOS | Ubuntu | Arch |
+| :--- | :---: | :---: | :---: |
+| zsh, git, stow | ✓ | ✓ | ✓ |
+| fzf, zoxide, thefuck | ✓ | ✓ | ✓ |
+| tmux, neovim, ripgrep | ✓ | ✓ | ✓ |
+| kitty, eza | ✓ | ✓ | ✓ |
+| Oh My Zsh + Powerlevel10k | ✓ | ✓ | ✓ |
+| Hyprland desktop stack | ✗ | ✗ | ✓ |
 
-**Additional notes:**
+---
 
-* Customize application versions and preferred tools through the `.env` file.
-* Explore the `scripts` directory for further configuration options.
-* Feel free to contribute your own scripts and improvements to the project!
-* This dotfiles project draws inspiration from the excellent WSL setup script by Samuel Ramox ([https://github.com/samuelramox/wsl-setup](https://github.com/samuelramox/wsl-setup))
+### Repository Structure
 
-We hope you find these dotfiles as useful as we do!
+Each top-level directory is a stow package that maps to `~` or `~/.config/`:
 
+| Package | Target | Platforms |
+| :--- | :--- | :--- |
+| `shell/` | `~/` (.alias, .bashrc, .profile) | All |
+| `zsh/` | `~/` (.zshrc, .fzf.zsh) | All |
+| `nvim/` | `~/.config/nvim/` | All |
+| `tmux/` | `~/` (.tmux.conf) | All |
+| `kitty/` | `~/.config/kitty/` | All |
+| `hyprland/` | `~/.config/hyprland/` | Arch |
+| `hyprpaper/`, `hyprlock/`, `hyprmocha/` | `~/.config/` | Arch |
+| `rofi/`, `waybar/`, `swaync/`, `wlogout/` | `~/.config/` | Arch |
+| `backgrounds/` | `~/.config/backgrounds/` | Arch |
 
-## nvim
-```shell
-git clone https://github.com/vasusheoran/nvim-config.git "${XDG_CONFIG_HOME:-$HOME/.config}"/nvim
+---
+
+### Manual Deployment
+
+```bash
+git clone git@github.com:vasusheoran/dotfiles.git ~/dotfiles
+cd ~/dotfiles
+./configure.sh
+```
+
+### Cleanup
+
+To remove all symlinks:
+```bash
+cd ~/dotfiles
+./clean.sh
 ```

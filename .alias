@@ -1,36 +1,6 @@
 # fzf
 # alias -g Z='| fzf' # change Z to whatever you like
 
-# Export conifguration
-function export_config {
-    user=$(whoami)
-    if [ -v $1 ]
-        then
-            location=$1
-        else
-            location="/home/$user/dotfiles/shell"
-    fi
-    echo "Exporting config to $location"
-    cd ~ && cp -v -t $location  .alias .p10k.zsh .zshrc .profile .bashrc .fzf.zsh .fzf.bash
-}
-alias ec="export_config"
-
-# Import Config
-function import_config {
-    user=$(whoami)
-    if [ -v $1 ]
-        then
-            location=$1
-        else
-            location="/home/$user/dotfiles/shell"
-    fi
-    echo "Importing config from $location"
-    cp -v $location/.* ~;
-}
-alias ic="import_config"
-
-
-
 #  vmmem high cache solution
 alias drop_cache="sudo sh -c \"echo 3 >'/proc/sys/vm/drop_caches' && swapoff -a && swapon -a && printf '\n%s\n' 'Ram-cache and Swap Cleared'\""
 
@@ -242,20 +212,20 @@ fkill() {
 }
 
 # fco - checkout git branch/tag
-#gc() {
-#  local tags branches target
-#  branches=$(
-#    git --no-pager branch --all \
-#      --format="%(if)%(HEAD)%(then)%(else)%(if:equals=HEAD)%(refname:strip=3)%(then)%(else)%1B[0;34;1mbranch%09%1B[m%(refname:short)%(end)%(end)" \
-#    | sed '/^$/d') || return
-#  tags=$(
-#    git --no-pager tag | awk '{print "\x1b[35;1mtag\x1b[m\t" $1}') || return
-#  target=$(
-#    (echo "$branches"; echo "$tags") |
-#    fzf --no-hscroll --no-multi -n 2 \
-#        --ansi) || return
-#  git checkout $(awk '{print $2}' <<<"$target" )
-#}
+gc() {
+  local tags branches target
+  branches=$(
+    git --no-pager branch --all \
+      --format="%(if)%(HEAD)%(then)%(else)%(if:equals=HEAD)%(refname:strip=3)%(then)%(else)%1B[0;34;1mbranch%09%1B[m%(refname:short)%(end)%(end)" \
+    | sed '/^$/d') || return
+  tags=$(
+    git --no-pager tag | awk '{print "\x1b[35;1mtag\x1b[m\t" $1}') || return
+  target=$(
+    (echo "$branches"; echo "$tags") |
+    fzf --no-hscroll --no-multi -n 2 \
+        --ansi) || return
+  git checkout $(awk '{print $2}' <<<"$target" )
+}
 
 alias gcn="/Users/vsheoran/workspace/repos/utility-scripts/nomad/gc.sh"
 # gcn(){
@@ -372,7 +342,3 @@ alias fk="fuck"
 
 # For compilers to find openjdk@17 you may need to set:
 #   export CPPFLAGS="-I/opt/homebrew/opt/openjdk@17/include"
-#
-alias fv="find . -type f -exec file -N -i -- {} + | grep video"
-
-alias ll="ls -lh"

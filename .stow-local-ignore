@@ -1,8 +1,9 @@
 .git
 
+install.sh
+
 scripts
 Brewfile
-install.sh
 
 ^/README.*
 ^/LICENSE.*
