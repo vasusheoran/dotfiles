@@ -1,3 +1,7 @@
 .DS_Store
 .backups/
 *.bkup
+
+# herdr runtime files (only config.toml is config)
+herdr/.config/herdr/*
+!herdr/.config/herdr/config.toml
