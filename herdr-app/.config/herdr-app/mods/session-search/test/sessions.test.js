@@ -2,7 +2,7 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,25 @@ before(() => {
   put("c", "s-dup", lines(user("needle needle needle", "/w/eta"), user("another needle")), 20);
   put("d", "s-dup", lines(user("needle again", "/w/eta")), 5); // same id in a second project dir
   put("c", "s-regex", lines(user("abc plus a.c", "/w/theta")), 30);
+
+  const asst = (content, timestamp) => ({ type: "assistant", timestamp, message: { role: "assistant", content } });
+  const result = (content) => ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content }] } });
+  put("e", "h-user", lines({ ...user("please grep the Zebrafish config", "/w/h1"), timestamp: "2026-01-02T03:04:05Z" }), 40);
+  put("e", "h-asst", lines(user("hello", "/w/h2"), asst([{ type: "text", text: "the Axolotl module is loaded" }, { type: "tool_use", name: "Bash", input: {} }], "2026-02-03T04:05:06Z")), 41);
+  put("e", "h-tool", lines(user("go", "/w/h3"), result("narwhal output line"), result([{ type: "text", text: "narwhal in a list" }])), 42);
+  put("e", "h-notext", lines(user("go", "/w/h4"), asst([{ type: "tool_use", name: "quokka_tool", input: { a: 1 } }])), 43);
+  put("e", "h-cap", lines(user("go", "/w/h5"), ...Array.from({ length: 8 }, (_, i) => asst([{ type: "text", text: `marmot number ${i}` }]))), 44);
+  const long = Array.from({ length: 120 }, () => "word").join(" ");
+  put("e", "h-long", lines(user(`${long} okapi ${long}`, "/w/h6")), 45);
+  put("e", "h-nl", lines(user("line one\nline two okapinl\nline three", "/w/h7")), 46);
+  put("e", "h-multi", lines(user("a yakmulti and YAKMULTI here", "/w/h8")), 47);
+  put("e", "h-junk", lines('{"broken": "pangolin', user("fine pangolin", "/w/h9"), '{"x": pangolin}'), 48);
+  put("e", "p-full", lines({ type: "attachment" }, result("tool noise"), user("the first\nask", "/w/p1"), asst([{ type: "text", text: "early reply" }], "2026-03-01T00:00:00Z"), user("second ask"), asst([{ type: "text", text: "final answer" }, { type: "tool_use", name: "X", input: {} }], "2026-03-02T00:00:00Z"), asst([{ type: "tool_use", name: "Y", input: {} }])), 60);
+  put("e", "p-noasst", lines(user("only a question " + "long ".repeat(100), "/w/p2")), 61);
+  for (let i = 0; i < 201; i++) put("f", `cap-${i}`, lines(user("capsearchword", "/w/cap")), 1000 + i);
 });
+
+const hitsOf = (q, id) => byId(run("search", q), id)?.hits;
 
 test("title is the last ai-title", () => assert.equal(byId(run("list"), "s-title").title, "Last title"));
 test("falls back to custom-title, then summary", () => {
@@ -88,4 +106,86 @@ test("index is cached under ~/.cache and refreshed when a file's mtime changes",
   assert.ok(existsSync(join(home, ".cache", "herdr-session-search")));
   put("a", "s-custom", lines(user("hi", "/w/beta"), { type: "ai-title", aiTitle: "Renamed" }), 1);
   assert.equal(byId(run("list"), "s-custom").title, "Renamed");
+});
+
+test("a string user message yields a user hit with text, time and match offsets", () => {
+  const [h] = hitsOf("zebrafish", "h-user");
+  assert.equal(h.role, "user");
+  assert.equal(h.ts, "2026-01-02T03:04:05Z");
+  assert.equal(h.text, "please grep the Zebrafish config");
+  assert.equal(h.ranges.length, 1);
+  assert.equal(h.text.slice(...h.ranges[0]), "Zebrafish");
+});
+test("assistant text blocks yield assistant hits, tool_use blocks are ignored", () => {
+  const hs = hitsOf("axolotl", "h-asst");
+  assert.equal(hs.length, 1);
+  assert.equal(hs[0].role, "assistant");
+  assert.equal(hs[0].text, "the Axolotl module is loaded");
+});
+test("tool_result content, as a string or a text list, yields tool hits", () => {
+  const hs = hitsOf("narwhal", "h-tool");
+  assert.deepEqual(hs.map((h) => h.role), ["tool", "tool"]);
+  assert.deepEqual(hs.map((h) => h.text), ["narwhal output line", "narwhal in a list"]);
+});
+test("a match only in non-text JSON (tool_use input, keys) is not a hit, so the session is dropped", () => assert.equal(byId(run("search", "quokka"), "h-notext"), undefined));
+test("hits are capped at 5 per session, in transcript order", () => {
+  const hs = hitsOf("marmot", "h-cap");
+  assert.equal(hs.length, 5);
+  assert.deepEqual(hs.map((h) => h.text), [0, 1, 2, 3, 4].map((i) => `marmot number ${i}`));
+});
+test("long text is cut to a ~240 char snippet at word boundaries, keeping the match", () => {
+  const [h] = hitsOf("okapi", "h-long");
+  assert.ok(h.text.length <= 260, `len ${h.text.length}`);
+  assert.ok(h.text.length >= 100);
+  assert.ok(h.text.split(" ").every((w) => w === "word" || w === "okapi"), "no half words");
+  assert.equal(h.text.slice(...h.ranges[0]), "okapi");
+});
+test("newlines in the snippet are kept", () => {
+  const [h] = hitsOf("okapinl", "h-nl");
+  assert.equal(h.text, "line one\nline two okapinl\nline three");
+  assert.equal(h.text.slice(...h.ranges[0]), "okapinl");
+});
+test("every occurrence in the snippet is a range, case-insensitively", () => {
+  const [h] = hitsOf("yakmulti", "h-multi");
+  assert.deepEqual(h.ranges.map(([a, b]) => h.text.slice(a, b)), ["yakmulti", "YAKMULTI"]);
+});
+test("malformed lines, even ones containing the word, are skipped", () => {
+  const hs = hitsOf("pangolin", "h-junk");
+  assert.deepEqual(hs.map((h) => h.text), ["fine pangolin"]);
+});
+test("search returns at most 200 sessions by default, newest first", () => {
+  const rows = run("search", "capsearchword");
+  assert.equal(rows.length, 200);
+  assert.equal(rows[0].id, "cap-0");
+  assert.equal(rows.some((r) => r.id === "cap-200"), false);
+});
+
+test("peek gives the first user message and the last assistant message", () => {
+  const p = run("peek", "p-full");
+  assert.equal(p.first.role, "user");
+  assert.equal(p.first.text, "the first\nask");
+  assert.equal(p.last.role, "assistant");
+  assert.equal(p.last.text, "final answer");
+  assert.equal(p.last.ts, "2026-03-02T00:00:00Z");
+});
+test("peek with no assistant reply has last = null, and long text is trimmed at a word", () => {
+  const p = run("peek", "p-noasst");
+  assert.equal(p.last, null);
+  assert.ok(p.first.text.length <= 260);
+  assert.ok(p.first.text.startsWith("only a question"));
+  assert.ok(p.first.text.split(" ").every((w) => ["only", "a", "question", "long", ""].includes(w)));
+});
+test("peek of an unknown or path-like id is empty", () => {
+  assert.deepEqual(run("peek", "nope"), { first: null, last: null });
+  assert.deepEqual(run("peek", "../../x"), { first: null, last: null });
+});
+test("peek is cached by mtime", () => {
+  const f = put("e", "p-cache", lines(user("before", "/w/pc")), 70);
+  assert.equal(run("peek", "p-cache").first.text, "before");
+  const t = statSync(f).mtimeMs / 1000;
+  writeFileSync(f, lines(user("after", "/w/pc")));
+  utimesSync(f, t, t); // same mtime: served from cache
+  assert.equal(run("peek", "p-cache").first.text, "before");
+  utimesSync(f, t + 5, t + 5); // new mtime: re-read
+  assert.equal(run("peek", "p-cache").first.text, "after");
 });

@@ -57,3 +57,70 @@ export function actionFor(row, live, localSpaceId) {
   const args = { folder: row.cwd, argv: ["claude", "--resume", row.id], name: row.title.slice(0, 30) };
   return localSpaceId ? { name: "tab.new", args: { space: localSpaceId, ...args } } : { name: "space.new", args };
 }
+
+// Telescope keys: Up/Down plus ctrl-p/ctrl-n.
+export const keyDir = (keystroke) => (keystroke === "down" || keystroke === "ctrl-n" ? 1 : keystroke === "up" || keystroke === "ctrl-p" ? -1 : 0);
+
+// Hover selects a row; an index outside the list leaves the selection alone.
+export const hoverSel = (cur, i, len) => (Number.isInteger(i) && i >= 0 && i < len ? i : cur);
+
+export const DEBOUNCE_MS = 200;
+export const debounceFor = (q) => (q.trim() ? DEBOUNCE_MS : null);
+
+// Split text into plain/matched runs from [start, end) ranges (any order, may overlap or overrun).
+export function segments(text, ranges) {
+  const marks = ranges
+    .map(([a, b]) => [Math.max(0, a), Math.min(text.length, b)])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const m of marks) {
+    const last = merged[merged.length - 1];
+    if (last && m[0] <= last[1]) last[1] = Math.max(last[1], m[1]);
+    else merged.push([...m]);
+  }
+  const out = [];
+  let at = 0;
+  for (const [a, b] of merged) {
+    if (a > at) out.push({ text: text.slice(at, a), hit: false });
+    out.push({ text: text.slice(a, b), hit: true });
+    at = b;
+  }
+  if (at < text.length || !out.length) out.push({ text: text.slice(at), hit: false });
+  return out;
+}
+
+// Per-session peek cache. need() is true once per id: the caller then loads and calls set() (or fail() to allow a retry).
+export function createPreviews() {
+  const done = new Map(), pending = new Set();
+  return {
+    need(id) {
+      if (done.has(id) || pending.has(id)) return false;
+      pending.add(id);
+      return true;
+    },
+    set(id, data) { pending.delete(id); done.set(id, data); },
+    fail(id) { pending.delete(id); },
+    get: (id) => done.get(id),
+  };
+}
+
+// What the right pane shows: content hits if the search found any, else the peek (null while loading).
+export function previewState(row, hitRows, previews) {
+  if (!row) return null;
+  const h = hitRows.find((r) => r.id === row.id)?.hits;
+  if (h?.length) return { kind: "hits", hits: h };
+  return { kind: "peek", peek: previews.get(row.id) ?? null };
+}
+
+// A snippet as lines of word tokens ("word " with its trailing space), each flagged if inside a match, so a view can wrap and highlight.
+export function wordLines(text, ranges) {
+  const lines = [[]];
+  for (const seg of segments(text, ranges)) {
+    seg.text.split("\n").forEach((part, i) => {
+      if (i) lines.push([]);
+      for (const w of part.match(/\S+\s*|\s+/g) ?? []) lines[lines.length - 1].push({ text: w, hit: seg.hit });
+    });
+  }
+  return lines;
+}

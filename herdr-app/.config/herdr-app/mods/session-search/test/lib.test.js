@@ -1,7 +1,7 @@
 // Pure UI state: filtering, selection, stale results, live detection, what Enter does.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { visibleRows, moveSel, createSearch, shortPath, age, liveSessions, actionFor } from "../lib.js";
+import { visibleRows, moveSel, createSearch, shortPath, age, liveSessions, actionFor, keyDir, hoverSel, debounceFor, segments, createPreviews, previewState, wordLines } from "../lib.js";
 
 const rows = [
   { id: "1", title: "Fix login bug", cwd: "/Users/v/work/app", mtime: 300 },
@@ -92,3 +92,76 @@ test("with no local focused space it starts a new space instead", () => {
   assert.equal("space" in a.args, false);
   assert.deepEqual(a.args.argv, ["claude", "--resume", "abc"]);
 });
+
+test("Up/Down and ctrl-p/ctrl-n move the selection, like Telescope", () => {
+  assert.equal(keyDir("down"), 1);
+  assert.equal(keyDir("ctrl-n"), 1);
+  assert.equal(keyDir("up"), -1);
+  assert.equal(keyDir("ctrl-p"), -1);
+  assert.equal(keyDir("a"), 0);
+  assert.equal(keyDir("ctrl-a"), 0);
+});
+test("hovering a row selects it; a stray index leaves the selection alone", () => {
+  assert.equal(hoverSel(0, 2, 5), 2);
+  assert.equal(hoverSel(3, 9, 5), 3);
+  assert.equal(hoverSel(3, -1, 5), 3);
+});
+
+test("typing is debounced ~200 ms before rg runs; a blank query never searches", () => {
+  assert.equal(debounceFor("login"), 200);
+  assert.equal(debounceFor("  "), null);
+  assert.equal(debounceFor(""), null);
+});
+
+test("segments split a snippet into plain and matched runs", () => {
+  assert.deepEqual(segments("fix the login bug", [[8, 13]]), [{ text: "fix the ", hit: false }, { text: "login", hit: true }, { text: " bug", hit: false }]);
+  assert.deepEqual(segments("login", [[0, 5]]), [{ text: "login", hit: true }]);
+  assert.deepEqual(segments("abc", []), [{ text: "abc", hit: false }]);
+});
+test("segments tolerate unsorted, overlapping and out-of-range offsets", () => {
+  assert.deepEqual(segments("abcdef", [[4, 6], [0, 2], [1, 3], [5, 99]]).filter((s) => s.hit).map((s) => s.text), ["abc", "ef"]);
+  assert.equal(segments("abc", [[2, 2]]).map((s) => s.text).join(""), "abc");
+});
+
+test("preview loads lazily once per session id and is cached", () => {
+  const p = createPreviews();
+  assert.equal(p.need("s1"), true);
+  assert.equal(p.need("s1"), false); // already in flight
+  p.set("s1", { first: null, last: null });
+  assert.equal(p.need("s1"), false);
+  assert.deepEqual(p.get("s1"), { first: null, last: null });
+  assert.equal(p.get("s2"), undefined);
+});
+test("a failed preview load can be retried", () => {
+  const p = createPreviews();
+  p.need("s1");
+  p.fail("s1");
+  assert.equal(p.need("s1"), true);
+});
+
+test("a row with content hits previews those hits", () => {
+  const h = { role: "user", text: "x", ranges: [[0, 1]] };
+  const st = previewState({ id: "a" }, [{ id: "a", hits: [h] }], createPreviews());
+  assert.deepEqual(st, { kind: "hits", hits: [h] });
+});
+test("a title-only match previews the peek, or null while it loads", () => {
+  const p = createPreviews();
+  assert.deepEqual(previewState({ id: "a" }, [{ id: "b", hits: [{}] }], p), { kind: "peek", peek: null });
+  assert.deepEqual(previewState({ id: "a" }, [], p), { kind: "peek", peek: null });
+  p.set("a", { first: { text: "hi" }, last: null });
+  assert.deepEqual(previewState({ id: "a" }, [], p), { kind: "peek", peek: { first: { text: "hi" }, last: null } });
+});
+test("no row selected means no preview", () => assert.equal(previewState(undefined, [], createPreviews()), null));
+
+test("wordLines breaks a snippet into lines of word tokens, flagging matched words", () => {
+  const lines = wordLines("fix login\nnow", [[4, 9]]);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines[0].map((w) => [w.text, w.hit]), [["fix ", false], ["login", true]]);
+  assert.deepEqual(lines[1].map((w) => [w.text, w.hit]), [["now", false]]);
+});
+test("wordLines splits a match inside a word without losing characters", () => {
+  const lines = wordLines("prelogin ok", [[3, 8]]);
+  assert.equal(lines[0].map((w) => w.text).join(""), "prelogin ok");
+  assert.deepEqual(lines[0].filter((w) => w.hit).map((w) => w.text), ["login"]);
+});
+test("wordLines keeps blank lines", () => assert.equal(wordLines("a\n\nb", []).length, 3));
