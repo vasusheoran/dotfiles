@@ -79,7 +79,8 @@
     "ctrl-b x": "pane.close",
     "ctrl-b z": "pane.zoom",
     "ctrl-b q": "window.close",
-    "ctrl-b shift-n": "agent.next"
+    "ctrl-b shift-n": "agent.next",
+    "ctrl-b b": "mod.open:zaksha-board"
   },
   "terminal": {
     "cmd-f": "terminal.search",
