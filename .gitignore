@@ -5,3 +5,5 @@
 # herdr runtime files (only config.toml is config)
 herdr/.config/herdr/*
 !herdr/.config/herdr/config.toml
+herdr-app/.config/herdr-app/mods/*/gpui-kit.d.ts
+herdr-app/.config/herdr-app/mods/*/jsconfig.json

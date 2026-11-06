@@ -61,6 +61,7 @@
     "ctrl-b ctrl-n": "space.new",
     "ctrl-b ctrl-r": "space.rename",
     "ctrl-b ctrl-l": "mod.open:picker",
+    "ctrl-b s": "mod.open:session-search",
     "ctrl-b shift-k": "space.close",
     "shift-up": "space.prev",
     "shift-down": "space.next",
