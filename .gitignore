@@ -5,3 +5,8 @@
 # herdr runtime files (only config.toml is config)
 herdr/.config/herdr/*
 !herdr/.config/herdr/config.toml
+
+# zaksha-board: personal owner/project (commit only board.example.json)
+herdr-app/.config/herdr-app/mods/zaksha-board/board.json
+herdr-app/.config/herdr-app/mods/zaksha-board/gpui-kit.d.ts
+herdr-app/.config/herdr-app/mods/zaksha-board/jsconfig.json
