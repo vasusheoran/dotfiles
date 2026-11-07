@@ -9,7 +9,7 @@ export default class SpaceToggle extends View {
     const to = pickPrevious(shared("space-toggle.history") ?? [], focused());
     if (to) { run("space.select", { id: to.space }); run("tab.select", { id: to.tab }); }
     else notify({ title: "No previous space", timeout: 2000 });
-    closeOverlay(props().overlay);
+    if (props()?.overlay) closeOverlay(props().overlay);
   }
 
   render() { return div(); }
