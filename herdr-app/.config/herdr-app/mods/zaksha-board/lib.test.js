@@ -2,7 +2,7 @@
 // All data here is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab, uiState, toggleEpic } from "./lib.js";
+import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab, uiState, toggleEpic, draft } from "./lib.js";
 
 const CFG = {
   owner: "acme", project: 7, priorities: ["P0", "P1", "P2"],
@@ -20,7 +20,7 @@ const issue = (o = {}) => ({
   status: o.status === null ? null : { name: o.status ?? "Next" },
   priority: o.priority === null ? null : { name: o.priority ?? "P1" },
   content: {
-    title: o.title ?? `Synthetic task ${seq}`, number: o.number ?? seq, url: `https://github.com/acme/widgets/issues/${o.number ?? seq}`,
+    title: o.title ?? `Synthetic task ${seq}`, state: o.state ?? "OPEN", number: o.number ?? seq, url: `https://github.com/acme/widgets/issues/${o.number ?? seq}`,
     repository: { nameWithOwner: o.repo ?? "acme/widgets" },
     closedByPullRequestsReferences: { nodes: o.prs ?? [] },
     ...(o.parent !== undefined ? { parent: o.parent } : {}),
@@ -84,7 +84,7 @@ test("an item carries title, number, url, repo, status, priority, updatedAt, typ
   assert.deepEqual(r.items[0], {
     key: "acme/widgets#5", title: "Fake thing", number: 5, url: "https://github.com/acme/widgets/issues/5", repo: "acme/widgets",
     status: "Ready", priority: "P0", updatedAt: "2026-02-02T00:00:00Z", type: "Issue", prs: [pr],
-    parent: null, subIssues: null, epic: false,
+    state: "OPEN", parent: null, subIssues: null, epic: false,
   });
 });
 
@@ -303,9 +303,9 @@ const EPIC_B = { key: "acme/gadgets#200", number: 200, title: "Beta epic", url: 
 const card = (o) => ({
   key: `${o.repo ?? "acme/widgets"}#${o.number}`, title: o.title ?? `Task ${o.number}`, number: o.number, url: `https://x/${o.number}`, repo: o.repo ?? "acme/widgets",
   status: o.status ?? "Next", priority: "priority" in o ? o.priority : "P1", updatedAt: o.updatedAt ?? "2026-01-01T00:00:00Z", type: "Issue", prs: [],
-  parent: o.parent ?? null, subIssues: o.sub ?? null, epic: !!o.sub && o.sub.total > 0,
+  state: o.state ?? "OPEN", parent: o.parent ?? null, subIssues: o.sub ?? null, epic: !!o.sub && o.sub.total > 0,
 });
-const epic = (e, o = {}) => card({ number: e.number, repo: e.key.split("#")[0], title: e.title, status: o.status ?? "In progress", priority: o.priority ?? "P1", sub: o.sub ?? { total: 4, completed: 1, percentCompleted: 25 } });
+const epic = (e, o = {}) => card({ number: e.number, repo: e.key.split("#")[0], title: e.title, status: o.status ?? "In progress", priority: o.priority ?? "P1", state: o.state, sub: o.sub ?? { total: 4, completed: 1, percentCompleted: 25 } });
 const nums = (cards) => cards.map((c) => c.number);
 const allCards = (b) => b.columns.flatMap((c) => nums(c.cards));
 
@@ -379,7 +379,7 @@ test("epics leave the columns and show in the epic bar: open ones, most open sub
   const list = [
     epic(EPIC_A, { sub: { total: 5, completed: 4, percentCompleted: 80 } }),
     epic(EPIC_B, { sub: { total: 6, completed: 2, percentCompleted: 33 } }),
-    epic({ key: "acme/widgets#300", number: 300, title: "Closed epic" }, { status: "Done" }),
+    epic({ key: "acme/widgets#300", number: 300, title: "Closed epic" }, { state: "CLOSED" }),
     card({ number: 1, parent: EPIC_A }),
   ];
   const b = buildBoard(list, CFG, [term("t9", "acme/widgets#100", "working")]);
@@ -443,4 +443,32 @@ test("counts reflect the filtered view, with the unfiltered total of column card
   const f = buildBoard(list, CFG, [], { ...uiState(CFG), epic: EPIC_A.key });
   assert.deepEqual(f.counts, { "NEEDS YOU": 1, WORKING: 0, "UP NEXT": 1, DONE: 1 });
   assert.equal(f.total, 4);
+});
+
+test("the item query asks for each issue's GitHub state", async () => {
+  let q = "";
+  await fetchAll(async (args) => { q = args.find((a) => a.startsWith("query=")); return page([]); }, CFG);
+  assert.match(q, /\.\.\. on Issue \{ title number url state\b/);
+});
+
+test("an open epic is one whose GitHub state is OPEN, whatever its board Status", () => {
+  const list = [
+    epic(EPIC_A, { status: "Done", state: "OPEN" }),
+    epic(EPIC_B, { status: "In progress", state: "CLOSED" }),
+  ];
+  const b = buildBoard(list, CFG, []);
+  assert.deepEqual(b.epics.map((e) => e.key), [EPIC_A.key]);
+});
+
+test("draft: typing changes the text without saving; commit saves once, and only a change", () => {
+  const saves = [];
+  const d = draft((v) => saves.push(v), "abc");
+  assert.equal(d.get(), "abc");
+  d.set("abcd"); d.set("abcde");
+  assert.equal(d.get(), "abcde");
+  assert.deepEqual(saves, []);
+  d.commit(); d.commit();
+  assert.deepEqual(saves, ["abcde"]);
+  d.set("x"); d.set("abcde"); d.commit();
+  assert.deepEqual(saves, ["abcde"]);
 });

@@ -29,7 +29,7 @@ const QUERY = `query($owner: String!, $number: Int!, $after: String) {
         content {
           ... on DraftIssue { title }
           ... on PullRequest { title number url repository { nameWithOwner } }
-          ... on Issue { title number url repository { nameWithOwner }
+          ... on Issue { title number url state repository { nameWithOwner }
             closedByPullRequestsReferences(first: 10) { nodes { number url state } }
             parent { number title url }
             subIssuesSummary { total completed percentCompleted } }
@@ -51,7 +51,7 @@ function toItem(n) {
   const sub = c.subIssuesSummary ?? null;
   return {
     key: repo && c.number ? `${repo}#${c.number}` : `draft:${n.id}`,
-    title: c.title ?? "(no title)", number: c.number ?? null, url: c.url ?? null, repo,
+    title: c.title ?? "(no title)", number: c.number ?? null, url: c.url ?? null, repo, state: c.state ?? null,
     status: n.status?.name ?? null, priority: n.priority?.name ?? null, updatedAt: n.updatedAt ?? null,
     type: TYPES[n.type] ?? n.type ?? null, prs: c.closedByPullRequestsReferences?.nodes ?? [],
     parent: p ? { key: keyOf(p.url) ?? `#${p.number}`, number: p.number, title: p.title, url: p.url } : null,
@@ -135,6 +135,12 @@ export function uiState(cfg, saved) {
 // clicking an epic filters to it; clicking the active one (or null: "All") clears it
 export const toggleEpic = (ui, key) => ({ ...ui, epic: key && key !== ui.epic ? key : null });
 
+// the filter text as typed; save() (shared state, which redraws every mod) runs only on commit, and only for a change
+export function draft(save, initial = "") {
+  let value = initial, saved = initial;
+  return { get: () => value, set: (v) => { value = v; }, commit: () => { if (value !== saved) { saved = value; save(value); } } };
+}
+
 const matches = (c, text) => !text || [c.title, c.number ? `#${c.number}` : "", c.repo ?? "", c.parent?.title ?? ""]
   .some((s) => s.toLowerCase().includes(text));
 
@@ -149,7 +155,7 @@ export function buildBoard(items, cfg, terminals, ui = uiState(cfg)) {
     return { ...it, agents: a, needsYou: a.some((x) => x.status === "blocked") };
   };
   const isDone = (it) => !!cfg.done?.status && it.status === cfg.done.status;
-  const epics = items.filter((it) => it.epic && !isDone(it)).map(card)
+  const epics = items.filter((it) => it.epic && it.state === "OPEN").map(card)
     .map((e) => ({ ...e, total: e.subIssues.total, completed: e.subIssues.completed, percent: e.subIssues.percentCompleted ?? 0 }))
     .sort((a, b) => (b.total - b.completed) - (a.total - a.completed) || a.title.localeCompare(b.title));
 

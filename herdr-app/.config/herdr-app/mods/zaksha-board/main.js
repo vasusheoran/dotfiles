@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, props, panes, terminals, theme, readTextFile, appHome, closeOverlay, shared, setShared } from "herdr";
-import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab, uiState, toggleEpic } from "./lib.js";
+import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab, uiState, toggleEpic, draft } from "./lib.js";
 
 const MOD = "zaksha-board";
 const MONO = "JetBrains Mono";
@@ -40,10 +40,13 @@ export default class Board extends View {
     this.asking = false;
     this.fetch = single((cx) => this.load(cx));
     this.typing = false; // the filter input has the keyboard
-    this.input = InputState.new({ placeholder: "Filter  /", value: shared(UI_KEY)?.text ?? "" });
-    this.input.on("change", () => this.setUi({ text: this.input.value() }));
+    // typing redraws only this copy; the text goes to shared state on blur, Enter or Esc
+    this.text = draft((text) => this.setUi({ text }), shared(UI_KEY)?.text ?? "");
+    this.input = InputState.new({ placeholder: "Filter  /", value: this.text.get() });
+    this.input.on("change", (_e, cx) => { this.text.set(this.input.value()); cx.notify(); });
+    this.input.on("submit", () => this.text.commit());
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
-    this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
+    this.input.on("blur", (_e, cx) => { this.typing = false; this.text.commit(); cx.notify(); });
     this.refresh(cx);
     cx.timer.every(ASK_MS, (cx) => this.readAsks(cx));
   }
@@ -100,8 +103,8 @@ export default class Board extends View {
     });
   }
 
-  ui() { return uiState(this.cfg, shared(UI_KEY)); }
-  setUi(change) { if (this.cfg) setShared(UI_KEY, { ...this.ui(), ...change }); }
+  ui() { return { ...uiState(this.cfg, shared(UI_KEY)), text: this.text.get() }; }
+  setUi(change) { if (this.cfg) setShared(UI_KEY, { ...uiState(this.cfg, shared(UI_KEY)), ...change }); }
 
   press(b) {
     if (b.run) run(...b.run);
@@ -270,7 +273,8 @@ export default class Board extends View {
         if (this.typing) { // keys go to the filter; Esc clears it and gives the keyboard back
           if (e.key !== "escape") return;
           this.input.set_value("");
-          this.setUi({ text: "" });
+          this.text.set("");
+          this.text.commit();
           this.h.focus();
         } else if (e.key === "/") this.input.focus();
         else if (e.key === "r") this.refresh(cx);
