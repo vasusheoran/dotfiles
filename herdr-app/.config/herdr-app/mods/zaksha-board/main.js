@@ -4,7 +4,7 @@
 // which toggles between the Board space and where you were (lib toggleBoard), then closes itself.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
-import { exec, hc, run, props, panes, spaces, focused, terminals, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
+import { exec, hc, run, props, panes, spaces, focused, terminals, agents, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
   needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
@@ -144,7 +144,7 @@ export default class Board extends View {
     });
   }
 
-  linked() { return linkTerminals(terminals(), this.items, spaces()); }
+  linked() { return linkTerminals(terminals(), this.items, spaces(), agents()); }
 
   setUi(change) { this.ui = { ...this.ui, ...change }; }
 

@@ -116,8 +116,9 @@ const labelsOf = (t) => Array.isArray(t.labels)
 
 // Unlabelled live claude terminals on this computer, matched read-only to an open issue: by a "#N" token in the
 // terminal title, else by N as a whole number in its space's branch (the space's name must fit the repo when it names one).
-// Returns the terminals, matched ones carrying matched: {key, by}. Never writes a label.
-export function linkTerminals(terminals, items, spaces) {
+// terminals() (hc ls shape) has labels and liveness but no title, app or seq: those come from agents() (AgentInfo), by address.
+// Returns the terminals, matched ones carrying matched: {key, by} and the agent's seq. Never writes a label.
+export function linkTerminals(terminals, items, spaces, agents) {
   const open = (items ?? []).filter((it) => it.number && !it.epic && !isDone(it));
   const shorts = new Set(open.map((it) => it.repo?.split("/").pop().toLowerCase()));
   const byNumber = (n, space) => {
@@ -127,15 +128,17 @@ export function linkTerminals(terminals, items, spaces) {
   };
   return (terminals ?? []).map((t) => {
     if (t.state && t.state !== "live") return t;
-    if (labelsOf(t).card || String(t.address).includes("/") || t.app !== "claude-code") return t;
-    const space = (spaces ?? []).find((s) => s.id === labelsOf(t)["herdr.space"]);
-    for (const m of String(t.title ?? "").matchAll(/(?<![\w#])#(\d+)(?!\d)/g)) {
+    if (labelsOf(t).card || String(t.address).includes("/")) return t;
+    const a = (agents ?? []).find((x) => x.address === t.address);
+    if (!a || (a.app ?? t.report?.app) !== "claude-code") return t;
+    const space = (spaces ?? []).find((s) => s.id === a.space);
+    for (const m of String(a.title ?? "").matchAll(/(?<![\w#])#(\d+)(?!\d)/g)) {
       const it = byNumber(Number(m[1]), space);
-      if (it) return { ...t, matched: { key: it.key, by: "title" } };
+      if (it) return { ...t, seq: a.seq, matched: { key: it.key, by: "title" } };
     }
     const n = /(?<!\d)\d+(?!\d)/.exec(space?.branch ?? "")?.[0]; // feat/<N>-slug: only the first number names the issue
     const it = n && byNumber(Number(n), space);
-    if (it) return { ...t, matched: { key: it.key, by: "branch" } };
+    if (it) return { ...t, seq: a.seq, matched: { key: it.key, by: "branch" } };
     return t;
   });
 }
