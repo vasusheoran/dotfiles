@@ -7,8 +7,8 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 - `lib.js`: all logic (config, the one paginated `gh api graphql` fetch, lanes, views, search, selection, keys, the Board space). No herdr/gpui imports.
 - `lib.test.js`: behavior tests for `lib.js`, synthetic data only. Write the test first for any logic change.
 - `main.js`: reads, polls and draws; keep logic out of it.
-- Starting (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: pick /work or Quick, plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
-- Start dialog keys are the pure `dialogKey` (in `zaksha-board-start/lib.js`, tested from here): `n` focuses notes, `w` /work, `q` Quick, Enter starts, Esc leaves the input then cancels.
+- Starting (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: pick /work, Quick or Brief, plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
+- Start dialog keys are the pure `dialogKey` (in `zaksha-board-start/lib.js`, tested from here): `n` focuses notes, `w` /work, `q` Quick, `b` Brief (read-only catch-up, tab `#<N> brief`), Enter starts, Esc leaves the input then cancels.
 - The started command labels its own terminal `card=<key>` before claude runs, so the board shows the agent at once.
 - `board.example.json`: committed template. `board.json`: your real one, gitignored. This repo is public: never commit real owner/project values, issue titles or screen text.
 

@@ -758,6 +758,28 @@ test("startArgv quick: no notes -> read it and ask; notes -> do this; no /work a
   assert.equal(startArgv("acme/widgets#12", "x", { mode: "quick", ...INFO })[5].includes("/work"), false);
 });
 
+const BRIEF_BODY = "Read-only: change nothing on GitHub or in code. Cover, in short sections:\n1. What it is: the problem in plain words and its acceptance criteria.\n2. Where it stands: status, priority, epic, linked PRs (state, checks, review), any branch or worktree for it.\n3. Previous work: the issue's comments (including /work phase comments), commits mentioning it, and past Claude sessions that discussed it (rg -l -F '#12' ~/.claude/projects, then read the relevant ones).\n4. Validation: for each acceptance criterion, met on main / not met / can't tell, with the file or test that shows it.\n5. Next step: one recommendation (/work it, close, mark duplicate, ask someone) with the exact command.\nThen wait for my instruction.";
+const brief = (focus) => `Brief me on acme/widgets#12: Fix thing\nhttps://github.com/acme/widgets/issues/12\n\n${focus ? `Focus on: ${focus}\n\n` : ""}${BRIEF_BODY}`;
+
+test("startArgv brief: read-only catch-up prompt, notes become Focus on, same label wrapper", () => {
+  assert.deepEqual(startArgv("acme/widgets#12", "", { mode: "brief", ...INFO }), wrap(brief("")));
+  assert.deepEqual(startArgv("acme/widgets#12", "  the auth part ", { mode: "brief", ...INFO }), wrap(brief("the auth part")));
+  assert.equal(startArgv("acme/widgets#12", "", { mode: "brief", ...INFO })[5].startsWith("/work"), false);
+});
+
+test("startPlan confirmed: brief mode names the tab '#N brief'", () => {
+  const p = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true, mode: "brief" });
+  assert.equal(p.step[1].name, "#12 brief");
+  assert.deepEqual(p.step[1].argv, wrap(brief("")));
+});
+
+test("dialogKey: b picks Brief; w and q leave it; typing keeps b for the input", () => {
+  assert.deepEqual(dialogKey({ mode: "work", typing: false }, "b"), { state: { mode: "brief", typing: false }, action: null });
+  assert.deepEqual(dialogKey({ mode: "brief", typing: false }, "q").state.mode, "quick");
+  assert.deepEqual(dialogKey({ mode: "brief", typing: false }, "w").state.mode, "work");
+  assert.deepEqual(dialogKey({ mode: "work", typing: true }, "b"), { state: { mode: "work", typing: true }, action: null });
+});
+
 test("startPlan confirmed: mode and notes flow into the argv and tab name of either start step", () => {
   const want = wrap("/work acme/widgets#12\n\nNotes from Vasu: mind the schema");
   const tab = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true, notes: " mind the schema " });

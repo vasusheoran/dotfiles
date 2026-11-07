@@ -1,4 +1,4 @@
-// The board's start dialog: pick /work or Quick, add optional notes. Props { title, detail, command: { name } }.
+// The board's start dialog: pick /work, Quick or Brief, add optional notes. Props { title, detail, command: { name } }.
 // Keys are dialogKey in ./lib.js. Mode and notes ride in shared state to zaksha-board
 // (nextCommand carries a name only); zaksha-board.start reads and clears them.
 import { View, div } from "gpui-kit";
@@ -58,13 +58,13 @@ export default class StartDialog extends View {
         .bg(on ? t.solid : t.raised).text_color(on ? t.solid_foreground : t.muted).text_size(12.5).font_medium().cursor_pointer()
         .on_click((_e, cx) => { this.st = { ...this.st, mode }; cx.notify(); }).child(text);
     };
-    const hints = this.st.typing ? "Enter start · Esc back" : "n notes · w /work · q Quick · Enter start · Esc cancel";
+    const hints = this.st.typing ? "Enter start · Esc back" : "n notes · w /work · q Quick · b Brief · Enter start · Esc cancel";
     return v_flex().id("start-work").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .size_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
       .child(div().text_size(15).font_semibold().child(p.title ?? "Start this issue?"))
       .child(div().pt(6).text_size(13).text_color(t.muted).child(p.detail ?? ""))
       .child(h_flex().mt(14).p(3).gap(3).rounded(9).bg(t.raised).border_1().border_color(t.input)
-        .child(choice("sw-work", "work", "/work")).child(choice("sw-quick", "quick", "Quick")))
+        .child(choice("sw-work", "work", "/work")).child(choice("sw-quick", "quick", "Quick")).child(choice("sw-brief", "brief", "Brief")))
       .child(div().pt(14).pb(7).text_size(11.5).text_color(t.dim).child("Notes for the agent (optional)"))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.st.typing ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground))
       .child(div().flex_1())

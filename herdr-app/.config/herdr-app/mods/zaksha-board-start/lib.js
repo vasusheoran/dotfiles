@@ -12,6 +12,7 @@ export function dialogKey(state, key) {
   if (key === "n") return { state: { ...state, typing: true }, action: "focus-notes" };
   if (key === "w") return { state: { ...state, mode: "work" }, action: null };
   if (key === "q") return { state: { ...state, mode: "quick" }, action: null };
+  if (key === "b") return { state: { ...state, mode: "brief" }, action: null };
   if (key === "enter") return { state, action: "start" };
   if (key === "escape") return { state, action: "cancel" };
   return { state, action: null };
