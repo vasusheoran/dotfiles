@@ -990,3 +990,16 @@ test("pushHistory: most recent first, deduped, capped at 10, local only", () => 
   assert.equal(h.length, 10);
   assert.equal(h[0].space, "s14");
 });
+
+test("linkTerminals: only the first number in the branch counts", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-tamper-w11-v4" }];
+  const items = [ITEM(717), ITEM(11), ITEM(4)];
+  assert.deepEqual(linkTerminals([cc("t1")], items, sp)[0].matched, { key: "acme/widgets#717", by: "branch" });
+  assert.equal(linkTerminals([cc("t1")], [ITEM(11), ITEM(4)], sp)[0].matched, undefined);
+});
+
+test("cardAgents: a title match beats a branch match even when the branch one is newer", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-x" }];
+  const ts = linkTerminals([cc("b1", { seq: 99 }), cc("t1", { title: "#717 a", seq: 1 })], MI, sp);
+  assert.deepEqual(cardAgents(ts).get("acme/widgets#717").map((x) => [x.address, x.matched]), [["t1", "title"], ["b1", "branch"]]);
+});

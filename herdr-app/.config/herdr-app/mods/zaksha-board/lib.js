@@ -133,10 +133,9 @@ export function linkTerminals(terminals, items, spaces) {
       const it = byNumber(Number(m[1]), space);
       if (it) return { ...t, matched: { key: it.key, by: "title" } };
     }
-    for (const m of String(space?.branch ?? "").matchAll(/(?<!\d)\d+(?!\d)/g)) {
-      const it = byNumber(Number(m[0]), space);
-      if (it) return { ...t, matched: { key: it.key, by: "branch" } };
-    }
+    const n = /(?<!\d)\d+(?!\d)/.exec(space?.branch ?? "")?.[0]; // feat/<N>-slug: only the first number names the issue
+    const it = n && byNumber(Number(n), space);
+    if (it) return { ...t, matched: { key: it.key, by: "branch" } };
     return t;
   });
 }
