@@ -4,8 +4,10 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, run, terminals, focused, spaces, theme, props, closeOverlay, appHome, home } from "herdr";
+import { makeLog } from "./log.js";
 import { visibleRows, moveSel, createSearch, shortPath, age, liveSessions, actionFor, keyDir, hoverSel, debounceFor, createPreviews, previewState, wordLines } from "./lib.js";
 
+const log = makeLog("session-search", { dir: appHome() }); // data/logs/session-search.log
 const ROWS = 12;
 const LIST_W = 420;
 const ROW_H = 40;
@@ -25,7 +27,7 @@ export default class SessionSearch extends View {
     this.input.focus();
     cx.timer.after(600, () => this.input.focus());
     this.handle = cx.focus_handle();
-    helper("list").then((rows) => { this.all = rows; cx.notify(); }, () => {});
+    helper("list").then((rows) => { this.all = rows; cx.notify(); }, (e) => log("error", "list failed", { message: String(e?.message ?? e) }));
   }
 
   rows() {
@@ -41,14 +43,14 @@ export default class SessionSearch extends View {
     // Debounce: only the latest keystroke in 200 ms actually searches.
     cx.timer.after(debounceFor(q), () => {
       if (!this.search.current(token)) return;
-      helper("search", q).then((rows) => { if (this.search.accept(token, rows)) cx.notify(); }, () => {});
+      helper("search", q).then((rows) => { if (this.search.accept(token, rows)) cx.notify(); }, (e) => log("error", "search failed", { message: String(e?.message ?? e) }));
     });
   }
 
   // Lazy peek for the selected row, only when it has no content hits.
   loadPeek(r, cx) {
     if (!r || previewState(r, this.search.hits(), this.previews).kind !== "peek" || !this.previews.need(r.id)) return;
-    helper("peek", r.id).then((p) => { this.previews.set(r.id, p); cx.notify(); }, () => this.previews.fail(r.id));
+    helper("peek", r.id).then((p) => { this.previews.set(r.id, p); cx.notify(); }, (e) => { log("error", "peek failed", { id: r.id, message: String(e?.message ?? e) }); this.previews.fail(r.id); });
   }
 
   hit(h, t) {

@@ -36,3 +36,12 @@ GitHub is read on open, when the board becomes visible (at most once a minute), 
 node --test herdr-app/.config/herdr-app/mods/zaksha-board/
 herdr-app check herdr-app/.config/herdr-app/mods/zaksha-board
 ```
+
+## Logs
+
+Every mod writes `~/.config/herdr-app/data/logs/<mod>.log` (`zaksha-board`, `zaksha-board-start`, `session-search`, `space-toggle`) through `log.js`, a copy of one file kept identical in each mod folder (mods can't import siblings; `log.test.js` checks the copies match). Herdr keeps no mod output, so this is where a silent failure shows up.
+
+- Line: `ISO-time LEVEL mod message {json}`. Notes text is never logged, only its length.
+- Rotation: when a log is over 256 KB, `.log.1` moves to `.log.2` and `.log` to `.log.1` (two old files kept). `fs/promises` has no append or rename, so a write is read + write; failed writes are dropped.
+- Read: `tail -f ~/.config/herdr-app/data/logs/zaksha-board.log` (and `zaksha-board-start.log` for the dialog).
+- Start flow, in order: `row key a` → `a pressed` → `dialog opened` → dialog `start()` / `closeOverlay` / `run` → `nextCommand` → `startWork` → `folder check` → `areas read` → `startPlan` → `run`. The last line present is where it stopped.

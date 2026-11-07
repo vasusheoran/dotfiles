@@ -3,14 +3,18 @@
 // (nextCommand carries a name only); zaksha-board.start reads and clears them.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { run, props, closeOverlay, theme, setShared } from "herdr";
+import { run, props, closeOverlay, theme, setShared, appHome } from "herdr";
 import { dialogKey, dialogTitle } from "./lib.js";
+import { makeLog } from "./log.js";
+
+const log = makeLog("zaksha-board-start", { dir: appHome() }); // data/logs/zaksha-board-start.log
 
 export const NOTES_KEY = "zaksha-board.notes";
 export const MODE_KEY = "zaksha-board.mode";
 
 export default class StartDialog extends View {
   init(_props, cx) {
+    log("info", "dialog opened", { props: props() });
     this.input = InputState.new({ placeholder: "e.g. use the v2 API, skip the migration" });
     this.st = { mode: "work", typing: false };
     this.handle = cx.focus_handle();
@@ -23,10 +27,13 @@ export default class StartDialog extends View {
 
   start() {
     const p = props();
+    log("info", "start()", { mode: this.st.mode, notes: this.input.value().length });
     setShared(NOTES_KEY, this.input.value());
     setShared(MODE_KEY, this.st.mode);
-    closeOverlay(p.overlay);
-    run(p.command.name, p.command.args ?? {});
+    const c = closeOverlay(p.overlay);
+    log("info", "closeOverlay", { overlay: p.overlay, result: c });
+    const r = run(p.command.name, p.command.args ?? {});
+    log("info", "run", { command: p.command.name, result: r });
   }
 
   // While typing, Enter is the input's own submit; dialogKey only adds Esc there.
@@ -35,9 +42,10 @@ export default class StartDialog extends View {
     if (this.st.typing && k === "enter" && !e.modifiers?.platform && !e.modifiers?.control) return;
     const before = this.st;
     const { state, action } = dialogKey(before, k);
+    if (action || state !== before) log("info", "key", { key: k, action, mode: state.mode });
     this.st = state;
     if (action === "start") this.start();
-    else if (action === "cancel") closeOverlay(props().overlay);
+    else if (action === "cancel") { log("info", "cancel"); closeOverlay(props().overlay); }
     else if (action === "focus-notes") cx.timer.after(0, () => this.input.focus()); // after this keypress, so it never types an "n"
     else if (action === "blur-notes") this.handle.focus();
     else if (state === before) return;
@@ -51,7 +59,7 @@ export default class StartDialog extends View {
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+      .hover((s) => s.opacity(0.88)).on_click(() => { log("info", "button", { id }); action(); }).child(text);
     const choice = (id, mode, text) => {
       const on = this.st.mode === mode;
       return h_flex().id(id).flex_1().h(30).items_center().justify_center().rounded(7)
