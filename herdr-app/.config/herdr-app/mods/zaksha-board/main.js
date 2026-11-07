@@ -201,7 +201,7 @@ export default class Board extends View {
     if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
     else if (p.action === "confirm") {
       this.asked = row;
-      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 290, props: { title: p.title, detail: p.detail, command: { name: `${MOD}.start` } } });
+      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 290, props: { title: p.title, key: row.key, detail: p.detail, command: { name: `${MOD}.start` } } });
     }
   }
 

@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { run, props, closeOverlay, theme, setShared } from "herdr";
-import { dialogKey } from "./lib.js";
+import { dialogKey, dialogTitle } from "./lib.js";
 
 export const NOTES_KEY = "zaksha-board.notes";
 export const MODE_KEY = "zaksha-board.mode";
@@ -38,7 +38,7 @@ export default class StartDialog extends View {
     this.st = state;
     if (action === "start") this.start();
     else if (action === "cancel") closeOverlay(props().overlay);
-    else if (action === "focus-notes") this.input.focus();
+    else if (action === "focus-notes") cx.timer.after(0, () => this.input.focus()); // after this keypress, so it never types an "n"
     else if (action === "blur-notes") this.handle.focus();
     else if (state === before) return;
     cx.stop_propagation();
@@ -61,7 +61,7 @@ export default class StartDialog extends View {
     const hints = this.st.typing ? "Enter start · Esc back" : "n notes · w /work · q Quick · b Brief · Enter start · Esc cancel";
     return v_flex().id("start-work").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .size_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
-      .child(div().text_size(15).font_semibold().child(p.title ?? "Start this issue?"))
+      .child(div().text_size(15).font_semibold().child(p.key ? dialogTitle(this.st.mode, p.key) : (p.title ?? "Start this issue?")))
       .child(div().pt(6).text_size(13).text_color(t.muted).child(p.detail ?? ""))
       .child(h_flex().mt(14).p(3).gap(3).rounded(9).bg(t.raised).border_1().border_color(t.input)
         .child(choice("sw-work", "work", "/work")).child(choice("sw-quick", "quick", "Quick")).child(choice("sw-brief", "brief", "Brief")))

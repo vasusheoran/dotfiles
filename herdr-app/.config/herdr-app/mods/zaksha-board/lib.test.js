@@ -8,7 +8,7 @@ import {
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
   scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor,
 } from "./lib.js";
-import { dialogKey } from "../zaksha-board-start/lib.js";
+import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
 const NOW = Date.parse("2026-03-01T12:00:00Z");
@@ -811,4 +811,10 @@ test("dialogKey while typing: letters belong to the input; Enter starts; Esc lea
   const left = dialogKey(typing, "escape");
   assert.deepEqual(left, { state: { mode: "quick", typing: false }, action: "blur-notes" });
   assert.deepEqual(dialogKey(left.state, "escape"), { state: left.state, action: "cancel" });
+});
+
+test("dialogTitle follows the mode", () => {
+  assert.equal(dialogTitle("work", "acme/widgets#12"), "Start /work on acme/widgets#12?");
+  assert.equal(dialogTitle("quick", "acme/widgets#12"), "Quick action on acme/widgets#12?");
+  assert.equal(dialogTitle("brief", "acme/widgets#12"), "Brief me on acme/widgets#12?");
 });

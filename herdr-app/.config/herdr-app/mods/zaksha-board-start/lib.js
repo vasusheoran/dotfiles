@@ -17,3 +17,6 @@ export function dialogKey(state, key) {
   if (key === "escape") return { state, action: "cancel" };
   return { state, action: null };
 }
+
+const TITLES = { work: (k) => `Start /work on ${k}?`, quick: (k) => `Quick action on ${k}?`, brief: (k) => `Brief me on ${k}?` };
+export const dialogTitle = (mode, key) => (TITLES[mode] ?? TITLES.work)(key);
