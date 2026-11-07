@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory, startMode,
+  scrollTop, clampTop, facets, cardList, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory, startMode,
 } from "./lib.js";
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
@@ -1022,4 +1022,77 @@ test("startMode: uses the dialog's mode as given, work only when missing or unkn
   assert.equal(startMode("quick"), "quick");
   assert.equal(startMode("brief"), "brief");
   for (const bad of [undefined, null, "", "BRIEF", "other", 3]) assert.equal(startMode(bad), "work");
+});
+
+// ---- one session on several issues: card=<ref>,<ref> ----
+
+test("cardList: split on commas, trim, drop empties, dedupe case-insensitively keeping first and order", () => {
+  assert.deepEqual(cardList("acme/widgets#4,acme/widgets#9"), ["acme/widgets#4", "acme/widgets#9"]);
+  assert.deepEqual(cardList(" acme/widgets#4 , ,Acme/Widgets#9,,"), ["acme/widgets#4", "Acme/Widgets#9"]);
+  assert.deepEqual(cardList("Acme/Widgets#4,acme/widgets#4,acme/widgets#9,ACME/WIDGETS#9"), ["Acme/Widgets#4", "acme/widgets#9"]);
+  assert.deepEqual(cardList("acme/widgets#9,acme/widgets#4"), ["acme/widgets#9", "acme/widgets#4"]);
+});
+
+test("cardList: a single ref is a list of one; empty or missing is no issues", () => {
+  assert.deepEqual(cardList("acme/widgets#12"), ["acme/widgets#12"]);
+  for (const v of ["", " ", ",", undefined, null]) assert.deepEqual(cardList(v), [], String(v));
+});
+
+test("cardAgents: a terminal on two issues shows on both, each with its own key", () => {
+  const m = cardAgents([term("t1", "acme/widgets#4,acme/widgets#9", "blocked"), term("t2", "acme/widgets#9")]);
+  assert.deepEqual(m.get("acme/widgets#4").map((a) => [a.address, a.status, a.card]), [["t1", "blocked", "acme/widgets#4"]]);
+  assert.deepEqual(m.get("acme/widgets#9").map((a) => [a.address, a.card]), [["t1", "acme/widgets#9"], ["t2", "acme/widgets#9"]]);
+});
+
+test("cardAgents: a duplicated ref in one label counts the agent once", () => {
+  const m = cardAgents([term("t1", "acme/widgets#4,ACME/widgets#4")]);
+  assert.equal(m.get("acme/widgets#4").length, 1);
+});
+
+test("liveSummary counts a two-issue agent once", () => {
+  assert.equal(liveSummary([term("t1", "acme/widgets#4,acme/widgets#9", "blocked")]), "1 agent · 1 blocked");
+});
+
+test("a two-issue agent is a row on both issues, Now lists each issue, and fallback matching skips labelled terminals", () => {
+  const items = [it(4), it(9)];
+  const ts = [term("t1", "acme/widgets#4,acme/widgets#9", "working")];
+  const rows = nowFlat(items, ts).filter((x) => x.kind === "row").map((x) => x.row.number);
+  assert.deepEqual(rows.map((n) => n).sort(), [4, 9]);
+  assert.deepEqual(lane(todayView(items, ts, defaultUi()), "running").rows.map((r) => r.number).sort(), [4, 9]);
+  const linked = linkTerminals(ts, items, [], [{ address: "t1", app: "claude-code", title: "work on #4" }]);
+  assert.equal(linked[0].matched, undefined);
+});
+
+test("startPlan: an issue anywhere in a terminal's list is already held; focus goes to that terminal", () => {
+  const ts = [term("t2", "acme/widgets#3,acme/widgets#12"), term("t5", "acme/widgets#99")];
+  assert.deepEqual(startPlan(issue(12), ts, AREAS, CFG, HOME), { action: "focus", terminal: "t2" });
+  assert.deepEqual(startPlan(issue(3), ts, AREAS, CFG, HOME), { action: "focus", terminal: "t2" });
+  assert.equal(startPlan(issue(4), ts, AREAS, CFG, HOME).action, "confirm");
+});
+
+test("tabMarks: one issue keeps '● #N title'; several read '● #<first N> +<k>' in list order", () => {
+  const one = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "claude", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(one.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+  const three = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#7,acme/widgets#12,acme/other#3")], tabs: [{ id: "tab1", name: "claude", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(three.renames, [{ tab: "tab1", name: "● #7 +2" }]);
+  assert.deepEqual(three.records, { tab1: { card: "acme/widgets#7,acme/widgets#12,acme/other#3", prevNamed: false, prevName: "claude" } });
+});
+
+test("tabMarks: a multi-issue tab is unchanged when right, restored when the label goes, released when renamed by hand", () => {
+  const card = "acme/widgets#7,acme/widgets#12";
+  const records = { tab1: { card, prevNamed: true, prevName: "mine" } };
+  const same = tabMarks({ terminals: [mt("t1", "tab1", card)], tabs: [{ id: "tab1", name: "● #7 +1", named: true }], records, items: MITEMS });
+  assert.deepEqual(same.renames, []);
+  assert.deepEqual(same.records, records);
+  const gone = tabMarks({ terminals: [mt("t1", "tab1", null)], tabs: [{ id: "tab1", name: "● #7 +1", named: true }], records, items: MITEMS });
+  assert.deepEqual(gone.renames, [{ tab: "tab1", name: "mine" }]);
+  const hand = tabMarks({ terminals: [mt("t1", "tab1", card)], tabs: [{ id: "tab1", name: "my own", named: true }], records, items: MITEMS });
+  assert.deepEqual(hand.renames, []);
+  assert.deepEqual(hand.records, {});
+});
+
+test("tabMarks: the list shrinking from three to one swaps '+k' for the title", () => {
+  const records = { tab1: { card: "acme/widgets#12,acme/widgets#7", prevNamed: false, prevName: "claude" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12 +1", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
 });
