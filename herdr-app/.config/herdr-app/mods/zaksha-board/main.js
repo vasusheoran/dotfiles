@@ -15,6 +15,7 @@ const MOD = "zaksha-board";
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const ASK_MS = 5000; // how often blocked agents' screens are read for their question line
+const MODE_KEY = "zaksha-board.mode"; // "work" | "quick", set by the start dialog
 const NOTES_KEY = "zaksha-board.notes"; // the notes typed in the start dialog (zaksha-board-start), read once by startWork
 const FROM_KEY = "zaksha-board.from"; // where cmd-shift-b came from: shared, since the opener is another copy
 const NARROW = 1000;
@@ -200,7 +201,7 @@ export default class Board extends View {
     if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
     else if (p.action === "confirm") {
       this.asked = row;
-      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 230, props: { title: p.title, detail: p.detail, command: { name: `${MOD}.start` } } });
+      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 290, props: { title: p.title, key: row.key, detail: p.detail, command: { name: `${MOD}.start` } } });
     }
   }
 
@@ -209,13 +210,14 @@ export default class Board extends View {
     this.asked = null;
     const notes = shared(NOTES_KEY) ?? "";
     setShared(NOTES_KEY, "");
+    const mode = shared(MODE_KEY) === "quick" ? "quick" : "work";
     if (!row || this.pending.has(row.key)) return;
     this.pending.add(row.key);
     try {
       const folder = repoFolder(row.repo, this.cfg, home());
       const ok = (await exec("test", ["-d", folder]).catch(() => ({ code: 1 }))).code === 0;
       const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch(() => null);
-      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes });
+      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes, mode });
       if (p.action === "start") { run(...p.step); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
       if (p.action === "error") notify({ title: "Can't start /work", body: p.message, level: "error" });
       else if (p.action === "focus") run("agent.focus", { terminal: p.terminal });

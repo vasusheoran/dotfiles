@@ -7,7 +7,9 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 - `lib.js`: all logic (config, the one paginated `gh api graphql` fetch, lanes, views, search, selection, keys, the Board space). No herdr/gpui imports.
 - `lib.test.js`: behavior tests for `lib.js`, synthetic data only. Write the test first for any logic change.
 - `main.js`: reads, polls and draws; keep logic out of it.
-- Starting /work (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: confirm plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
+- Starting (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: pick /work, Quick or Brief, plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
+- Start dialog keys are the pure `dialogKey` (in `zaksha-board-start/lib.js`, tested from here): `n` focuses notes, `w` /work, `q` Quick, `b` Brief (read-only catch-up, tab `#<N> brief`), Enter starts, Esc leaves the input then cancels.
+- The started command labels its own terminal `card=<key>` before claude runs, so the board shows the agent at once.
 - `board.example.json`: committed template. `board.json`: your real one, gitignored. This repo is public: never commit real owner/project values, issue titles or screen text.
 
 ## board.json
@@ -20,7 +22,7 @@ Today (`t`: Needs you, Running, Up next), Epics (`e`: health per open epic, Ente
 
 GitHub is read on open, when the board becomes visible (at most once a minute), every `pollSeconds`, and on `Shift-R`. Everything else, search included, works on that cache. An agent shows on an issue when its terminal has the label `card=<owner/repo>#<N>` (`hc label t7 card=acme/widgets#12`).
 
-`a: agent (start /work if none)`: with no live agent it focuses a terminal already labelled for the issue, else confirms once, then starts `claude "/work <owner/repo>#<N>"` as a new tab in the space of the live terminal labelled `desk=<desk>` (`~/handoffs/areas.txt` maps repo name to desk), or in a new space. A missing folder shows an error toast. Epics are skipped.
+`a: agent (start /work if none)`: with no live agent it focuses a terminal already labelled for the issue, else confirms once, then starts `claude "/work <owner/repo>#<N>"` (or, in Quick mode, a prompt that only does what the notes say, tab `#<N> quick`) as a new tab in the space of the live terminal labelled `desk=<desk>` (`~/handoffs/areas.txt` maps repo name to desk), or in a new space. A missing folder shows an error toast. Epics are skipped.
 
 ## Run the checks
 

@@ -378,15 +378,34 @@ export function deskFor(repo, areasText) {
 
 const NOTES_MAX = 2000;
 
-// argv for the agent: the plain /work command, plus the trimmed notes (capped) as one element
-export function startArgv(key, notes) {
+// Labels the terminal card=<key> before claude starts, so the board shows the agent at once.
+// The prompt is a positional arg ($2), never interpolated into the script.
+const LABEL_THEN_CLAUDE = 'hc label "$HC_TERMINAL_ID" "card=$1" >/dev/null 2>&1; exec claude "$2"';
+const QUICK_RULES = "Do only what is asked (for example close it, mark it a duplicate, comment, or edit it with gh). No worktree, no branch, no PR.";
+
+const BRIEF_RULES = (n) => `Read-only: change nothing on GitHub or in code. Cover, in short sections:
+1. What it is: the problem in plain words and its acceptance criteria.
+2. Where it stands: status, priority, epic, linked PRs (state, checks, review), any branch or worktree for it.
+3. Previous work: the issue's comments (including /work phase comments), commits mentioning it, and past Claude sessions that discussed it (rg -l -F '#${n}' ~/.claude/projects, then read the relevant ones).
+4. Validation: for each acceptance criterion, met on main / not met / can't tell, with the file or test that shows it.
+5. Next step: one recommendation (/work it, close, mark duplicate, ask someone) with the exact command.
+Then wait for my instruction.`;
+
+// argv for the agent. mode "work" (default): /work <key> plus notes; "quick": no /work, just the issue and the notes;
+// "brief": a read-only catch-up report.
+export function startArgv(key, notes, { mode = "work", title = "", url = "" } = {}) {
   const n = String(notes ?? "").trim().slice(0, NOTES_MAX);
-  return ["claude", n ? `/work ${key}\n\nNotes from Vasu: ${n}` : `/work ${key}`];
+  const prompt = mode === "brief"
+    ? `Brief me on ${key}: ${title}\n${url}\n\n${n ? `Focus on: ${n}\n\n` : ""}${BRIEF_RULES(key.split("#").pop())}`
+    : mode === "quick"
+    ? `Issue ${key}: ${title}\n${url}\n\n${n ? `Do this: ${n}` : "Read it and ask me what to do."}\n\n${QUICK_RULES}`
+    : n ? `/work ${key}\n\nNotes from Vasu: ${n}` : `/work ${key}`;
+  return ["sh", "-c", LABEL_THEN_CLAUDE, "sh", key, prompt];
 }
 
 // What `a` does on an issue with no live agent: focus a card terminal that exists (even not live),
-// else ask once (confirm), then {action: "start", step} or {action: "error"}. opts: {confirmed, pending, exists, notes}.
-export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true, notes = "" } = {}) {
+// else ask once (confirm), then {action: "start", step} or {action: "error"}. opts: {confirmed, pending, exists, notes, mode}.
+export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true, notes = "", mode = "work" } = {}) {
   if (issue.epic || !issue.repo || !issue.number) return { action: "none" };
   const key = issue.key.toLowerCase();
   const held = (terminals ?? []).find((t) => labelsOf(t).card?.toLowerCase() === key);
@@ -398,7 +417,8 @@ export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = 
   const desk = deskFor(issue.repo, areasText);
   const space = desk && (terminals ?? []).map((t) => labelsOf(t)).find((l) => l.desk === desk && l["herdr.space"])?.["herdr.space"];
   const short = issue.title.length > 24 ? `${issue.title.slice(0, 23)}…` : issue.title;
-  const name = `#${issue.number} ${short}`, argv = startArgv(issue.key, notes);
+  const name = mode === "quick" || mode === "brief" ? `#${issue.number} ${mode}` : `#${issue.number} ${short}`;
+  const argv = startArgv(issue.key, notes, { mode, title: issue.title, url: issue.url });
   return { action: "start", step: space ? ["tab.new", { space, folder, name, argv }]
     : ["space.new", { name: desk ?? issue.repo.split("/").pop(), folder, tab: name, argv }] };
 }
