@@ -1,8 +1,12 @@
 // The board's logic, with no herdr or gpui imports so `node --test` can run it (lib.test.js).
-// main.js draws what buildBoard returns.
+// main.js draws what these return.
 
-const DEFAULTS = { priorities: ["P0", "P1", "P2"], columns: [], done: { status: "Done", limit: 5 }, pollSeconds: 60, showUnprioritized: false, otherColumn: null };
+const POLL = 300;
 const STATUSES = new Set(["working", "blocked", "done", "idle"]);
+export const PRIORITIES = ["P0", "P1", "P2", "P3", "P4"];
+export const PIPELINE = ["Inbox", "Needs answer", "Ready", "Next", "In progress", "Blocked", "Done"];
+const NEEDS = new Set(["Blocked", "Needs answer", "Inbox"]);
+const DAY = 86400000;
 
 // board.json text (null: no file) -> {missing} | {error} | {cfg}
 export function parseConfig(text) {
@@ -12,10 +16,7 @@ export function parseConfig(text) {
   if (!raw || typeof raw !== "object") return { error: "board.json must be an object" };
   if (typeof raw.owner !== "string" || !raw.owner.trim()) return { error: "board.json needs \"owner\": the GitHub org or user that owns the project" };
   if (!Number.isInteger(raw.project) || raw.project < 1) return { error: "board.json needs \"project\": the project number (an integer)" };
-  const cfg = { ...DEFAULTS, ...raw, done: { ...DEFAULTS.done, ...(raw.done ?? {}) } };
-  if (!Array.isArray(cfg.columns)) return { error: "board.json \"columns\" must be a list of {name, statuses}" };
-  cfg.pollSeconds = Math.max(15, Number(cfg.pollSeconds) || DEFAULTS.pollSeconds);
-  return { cfg };
+  return { cfg: { ...raw, pollSeconds: Math.max(15, Number(raw.pollSeconds) || POLL) } };
 }
 
 const QUERY = `query($owner: String!, $number: Int!, $after: String) {
@@ -26,9 +27,10 @@ const QUERY = `query($owner: String!, $number: Int!, $after: String) {
         id type updatedAt
         status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+        area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         content {
           ... on DraftIssue { title }
-          ... on PullRequest { title number url repository { nameWithOwner } }
+          ... on PullRequest { title number url state repository { nameWithOwner } }
           ... on Issue { title number url state repository { nameWithOwner }
             closedByPullRequestsReferences(first: 10) { nodes { number url state } }
             parent { number title url }
@@ -52,7 +54,7 @@ function toItem(n) {
   return {
     key: repo && c.number ? `${repo}#${c.number}` : `draft:${n.id}`,
     title: c.title ?? "(no title)", number: c.number ?? null, url: c.url ?? null, repo, state: c.state ?? null,
-    status: n.status?.name ?? null, priority: n.priority?.name ?? null, updatedAt: n.updatedAt ?? null,
+    status: n.status?.name ?? null, priority: n.priority?.name ?? null, area: n.area?.name ?? null, updatedAt: n.updatedAt ?? null,
     type: TYPES[n.type] ?? n.type ?? null, prs: c.closedByPullRequestsReferences?.nodes ?? [],
     parent: p ? { key: keyOf(p.url) ?? `#${p.number}`, number: p.number, title: p.title, url: p.url } : null,
     subIssues: sub, epic: (sub?.total ?? 0) > 0,
@@ -94,124 +96,6 @@ export async function fetchAll(gh, cfg, { maxPages = 50 } = {}) {
   }
 }
 
-const labelsOf = (t) => Array.isArray(t.labels)
-  ? Object.fromEntries(t.labels.map((l) => { const i = String(l).indexOf("="); return i < 0 ? [l, ""] : [l.slice(0, i), l.slice(i + 1)]; }))
-  : (t.labels ?? {});
-
-// live terminals labelled card=<owner/repo>#<N>, by lowercased card key
-export function cardAgents(terminals) {
-  const out = new Map();
-  for (const t of terminals ?? []) {
-    if (t.state && t.state !== "live") continue;
-    const card = labelsOf(t).card;
-    if (!card) continue;
-    const status = STATUSES.has(t.status) ? t.status : "idle";
-    const key = card.toLowerCase();
-    if (!out.has(key)) out.set(key, []);
-    out.get(key).push({ address: t.address, status, label: status === "blocked" ? "Needs you" : status });
-  }
-  return out;
-}
-
-const newest = (a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
-
-const SORTS = ["priority", "updated"];
-const VIEWS = ["columns", "epics"];
-export const NO_EPIC = "no-epic";
-
-// the board's UI state (saved by main.js), with anything missing or invalid set to its default
-export function uiState(cfg, saved) {
-  const s = saved && typeof saved === "object" ? saved : {};
-  return {
-    sort: SORTS.includes(s.sort) ? s.sort : "priority",
-    priorities: Array.isArray(s.priorities) ? cfg.priorities.filter((p) => s.priorities.includes(p)) : [...cfg.priorities],
-    text: typeof s.text === "string" ? s.text : "",
-    epic: typeof s.epic === "string" ? s.epic : null,
-    view: VIEWS.includes(s.view) ? s.view : "columns",
-    collapsed: Array.isArray(s.collapsed) ? s.collapsed.filter((k) => typeof k === "string") : [],
-  };
-}
-
-// clicking an epic filters to it; clicking the active one (or null: "All") clears it
-export const toggleEpic = (ui, key) => ({ ...ui, epic: key && key !== ui.epic ? key : null });
-
-// the filter text as typed; save() (shared state, which redraws every mod) runs only on commit, and only for a change
-export function draft(save, initial = "") {
-  let value = initial, saved = initial;
-  return { get: () => value, set: (v) => { value = v; }, commit: () => { if (value !== saved) { saved = value; save(value); } } };
-}
-
-const matches = (c, text) => !text || [c.title, c.number ? `#${c.number}` : "", c.repo ?? "", c.parent?.title ?? ""]
-  .some((s) => s.toLowerCase().includes(text));
-
-// items + config + terminals() + ui state ->
-//   {columns: [{name, cards}], done, counts: {name: n, DONE: n}, total, hidden, epics, rows}
-// columns/done/counts/rows are filtered by ui; total is the column cards before ui filters; epics (the bar) never are.
-export function buildBoard(items, cfg, terminals, ui = uiState(cfg)) {
-  const agents = cardAgents(terminals);
-  const rank = new Map(cfg.priorities.map((p, i) => [p, i]));
-  const card = (it) => {
-    const a = agents.get(it.key.toLowerCase()) ?? [];
-    return { ...it, agents: a, needsYou: a.some((x) => x.status === "blocked") };
-  };
-  const isDone = (it) => !!cfg.done?.status && it.status === cfg.done.status;
-  const epics = items.filter((it) => it.epic && it.state === "OPEN").map(card)
-    .map((e) => ({ ...e, total: e.subIssues.total, completed: e.subIssues.completed, percent: e.subIssues.percentCompleted ?? 0 }))
-    .sort((a, b) => (b.total - b.completed) - (a.total - a.completed) || a.title.localeCompare(b.title));
-
-  const chips = new Set(ui.priorities);
-  const text = ui.text.trim().toLowerCase();
-  const shows = (it) => matches(it, text) && (!ui.epic || it.parent?.key === ui.epic);
-  const columns = cfg.columns.map((c) => ({ name: c.name, statuses: new Set(c.statuses ?? []), cards: [] }));
-  const other = cfg.otherColumn ? { name: cfg.otherColumn, cards: [] } : null;
-  const done = [];
-  let hidden = 0, total = 0;
-  for (const it of items) {
-    if (it.epic) continue; // epics live in the bar
-    if (isDone(it)) { if (shows(it)) done.push(card(it)); continue; }
-    if (!rank.has(it.priority) && !cfg.showUnprioritized) { hidden++; continue; }
-    const col = columns.find((c) => c.statuses.has(it.status)) ?? other;
-    if (!col) { hidden++; continue; }
-    total++;
-    if (rank.has(it.priority) && !chips.has(it.priority)) continue;
-    if (shows(it)) col.cards.push(card(it));
-  }
-  const prio = (c) => rank.get(c.priority) ?? cfg.priorities.length;
-  const order = ui.sort === "updated" ? newest : (a, b) => prio(a) - prio(b) || newest(a, b);
-  const limit = cfg.done?.limit ?? 5;
-  const cols = [...columns, ...(other ? [other] : [])].map((c) => ({ name: c.name, cards: c.cards.sort(order) }));
-  done.sort(newest);
-  const counts = Object.fromEntries(cols.map((c) => [c.name, c.cards.length]));
-  counts.DONE = done.length;
-
-  // by epic: the bar's epics in order, then everything whose parent isn't one of them
-  const known = new Set(epics.map((e) => e.key));
-  const rowOf = (c) => (known.has(c.parent?.key) ? c.parent.key : NO_EPIC);
-  const rows = [...epics.map((e) => ({ key: e.key, title: e.title, url: e.url, completed: e.completed, total: e.total, agents: e.agents })),
-    { key: NO_EPIC, title: "No epic", url: null, completed: null, total: null, agents: [] }]
-    .map((r) => ({ ...r,
-      columns: cols.map((c) => ({ name: c.name, cards: c.cards.filter((x) => rowOf(x) === r.key) })),
-      done: done.filter((x) => rowOf(x) === r.key).slice(0, limit) }))
-    .filter((r) => r.done.length || r.columns.some((c) => c.cards.length));
-
-  return { columns: cols, done: done.slice(0, limit), counts, total, hidden, epics, rows };
-}
-
-// the last n non-empty lines of a screen, trimmed, each at most 120 chars
-export function excerpt(text, n = 3) {
-  return (text ?? "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-n)
-    .map((l) => (l.length > 120 ? l.slice(0, 119) + "…" : l));
-}
-
-// what a card offers: {label, run: [command, args]} or {label, exec: [program, args]}. No merge, ever.
-export function cardButtons(card) {
-  const out = card.agents.map((a) => ({ label: card.agents.length > 1 ? `Open worker ${a.address}` : "Open worker", run: ["agent.focus", { terminal: a.address }] }));
-  if (card.url) out.push({ label: "Open card", exec: ["open", [card.url]] });
-  const prs = [...card.prs].sort((a, b) => (b.state === "OPEN") - (a.state === "OPEN") || b.number - a.number);
-  if (prs[0]?.url) out.push({ label: "Open PR", exec: ["open", [prs[0].url]] });
-  return out;
-}
-
 // wraps an async fn so only one call runs at a time; a call while busy returns null
 export function single(fn) {
   let busy = false;
@@ -224,5 +108,378 @@ export function single(fn) {
   };
 }
 
-// the tab already showing this mod as a pane (panes()), or null
-export const boardTab = (panes, mod) => panes.find((p) => p.mod === mod)?.tab ?? null;
+// ---- live agents ----
+
+const labelsOf = (t) => Array.isArray(t.labels)
+  ? Object.fromEntries(t.labels.map((l) => { const i = String(l).indexOf("="); return i < 0 ? [l, ""] : [l.slice(0, i), l.slice(i + 1)]; }))
+  : (t.labels ?? {});
+
+// live terminals labelled card=<owner/repo>#<N>, by lowercased key -> [{address, status, card}]
+export function cardAgents(terminals) {
+  const out = new Map();
+  for (const t of terminals ?? []) {
+    if (t.state && t.state !== "live") continue;
+    const card = labelsOf(t).card;
+    if (!card) continue;
+    const key = card.toLowerCase();
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push({ address: t.address, status: STATUSES.has(t.status) ? t.status : "idle", card });
+  }
+  return out;
+}
+
+// the last n non-empty lines of a screen, trimmed, each at most 120 chars
+export function excerpt(text, n = 3) {
+  return (text ?? "").split("\n").map((l) => l.trim()).filter(Boolean).slice(-n)
+    .map((l) => (l.length > 120 ? l.slice(0, 119) + "…" : l));
+}
+
+export function liveSummary(terminals) {
+  const all = [...cardAgents(terminals).values()].flat();
+  const blocked = all.filter((a) => a.status === "blocked").length;
+  return `${all.length} agent${all.length === 1 ? "" : "s"}${blocked ? ` · ${blocked} blocked` : ""}`;
+}
+
+// ---- lanes ----
+
+const isDone = (it) => it.status === "Done" || it.state === "CLOSED" || it.state === "MERGED";
+const agentsOf = (it, agents) => agents.get(String(it.key).toLowerCase()) ?? [];
+
+// live beats stale: a blocked agent needs you, a working (or just finished) one is running, whatever GitHub says
+export function laneOf(it, agents) {
+  const a = agentsOf(it, agents);
+  if (a.some((x) => x.status === "blocked")) return "needs";
+  if (isDone(it)) return "done";
+  if (a.some((x) => x.status === "working" || x.status === "done")) return "running";
+  if (NEEDS.has(it.status)) return "needs";
+  if (it.status === "In progress") return "running";
+  return "next";
+}
+
+function toRow(it, agents) {
+  const a = agentsOf(it, agents);
+  return { ...it, agents: a, asking: a.find((x) => x.status === "blocked")?.address ?? null,
+    noAgent: it.status === "In progress" && !a.length, notOnBoard: false };
+}
+
+// agents whose card is no fetched item: a dim row built from the label
+function orphanRows(items, agents) {
+  const known = new Set(items.map((it) => String(it.key).toLowerCase()));
+  return [...agents.entries()].filter(([k]) => !known.has(k)).map(([, a]) => {
+    const card = a[0].card;
+    const m = /^(.+)#(\d+)$/.exec(card);
+    return { key: card, title: card, number: m ? Number(m[2]) : null, url: m ? `https://github.com/${m[1]}/issues/${m[2]}` : null,
+      repo: m?.[1] ?? null, state: null, status: null, priority: null, area: null, updatedAt: null, type: "Issue", prs: [], parent: null,
+      subIssues: null, epic: false, agents: a, asking: a.find((x) => x.status === "blocked")?.address ?? null, noAgent: false, notOnBoard: true };
+  });
+}
+
+const PRANK = Object.fromEntries(PRIORITIES.map((p, i) => [p, i]));
+const prank = (p) => PRANK[p] ?? PRIORITIES.length;
+const newestFirst = (a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
+const byRow = (a, b) => (!!b.asking - !!a.asking) || prank(a.priority) - prank(b.priority) || newestFirst(a, b);
+const NEXT_ORDER = { Next: 0, Ready: 1 };
+const byNext = (a, b) => (NEXT_ORDER[a.status] ?? 2) - (NEXT_ORDER[b.status] ?? 2) || byRow(a, b);
+
+const LANES = [
+  { key: "needs", label: "Needs you", empty: "Nothing needs you.", sort: byRow },
+  { key: "running", label: "Running", empty: "Nothing running.", sort: byRow },
+  { key: "next", label: "Up next", empty: "Queue is empty.", sort: byNext },
+];
+const DONE_LANE = { key: "done", label: "Done (not archived)", empty: "—", sort: newestFirst };
+
+const prioLabel = (p) => (PRANK[p] === undefined ? "unset" : p);
+
+// rows the priority chips leave out, counted: {count, label} | null. Rows with a live agent are never hidden.
+function chipSplit(rows, ui, open) {
+  if (open) return { shown: rows, more: null };
+  const on = new Set(ui.priorities);
+  const shown = [], hidden = [];
+  for (const r of rows) (r.agents.length || on.has(PRANK[r.priority] === undefined ? "" : r.priority) ? shown : hidden).push(r);
+  if (!hidden.length) return { shown, more: null };
+  const names = [...PRIORITIES, "unset"].filter((n) => hidden.some((r) => prioLabel(r.priority) === n));
+  return { shown, more: { count: hidden.length, label: `+${hidden.length} more at ${names.join(" / ")} · show` } };
+}
+
+function groupRows(rows, items) {
+  const groups = new Map();
+  for (const r of rows) {
+    const k = r.parent?.key ?? null;
+    if (!groups.has(k)) {
+      const e = k && items.find((x) => x.key === k);
+      groups.set(k, { epic: k ? { key: k, title: e?.title ?? r.parent.title, completed: e?.subIssues?.completed ?? null, total: e?.subIssues?.total ?? null } : null, rows: [] });
+    }
+    groups.get(k).rows.push(r);
+  }
+  const none = groups.get(null);
+  groups.delete(null);
+  return [...groups.values(), ...(none ? [none] : [])];
+}
+
+function laneSets(rows, agents) {
+  const by = { needs: [], running: [], next: [], done: [] };
+  for (const r of rows) by[r.notOnBoard ? (r.asking ? "needs" : "running") : laneOf(r, agents)].push(r);
+  return by;
+}
+
+const filtered = (r, ui) => (!ui.area || r.area === ui.area) && (!ui.repo || r.repo === ui.repo) && (!ui.live || r.agents.length > 0);
+
+// Today: three lanes over open, non-epic items (plus agents on issues not on the board), with the view's filters
+export function todayView(items, terminals, ui) {
+  const agents = cardAgents(terminals);
+  const rows = [...items.filter((it) => !it.epic && !isDone(it)).map((it) => toRow(it, agents)), ...orphanRows(items, agents)]
+    .filter((r) => filtered(r, ui));
+  const by = laneSets(rows, agents);
+  return {
+    lanes: LANES.map((l) => {
+      const all = by[l.key].sort(l.sort);
+      const { shown, more } = chipSplit(all, ui, !!ui.showLow?.[l.key]);
+      return { key: l.key, label: l.label, empty: l.empty, rows: shown, total: all.length, more, ...(ui.group ? { groups: groupRows(shown, items) } : {}) };
+    }),
+  };
+}
+
+// Focus: Needs you only, every priority and area, blocked agents first
+export function focusView(items, terminals) {
+  const needs = todayView(items, terminals, { ...defaultUi(), priorities: [...PRIORITIES, ""] }).lanes[0];
+  return { lanes: [{ ...needs, more: null }] };
+}
+
+export function needsCount(items, terminals) {
+  return focusView(items, terminals).lanes[0].total;
+}
+
+// Epics: one row per open epic with its health
+export function epicsView(items, terminals, now) {
+  const agents = cardAgents(terminals);
+  const rows = items.filter((e) => e.epic && e.state === "OPEN").map((e) => {
+    const kids = items.filter((it) => it.parent?.key === e.key);
+    const counts = { needs: 0, running: 0, next: 0 };
+    for (const k of kids) { const l = laneOf(k, agents); if (l in counts) counts[l]++; }
+    const touched = kids.map((k) => k.updatedAt).filter(Boolean).sort().pop() ?? e.updatedAt;
+    const stuckDays = touched ? Math.floor((now - Date.parse(touched)) / DAY) : 0;
+    const { total = 0, completed = 0 } = e.subIssues ?? {};
+    return { ...toRow(e, agents), total, completed, percent: e.subIssues?.percentCompleted ?? (total ? Math.round((100 * completed) / total) : 0),
+      counts, touched, stuckDays, stuck: stuckDays > 14 };
+  });
+  rows.sort((a, b) => (b.counts.needs > 0) - (a.counts.needs > 0) || b.stuck - a.stuck || a.percent - b.percent);
+  return { rows };
+}
+
+// one epic: every child, all priorities, no filters; Done collapsed unless opened
+export function drillView(items, terminals, epicKey, ui) {
+  const e = items.find((it) => it.key === epicKey);
+  if (!e) return null;
+  const agents = cardAgents(terminals);
+  const by = laneSets(items.filter((it) => it.parent?.key === epicKey).map((it) => toRow(it, agents)), agents);
+  const lanes = [...LANES, DONE_LANE].map((l) => {
+    const all = by[l.key].sort(l.sort);
+    const collapsed = l.key === "done" && !ui.doneOpen;
+    return { key: l.key, label: l.label, empty: l.empty, rows: collapsed ? [] : all, total: all.length, more: null, ...(l.key === "done" ? { collapsed } : {}) };
+  });
+  const archived = Math.max(0, (e.subIssues?.completed ?? 0) - by.done.length);
+  return { epic: toRow(e, agents), lanes, archived, footer: `${archived} done sub-issues archived, not listed (progress counts them).` };
+}
+
+const DONE_LIMIT = 8;
+
+// Status: one column per GitHub Status in pipeline order, epics excluded
+export function statusView(items, terminals, ui) {
+  const agents = cardAgents(terminals);
+  const rows = items.filter((it) => !it.epic).map((it) => toRow(it, agents)).filter((r) => filtered(r, ui));
+  const col = (status, all) => {
+    if (status === "Done") {
+      all.sort(newestFirst);
+      const open = !!ui.showLow?.Done || all.length <= DONE_LIMIT;
+      return { status, rows: open ? all : all.slice(0, DONE_LIMIT), total: all.length, empty: "—",
+        more: open ? null : { count: all.length - DONE_LIMIT, label: `+${all.length - DONE_LIMIT} more done · show` } };
+    }
+    const { shown, more } = chipSplit(all.sort(byRow), ui, !!ui.showLow?.[status]);
+    return { status, rows: shown, total: all.length, empty: "—", more };
+  };
+  const columns = PIPELINE.map((s) => col(s, rows.filter((r) => (s === "Done" ? isDone(r) : !isDone(r) && r.status === s))));
+  const other = rows.filter((r) => !isDone(r) && !PIPELINE.includes(r.status));
+  if (other.length) columns.push(col("No status", other));
+  return { columns };
+}
+
+// Search: every fetched item, tokens ANDed over title, #number, area, repo and parent epic title
+export function searchView(items, terminals, query) {
+  const agents = cardAgents(terminals);
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = items.filter((it) => {
+    const hay = [it.title, it.number ? `#${it.number}` : "", it.area ?? "", it.repo ?? "", it.parent?.title ?? ""].join(" ").toLowerCase();
+    return tokens.every((t) => hay.includes(t));
+  }).map((it) => toRow(it, agents)).sort((a, b) => prank(a.priority) - prank(b.priority) || newestFirst(a, b));
+  const groups = [
+    { key: "epics", label: "Epics", rows: hits.filter((r) => r.epic) },
+    { key: "open", label: "Open", rows: hits.filter((r) => !r.epic && !isDone(r)) },
+    { key: "closed", label: "Closed / Done", rows: hits.filter((r) => !r.epic && isDone(r)) },
+  ].filter((g) => g.rows.length);
+  return { groups, count: `${hits.length} of ${items.length}`, empty: hits.length ? null : `No match in ${items.length} items.` };
+}
+
+// a view's lanes as the list main.js draws and moves through; only "row"s are selectable
+export function flatten(view) {
+  const out = [];
+  for (const l of view.lanes) {
+    out.push({ kind: "lane", key: `lane:${l.key}`, lane: l });
+    if (l.collapsed) continue;
+    const groups = l.groups ?? [{ epic: undefined, rows: l.rows }];
+    for (const g of groups) {
+      if (g.epic !== undefined) out.push({ kind: "group", key: `group:${l.key}:${g.epic?.key ?? "none"}`, group: g });
+      for (const r of g.rows) out.push({ kind: "row", key: r.key, row: r, lane: l.key });
+    }
+    if (l.more) out.push({ kind: "more", key: `more:${l.key}`, lane: l.key, more: l.more });
+    else if (!l.rows.length) out.push({ kind: "empty", key: `empty:${l.key}`, text: l.empty });
+  }
+  return out;
+}
+
+// ---- acting on a row ----
+
+const pickAgent = (row) => row.asking ?? row.agents.find((a) => a.status === "working")?.address ?? row.agents[0]?.address ?? null;
+const pickPr = (row) => [...(row.prs ?? [])].sort((a, b) => (b.state === "OPEN") - (a.state === "OPEN") || b.number - a.number)[0] ?? null;
+
+// Agent / Issue / PR; one without a target has no run/exec (drawn disabled). Never a merge.
+export function rowButtons(row) {
+  const agent = pickAgent(row), pr = pickPr(row);
+  return [
+    { key: "a", label: "Agent", ...(agent ? { run: ["agent.focus", { terminal: agent }] } : {}) },
+    { key: "i", label: "Issue", ...(row.url ? { exec: ["open", [row.url]] } : {}) },
+    { key: "p", label: "PR", ...(pr?.url ? { exec: ["open", [pr.url]] } : {}) },
+  ];
+}
+
+// Enter: the live agent (peeked in Focus, focused otherwise), else the issue
+export function primaryAction(row, { focus }) {
+  const agent = pickAgent(row);
+  if (agent) return { run: [focus ? "terminal.peek" : "agent.focus", { terminal: agent }] };
+  return row.url ? { exec: ["open", [row.url]] } : null;
+}
+
+// ---- keyboard ----
+
+const KEYS = {
+  "/": "search", escape: "escape", j: "down", down: "down", k: "up", up: "up", "shift-j": "down5", "shift-k": "up5",
+  enter: "primary", a: "agent", i: "issue", p: "pr", t: "today", e: "epics", s: "status", left: "back", backspace: "back",
+  0: "prio:P0", 1: "prio:P1", 2: "prio:P2", 3: "prio:P3", 4: "prio:P4", 5: "allprio",
+  g: "group", l: "live", "shift-r": "refresh", n: "needs", "shift-f": "focus",
+};
+export const keyAction = (keystroke) => KEYS[keystroke] ?? null;
+
+// Esc closes one thing: the search, then Focus, then the drill-down; with nothing left it leaves the board
+export function escapeStep(ui) {
+  if (ui.query) return { ui: { ...ui, query: "" } };
+  if (ui.focus) return { ui: { ...ui, focus: false } };
+  if (ui.view === "epic") return { ui: { ...ui, view: "epics", epic: null } };
+  return { leave: true };
+}
+
+export const defaultUi = () => ({ view: "today", epic: null, priorities: ["P0", "P1", "P2"], area: null, repo: null, group: false, live: false, focus: false, query: "", showLow: {}, doneOpen: false });
+
+export function moveSel(keys, sel, delta) {
+  if (!keys.length) return null;
+  const i = keys.indexOf(sel);
+  if (i < 0) return keys[0];
+  return keys[Math.min(keys.length - 1, Math.max(0, i + delta))];
+}
+
+// the selected key if still listed, else whatever now sits at its old index
+export function resolveSel(keys, sel, lastIndex) {
+  if (keys.includes(sel)) return sel;
+  return keys.length ? keys[Math.min(Math.max(0, lastIndex), keys.length - 1)] : null;
+}
+
+export function afterPeek(keys, key) {
+  if (!keys.length) return null;
+  const i = keys.indexOf(key);
+  return i < 0 ? keys[0] : keys[Math.min(i + 1, keys.length - 1)];
+}
+
+const sum = (h, from, to) => { let s = 0; for (let i = from; i <= to; i++) s += h[i]; return s; };
+
+// first drawn item so item `sel` is fully in a viewport of `vp` px
+export function scrollTop(h, top, sel, vp) {
+  if (sel < top) return sel;
+  let t = top;
+  while (t < sel && sum(h, t, sel) > vp) t++;
+  return t;
+}
+
+// keep a wheel-moved top inside the list: never past where the last items fill the viewport
+export function clampTop(h, top, vp) {
+  let max = h.length;
+  while (max > 0 && sum(h, max - 1, h.length - 1) <= vp) max--;
+  return Math.max(0, Math.min(top, max));
+}
+
+// ---- the Board space ----
+
+export const badgeName = (n) => (n ? `Board · ${n}` : "Board");
+
+export function renameStep(space, n) {
+  if (!space) return null;
+  const name = badgeName(n);
+  return space.name === name ? null : ["space.rename", { id: space.id, name }];
+}
+
+export const boardSpace = (spaces) => spaces.find((s) => /^Board( · \d+)?$/.test(s.name)) ?? null;
+
+const boardTabIn = (space, panes, mod) => space.tabs.find((t) => panes.some((p) => p.mod === mod && p.tab === t.id)) ?? null;
+
+// the board's tab in the Board space (made if missing), the space's starting shell tab closed, stray board-only tabs elsewhere closed, the space first
+export function ensureBoard({ spaces, panes, mod, shellTabs = [] }) {
+  const board = boardSpace(spaces);
+  if (!board) return [];
+  const tab = boardTabIn(board, panes, mod);
+  if (!tab) return [["tab.new", { space: board.id, name: "Board", mod }], ...(board.index !== 1 ? [["space.move", { id: board.id, index: 1 }]] : [])];
+  const steps = [["tab.select", { id: tab.id }]];
+  for (const id of shellTabs) if (id !== tab.id && board.tabs.some((t) => t.id === id)) steps.push(["tab.close", { id, confirmed: true }]);
+  for (const s of spaces) if (s.id !== board.id) for (const t of s.tabs) {
+    if (t.panes === 1 && panes.some((p) => p.mod === mod && p.tab === t.id)) steps.push(["tab.close", { id: t.id, confirmed: true }]);
+  }
+  if (board.index !== 1) steps.push(["space.move", { id: board.id, index: 1 }]);
+  return steps;
+}
+
+// cmd-shift-b: to the board (remembering where you were), or back from it -> {steps, from}
+export function toggleBoard({ spaces, panes, focused, from, mod, shellTabs = [] }) {
+  const board = boardSpace(spaces);
+  if (board && focused?.space === board.id) {
+    const back = from && spaces.find((s) => s.id === from.space && s.id !== board.id);
+    if (!back) return { steps: [], from };
+    return { steps: [["space.select", { id: back.id }], ...(back.tabs.some((t) => t.id === from.tab) ? [["tab.select", { id: from.tab }]] : [])], from };
+  }
+  const here = focused ? { space: focused.space, tab: focused.tab } : from;
+  if (!board) return { steps: [["space.new", { name: "Board" }]], from: here };
+  return { steps: [["space.select", { id: board.id }], ...ensureBoard({ spaces, panes, mod, shellTabs })], from: here };
+}
+
+// ---- freshness ----
+
+export const shouldRefreshOnShow = (was, is, lastRead, now) => !was && is && (lastRead == null || now - lastRead >= 60000);
+
+export function syncLabel({ now, read, fetching, count, error }) {
+  if (fetching) return { label: count ? `fetching ${count} items…` : "fetching items…", stale: false, banner: null };
+  const m = read == null ? null : Math.floor((now - read) / 60000);
+  if (error) return { label: m == null ? "not synced" : `last ok ${m}m ago`, stale: true,
+    banner: `GitHub fetch failed (${error}) · ${m == null ? "no data yet" : `showing data from ${m} min ago`} · retry (Shift-R)` };
+  if (m == null) return { label: "", stale: false, banner: null };
+  if (m > 10) return { label: `stale ${m}m`, stale: true, banner: null };
+  return { label: m < 1 ? "synced just now" : `synced ${m}m ago`, stale: false, banner: null };
+}
+
+export function ageText(now, iso) {
+  if (!iso) return "";
+  const s = (now - Date.parse(iso)) / 1000;
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+export function facets(items) {
+  const uniq = (f) => [...new Set(items.map(f).filter(Boolean))].sort();
+  return { areas: uniq((it) => it.area), repos: uniq((it) => it.repo) };
+}

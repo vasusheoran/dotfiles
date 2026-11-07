@@ -1,14 +1,5 @@
 {
   "owner": "your-org",
   "project": 1,
-  "priorities": ["P0", "P1", "P2"],
-  "columns": [
-    { "name": "NEEDS YOU", "statuses": ["Needs answer", "Blocked"] },
-    { "name": "WORKING", "statuses": ["In progress"] },
-    { "name": "UP NEXT", "statuses": ["Next", "Ready"] }
-  ],
-  "done": { "status": "Done", "limit": 5 },
-  "pollSeconds": 60,
-  "showUnprioritized": false,
-  "otherColumn": null
+  "pollSeconds": 300
 }

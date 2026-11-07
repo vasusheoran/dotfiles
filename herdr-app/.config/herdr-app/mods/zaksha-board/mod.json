@@ -1,1 +1,1 @@
-{ "place": "none", "title": "Zaksha board", "overlay": { "kind": "popup", "width": 1, "height": 1 } }
+{ "place": "none", "title": "Zaksha board", "focusable": true, "overlay": { "kind": "popup", "width": 1, "height": 1 } }
