@@ -8,6 +8,7 @@ import {
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
   scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor,
 } from "./lib.js";
+import { dialogKey } from "../zaksha-board-start/lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
 const NOW = Date.parse("2026-03-01T12:00:00Z");
@@ -696,11 +697,11 @@ test("startPlan: no agent -> confirm once, with the title; epics and pending sta
 test("startPlan confirmed: a desk space exists -> tab.new in it", () => {
   const p = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true });
   assert.deepEqual(p, { action: "start", step: ["tab.new", { space: "s3", folder: "/home/syn/workspace/vasu/widgets",
-    name: "#12 Fix thing", argv: ["claude", "/work acme/widgets#12"] }] });
+    name: "#12 Fix thing", argv: wrap("/work acme/widgets#12") }] });
 });
 
 test("startPlan confirmed: no desk terminal -> space.new named for the desk, else the repo", () => {
-  const argv = ["claude", "/work acme/widgets#12"];
+  const argv = wrap("/work acme/widgets#12");
   const folder = "/home/syn/workspace/vasu/widgets";
   assert.deepEqual(startPlan(issue(), [], AREAS, CFG, HOME, { confirmed: true }).step,
     ["space.new", { name: "build", folder, tab: "#12 Synthetic 12", argv }]);
@@ -722,34 +723,70 @@ test("keyboard: footer says what a does", () => {
   assert.equal(keyAction("a"), "agent");
 });
 
-test("startArgv: no notes -> exactly the plain /work command", () => {
-  const plain = ["claude", "/work acme/widgets#12"];
-  assert.deepEqual(startArgv("acme/widgets#12"), plain);
-  assert.deepEqual(startArgv("acme/widgets#12", ""), plain);
-  assert.deepEqual(startArgv("acme/widgets#12", "  \n\t "), plain, "whitespace-only is empty");
-  assert.deepEqual(startArgv("acme/widgets#12", null), plain);
+const LABEL = 'hc label "$HC_TERMINAL_ID" "card=$1" >/dev/null 2>&1; exec claude "$2"';
+const wrap = (prompt) => ["sh", "-c", LABEL, "sh", "acme/widgets#12", prompt];
+const INFO = { title: "Fix thing", url: "https://github.com/acme/widgets/issues/12" };
+const QUICK_TAIL = "\n\nDo only what is asked (for example close it, mark it a duplicate, comment, or edit it with gh). No worktree, no branch, no PR.";
+const quick = (ask) => `Issue acme/widgets#12: Fix thing\nhttps://github.com/acme/widgets/issues/12\n\n${ask}${QUICK_TAIL}`;
+
+test("startArgv work: labels the terminal first; the prompt is its own positional argv element", () => {
+  const plain = wrap("/work acme/widgets#12");
+  assert.deepEqual(startArgv("acme/widgets#12", "", INFO), plain);
+  assert.deepEqual(startArgv("acme/widgets#12", "  \n\t ", { mode: "work", ...INFO }), plain, "whitespace-only is empty");
+  assert.deepEqual(startArgv("acme/widgets#12", null, INFO), plain);
+  assert.deepEqual(startArgv("acme/widgets#12"), plain, "mode defaults to work");
 });
 
-test("startArgv: notes are trimmed and ride as one argv element after a blank line", () => {
-  assert.deepEqual(startArgv("acme/widgets#12", "  use the v2 API \n"),
-    ["claude", "/work acme/widgets#12\n\nNotes from Vasu: use the v2 API"]);
-  const multi = startArgv("acme/widgets#12", "line one\nline two; $(rm -rf /) 'quoted'");
-  assert.equal(multi.length, 2, "never split, never shell-quoted");
-  assert.equal(multi[1], "/work acme/widgets#12\n\nNotes from Vasu: line one\nline two; $(rm -rf /) 'quoted'");
+test("startArgv work: notes are trimmed and ride in the same single prompt element", () => {
+  assert.deepEqual(startArgv("acme/widgets#12", "  use the v2 API \n", INFO), wrap("/work acme/widgets#12\n\nNotes from Vasu: use the v2 API"));
+  const nasty = "line one\nline two; $(rm -rf /) 'quoted'";
+  const argv = startArgv("acme/widgets#12", nasty, INFO);
+  assert.equal(argv.length, 6, "never split");
+  assert.equal(argv[2], LABEL, "the script never contains the prompt");
+  assert.equal(argv[5], `/work acme/widgets#12\n\nNotes from Vasu: ${nasty}`);
 });
 
-test("startArgv: notes are capped at 2000 characters", () => {
-  const argv = startArgv("acme/widgets#12", "x".repeat(2500));
-  assert.equal(argv[1], `/work acme/widgets#12\n\nNotes from Vasu: ${"x".repeat(2000)}`);
-  assert.equal(startArgv("acme/widgets#12", "y".repeat(2000))[1].endsWith("y".repeat(2000)), true);
-  assert.equal(startArgv("acme/widgets#12", ` ${"z".repeat(2000)} `)[1].endsWith("z".repeat(2000)), true, "trim first, then cap");
+test("startArgv: notes are capped at 2000 characters, trim first", () => {
+  assert.equal(startArgv("acme/widgets#12", "x".repeat(2500), INFO)[5], `/work acme/widgets#12\n\nNotes from Vasu: ${"x".repeat(2000)}`);
+  assert.equal(startArgv("acme/widgets#12", ` ${"z".repeat(2000)} `, INFO)[5].endsWith("z".repeat(2000)), true);
+  assert.equal(startArgv("acme/widgets#12", "y".repeat(2500), { mode: "quick", ...INFO })[5], quick(`Do this: ${"y".repeat(2000)}`));
 });
 
-test("startPlan confirmed: notes flow into the argv of either start step", () => {
-  const want = ["claude", "/work acme/widgets#12\n\nNotes from Vasu: mind the schema"];
-  const tab = startPlan(issue(12), [DESK], AREAS, CFG, HOME, { confirmed: true, notes: " mind the schema " });
+test("startArgv quick: no notes -> read it and ask; notes -> do this; no /work anywhere", () => {
+  assert.deepEqual(startArgv("acme/widgets#12", "", { mode: "quick", ...INFO }), wrap(quick("Read it and ask me what to do.")));
+  assert.deepEqual(startArgv("acme/widgets#12", " close as duplicate of #9 ", { mode: "quick", ...INFO }), wrap(quick("Do this: close as duplicate of #9")));
+  assert.equal(startArgv("acme/widgets#12", "x", { mode: "quick", ...INFO })[5].includes("/work"), false);
+});
+
+test("startPlan confirmed: mode and notes flow into the argv and tab name of either start step", () => {
+  const want = wrap("/work acme/widgets#12\n\nNotes from Vasu: mind the schema");
+  const tab = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true, notes: " mind the schema " });
   assert.deepEqual(tab.step[1].argv, want);
-  const space = startPlan(issue(12), [], AREAS, CFG, HOME, { confirmed: true, notes: "mind the schema" });
+  const space = startPlan(issue(12, { title: "Fix thing" }), [], AREAS, CFG, HOME, { confirmed: true, notes: "mind the schema" });
   assert.deepEqual(space.step[1].argv, want);
-  assert.deepEqual(startPlan(issue(12), [DESK], AREAS, CFG, HOME, { confirmed: true }).step[1].argv, ["claude", "/work acme/widgets#12"]);
+  const q = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true, mode: "quick", notes: "close it" });
+  assert.equal(q.step[1].name, "#12 quick");
+  assert.deepEqual(q.step[1].argv, wrap(quick("Do this: close it")));
+  const qs = startPlan(issue(12, { title: "Fix thing" }), [], AREAS, CFG, HOME, { confirmed: true, mode: "quick" });
+  assert.equal(qs.step[1].tab, "#12 quick");
+  assert.deepEqual(qs.step[1].argv, wrap(quick("Read it and ask me what to do.")));
+});
+
+test("dialogKey: opens on the dialog in work mode; n focuses notes; w/q pick the mode; Enter starts; Esc cancels", () => {
+  const s0 = { mode: "work", typing: false };
+  assert.deepEqual(dialogKey(s0, "n"), { state: { mode: "work", typing: true }, action: "focus-notes" });
+  assert.deepEqual(dialogKey(s0, "q"), { state: { mode: "quick", typing: false }, action: null });
+  assert.deepEqual(dialogKey({ mode: "quick", typing: false }, "w"), { state: { mode: "work", typing: false }, action: null });
+  assert.deepEqual(dialogKey({ mode: "quick", typing: false }, "enter"), { state: { mode: "quick", typing: false }, action: "start" });
+  assert.deepEqual(dialogKey(s0, "escape"), { state: s0, action: "cancel" });
+  assert.deepEqual(dialogKey(s0, "x"), { state: s0, action: null }, "other keys do nothing");
+});
+
+test("dialogKey while typing: letters belong to the input; Enter starts; Esc leaves the input, a second Esc cancels", () => {
+  const typing = { mode: "quick", typing: true };
+  for (const k of ["n", "w", "q"]) assert.deepEqual(dialogKey(typing, k), { state: typing, action: null }, k);
+  assert.deepEqual(dialogKey(typing, "enter"), { state: typing, action: "start" });
+  const left = dialogKey(typing, "escape");
+  assert.deepEqual(left, { state: { mode: "quick", typing: false }, action: "blur-notes" });
+  assert.deepEqual(dialogKey(left.state, "escape"), { state: left.state, action: "cancel" });
 });
