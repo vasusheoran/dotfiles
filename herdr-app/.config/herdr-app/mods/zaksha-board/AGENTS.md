@@ -11,13 +11,15 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 
 ## board.json
 
-`owner`, `project` (the org/user and project number) and `pollSeconds` (default 300, min 15). Fields read from the project: Status, Priority, Area.
+`owner`, `project` (the org/user and project number), `pollSeconds` (default 300, min 15) and optional `repoPaths` (`{"<owner/repo>": "<path>"}`, `~` expanded; default `~/workspace/vasu/<repo name>`). Fields read from the project: Status, Priority, Area.
 
 ## Views and keys
 
 Today (`t`: Needs you, Running, Up next), Epics (`e`: health per open epic, Enter drills in with every child shown), Status (`s`: one column per GitHub Status), search (`/`: every fetched item), Focus (`F`: Needs you only; Enter peeks the agent with `terminal.peek`). The full key table is `keyAction` in `lib.js`; Esc order is `escapeStep`.
 
 GitHub is read on open, when the board becomes visible (at most once a minute), every `pollSeconds`, and on `Shift-R`. Everything else, search included, works on that cache. An agent shows on an issue when its terminal has the label `card=<owner/repo>#<N>` (`hc label t7 card=acme/widgets#12`).
+
+`a: agent (start /work if none)`: with no live agent it focuses a terminal already labelled for the issue, else confirms once, then starts `claude "/work <owner/repo>#<N>"` as a new tab in the space of the live terminal labelled `desk=<desk>` (`~/handoffs/areas.txt` maps repo name to desk), or in a new space. A missing folder shows an error toast. Epics are skipped.
 
 ## Run the checks
 

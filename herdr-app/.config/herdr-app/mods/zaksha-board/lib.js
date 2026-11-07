@@ -358,6 +358,43 @@ export function primaryAction(row, { focus }) {
   return row.url ? { exec: ["open", [row.url]] } : null;
 }
 
+// ---- starting /work on an issue that has no agent ----
+
+// board.json "repoPaths" ({"<owner/repo>": "<path>"}, ~ expanded), else ~/workspace/vasu/<repo name>
+export function repoFolder(repo, cfg, home) {
+  const p = cfg?.repoPaths?.[repo] ?? `~/workspace/vasu/${repo.split("/").pop()}`;
+  return p === "~" || p.startsWith("~/") ? home + p.slice(1) : p;
+}
+
+// ~/handoffs/areas.txt lines "<repo-name> <desk>" -> the desk of a repo, or null
+export function deskFor(repo, areasText) {
+  const name = repo.split("/").pop();
+  for (const line of String(areasText ?? "").split("\n")) {
+    const [n, desk] = line.trim().split(/\s+/);
+    if (n && !n.startsWith("#") && n === name && desk) return desk;
+  }
+  return null;
+}
+
+// What `a` does on an issue with no live agent: focus a card terminal that exists (even not live),
+// else ask once (confirm), then {action: "start", step} or {action: "error"}. opts: {confirmed, pending, exists}.
+export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true } = {}) {
+  if (issue.epic || !issue.repo || !issue.number) return { action: "none" };
+  const key = issue.key.toLowerCase();
+  const held = (terminals ?? []).find((t) => labelsOf(t).card?.toLowerCase() === key);
+  if (held) return { action: "focus", terminal: held.address };
+  if (pending.has(issue.key)) return { action: "none" };
+  if (!confirmed) return { action: "confirm", title: `Start /work on ${issue.key}?`, detail: issue.title };
+  const folder = repoFolder(issue.repo, cfg, home);
+  if (!exists(folder)) return { action: "error", message: `Folder ${folder} does not exist (set repoPaths in board.json)` };
+  const desk = deskFor(issue.repo, areasText);
+  const space = desk && (terminals ?? []).map((t) => labelsOf(t)).find((l) => l.desk === desk && l["herdr.space"])?.["herdr.space"];
+  const short = issue.title.length > 24 ? `${issue.title.slice(0, 23)}…` : issue.title;
+  const name = `#${issue.number} ${short}`, argv = ["claude", `/work ${issue.key}`];
+  return { action: "start", step: space ? ["tab.new", { space, folder, name, argv }]
+    : ["space.new", { name: desk ?? issue.repo.split("/").pop(), folder, tab: name, argv }] };
+}
+
 // ---- keyboard ----
 
 const KEYS = {

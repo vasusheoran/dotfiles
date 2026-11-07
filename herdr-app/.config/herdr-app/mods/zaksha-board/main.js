@@ -4,10 +4,10 @@
 // which toggles between the Board space and where you were (lib toggleBoard), then closes itself.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
-import { exec, hc, run, props, panes, spaces, focused, terminals, theme, readTextFile, appHome, closeOverlay, shared, setShared, nextCommand } from "herdr";
+import { exec, hc, run, props, panes, spaces, focused, terminals, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
-  needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, renameStep, boardSpace, toggleBoard, ensureBoard,
+  needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
 
@@ -83,9 +83,10 @@ export default class Board extends View {
     this.input.on("submit", (_e, cx) => { this.act("primary", cx); });
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
+    this.asked = null; this.pending = new Set(); // /work starts: the issue asked about, and those starting
     this.refresh(cx);
     cx.timer.every(ASK_MS, (cx) => this.readAsks(cx));
-    cx.spawn(async (cx) => { for (;;) { if ((await nextCommand()) === "focus") { this.h.focus(); cx.notify(); } } });
+    cx.spawn(async (cx) => { for (;;) { const c = await nextCommand(); if (c === "focus") { this.h.focus(); cx.notify(); } else if (c === "start") this.startWork(cx); } });
   }
 
   refresh(cx) {
@@ -187,8 +188,36 @@ export default class Board extends View {
       a = primaryAction(row, { focus: this.ui.focus });
       if (a?.run?.[0] === "terminal.peek") { this.sel = afterPeek(this.rows.map((x) => x.key), row.key); this.follow = true; }
     } else a = rowButtons(row).find((b) => b.label.toLowerCase() === kind);
-    this.press(a);
+    if (kind === "agent" && !a?.run) this.askStart(row);
+    else this.press(a);
     cx.notify();
+  }
+
+  // `a` with no live agent: focus a card terminal that exists, else confirm, then startWork()
+  askStart(row) {
+    const p = startPlan(row, terminals(), null, this.cfg, home(), { pending: this.pending });
+    if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
+    else if (p.action === "confirm") {
+      this.asked = row;
+      openOverlay({ mod: "confirm", kind: "dialog", width: 420, height: 170, props: { title: p.title, detail: p.detail, command: { name: `${MOD}.start` } } });
+    }
+  }
+
+  async startWork(cx) {
+    const row = this.asked;
+    this.asked = null;
+    if (!row || this.pending.has(row.key)) return;
+    this.pending.add(row.key);
+    try {
+      const folder = repoFolder(row.repo, this.cfg, home());
+      const ok = (await exec("test", ["-d", folder]).catch(() => ({ code: 1 }))).code === 0;
+      const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch(() => null);
+      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok });
+      if (p.action === "start") { run(...p.step); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
+      if (p.action === "error") notify({ title: "Can't start /work", body: p.message, level: "error" });
+      else if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
+    } catch (e) { notify({ title: "Can't start /work", body: String(e?.message ?? e), level: "error" }); }
+    this.pending.delete(row.key);
   }
 
   press(a) {
@@ -294,9 +323,10 @@ export default class Board extends View {
   buttons(t, row) {
     return h_flex().flex_none().gap(2).px(2).py(1).rounded(6).bg(t.popover).border(1).border_color(t.border)
       .children(rowButtons(row).map((b) => {
-        const on = !!(b.run || b.exec);
+        const starts = b.key === "a" && !b.run && !row.epic && !!row.repo && !!row.number;
+        const on = !!(b.run || b.exec) || starts;
         return h_flex().id(`act-${row.key}-${b.key}`).gap(3).px(6).py(1).rounded(4).items_center()
-          .when(on, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(stop(() => this.press(b))))
+          .when(on, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(stop(() => (starts ? this.askStart(row) : this.press(b)))))
           .child(sans(11, on ? t.accent : t.dim, b.label)).child(mono(9, t.dim, b.key));
       }));
   }
@@ -540,7 +570,7 @@ export default class Board extends View {
       : ui.view === "status" ? "Done column limited to 8; epics excluded" : ui.live ? "live only" : "";
     const hint = (k, text) => h_flex().gap(4).items_center().child(mono(10, t.muted, k).px(4).rounded(3).border(1).border_color(t.border).bg(t.background)).child(sans(11, t.muted, text));
     return h_flex().w_full().flex_none().gap(14).px(14).py(5).items_center().overflow_hidden().bg(t.chrome).border_t(1).border_color(t.border)
-      .children([["/", "search"], ["j k", "move"], ["↵", "agent / issue"], ["a", "agent"], ["i", "issue"], ["p", "PR"], ["t e s", "views"],
+      .children([["/", "search"], ["j k", "move"], ["↵", "agent / issue"], ["a", "agent (start /work if none)"], ["i", "issue"], ["p", "PR"], ["t e s", "views"],
         ["g", "group"], ["l", "live"], ["F", "focus"], ["0–4", "priority"], ["n", "needs you"], ["⇧R", "refresh"]]
         .slice(0, this.width < NARROW ? 6 : 13).map(([k, s]) => hint(k, s)))
       .child(div().flex_1())

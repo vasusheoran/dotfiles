@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets,
+  scrollTop, clampTop, facets, startPlan, repoFolder, deskFor,
 } from "./lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
@@ -654,4 +654,70 @@ test("facets: the areas and repos the filter menus offer, sorted", () => {
 
 test("defaults: Today, P0–P2, all areas and repos, not grouped, not live-only, no Focus, no search", () => {
   assert.deepEqual(defaultUi(), { view: "today", epic: null, priorities: ["P0", "P1", "P2"], area: null, repo: null, group: false, live: false, focus: false, query: "", showLow: {}, doneOpen: false });
+});
+
+// ---- starting /work on an issue with no agent ----
+
+const HOME = "/home/syn";
+const AREAS = "# project -> area\nwidgets build\ngadgets ship\n";
+const issue = (n = 12, o = {}) => ({ ...it(n, o), epic: o.epic ?? false });
+const DESK = { address: "t9", state: "live", status: "idle", labels: ["desk=build", "herdr.space=s3"] };
+
+test("repoFolder: repoPaths wins (~ expanded), else ~/workspace/vasu/<repo name>", () => {
+  assert.equal(repoFolder("acme/widgets", {}, HOME), "/home/syn/workspace/vasu/widgets");
+  assert.equal(repoFolder("acme/widgets", { repoPaths: { "acme/widgets": "~/code/w" } }, HOME), "/home/syn/code/w");
+  assert.equal(repoFolder("acme/widgets", { repoPaths: { "acme/widgets": "/srv/w" } }, HOME), "/srv/w");
+  assert.equal(repoFolder("acme/gadgets", { repoPaths: { "acme/widgets": "/srv/w" } }, HOME), "/home/syn/workspace/vasu/gadgets");
+});
+
+test("deskFor: reads '<repo-name> <desk>' lines, skips comments, null when unmapped", () => {
+  assert.equal(deskFor("acme/widgets", AREAS), "build");
+  assert.equal(deskFor("acme/gadgets", AREAS), "ship");
+  assert.equal(deskFor("acme/other", AREAS), null);
+  assert.equal(deskFor("acme/project", AREAS), null, "comment lines are not mappings");
+  assert.equal(deskFor("acme/widgets", null), null);
+});
+
+test("startPlan: a live agent is not this function's case, but any card terminal (even not live) is focused, never a second start", () => {
+  const dead = { address: "t4", state: "starting", labels: ["card=Acme/Widgets#12"] };
+  assert.deepEqual(startPlan(issue(), [dead], AREAS, CFG, HOME), { action: "focus", terminal: "t4" });
+  assert.deepEqual(startPlan(issue(), [term("t2", "acme/widgets#12")], AREAS, CFG, HOME), { action: "focus", terminal: "t2" });
+});
+
+test("startPlan: no agent -> confirm once, with the title; epics and pending starts do nothing", () => {
+  assert.deepEqual(startPlan(issue(12, { title: "Fix thing" }), [], AREAS, CFG, HOME),
+    { action: "confirm", title: "Start /work on acme/widgets#12?", detail: "Fix thing" });
+  assert.deepEqual(startPlan(issue(12, { epic: true }), [], AREAS, CFG, HOME), { action: "none" });
+  assert.deepEqual(startPlan(issue(), [], AREAS, CFG, HOME, { pending: new Set(["acme/widgets#12"]) }), { action: "none" });
+  assert.deepEqual(startPlan(issue(), [term("t2", "acme/widgets#12")], AREAS, CFG, HOME, { pending: new Set(["acme/widgets#12"]) }), { action: "focus", terminal: "t2" });
+  assert.deepEqual(startPlan({ ...issue(), number: null, repo: null }, [], AREAS, CFG, HOME), { action: "none" }, "drafts have no repo to start in");
+});
+
+test("startPlan confirmed: a desk space exists -> tab.new in it", () => {
+  const p = startPlan(issue(12, { title: "Fix thing" }), [DESK], AREAS, CFG, HOME, { confirmed: true });
+  assert.deepEqual(p, { action: "start", step: ["tab.new", { space: "s3", folder: "/home/syn/workspace/vasu/widgets",
+    name: "#12 Fix thing", argv: ["claude", "/work acme/widgets#12"] }] });
+});
+
+test("startPlan confirmed: no desk terminal -> space.new named for the desk, else the repo", () => {
+  const argv = ["claude", "/work acme/widgets#12"];
+  const folder = "/home/syn/workspace/vasu/widgets";
+  assert.deepEqual(startPlan(issue(), [], AREAS, CFG, HOME, { confirmed: true }).step,
+    ["space.new", { name: "build", folder, tab: "#12 Synthetic 12", argv }]);
+  assert.deepEqual(startPlan(issue(12, { repo: "acme/other" }), [], AREAS, CFG, HOME, { confirmed: true }).step[1].name, "other");
+  const other = { address: "t8", state: "live", labels: ["desk=ship", "herdr.space=s7"] };
+  assert.equal(startPlan(issue(), [other], AREAS, CFG, HOME, { confirmed: true }).step[0], "space.new", "another desk's space is not ours");
+  const objLabels = { address: "t9", state: "live", labels: { desk: "build", "herdr.space": "s3" } };
+  assert.equal(startPlan(issue(), [objLabels], AREAS, CFG, HOME, { confirmed: true }).step[1].space, "s3");
+});
+
+test("startPlan confirmed: the tab name is short; a missing folder is an error, not a start", () => {
+  const long = startPlan(issue(12, { title: "A very long synthetic title that keeps going and going" }), [DESK], AREAS, CFG, HOME, { confirmed: true });
+  assert.ok(long.step[1].name.startsWith("#12 A very long") && long.step[1].name.length <= 32, long.step[1].name);
+  const gone = startPlan(issue(), [DESK], AREAS, CFG, HOME, { confirmed: true, exists: () => false });
+  assert.deepEqual(gone, { action: "error", message: "Folder /home/syn/workspace/vasu/widgets does not exist (set repoPaths in board.json)" });
+});
+
+test("keyboard: footer says what a does", () => {
+  assert.equal(keyAction("a"), "agent");
 });
