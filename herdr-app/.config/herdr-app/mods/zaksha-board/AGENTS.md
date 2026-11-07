@@ -16,7 +16,7 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 
 - Agents without a `card` label are matched read-only (`linkTerminals`): a live claude terminal whose title has `#<N>`, else whose space's branch has `<N>` as a whole number (space name must fit the repo). Shown with a `~`; a labelled agent wins; `a` focuses it. Labels are never written.
 - The "Now" strip (`nowFlat`) tops every view except search: each issue with a live agent, blocked first.
-- Each render records the focused local {space, tab} into shared `space-toggle.history` (`pushHistory`, cap 10); the sibling mod `space-toggle` (bound to `ctrl-tab` in keys.json, replacing `tab.next` there; `cmd-shift-]` and `shift-right` still move tabs) flips to the previous entry.
+- Each render records the focused local {space, tab} into shared `space-toggle.history` (`pushHistory`, cap 10); the sibling mod `space-toggle` (bound to `cmd-shift-\` in keys.json, written `"cmd-shift-\\"` there) flips to the previous entry.
 
 ## board.json
 
