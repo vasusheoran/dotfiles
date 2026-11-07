@@ -1,0 +1,6 @@
+{
+  "owner": "your-org",
+  "project": 1,
+  "pollSeconds": 300,
+  "repoPaths": { "your-org/widgets": "~/code/widgets" }
+}
