@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor,
+  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory,
 } from "./lib.js";
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
@@ -817,4 +817,189 @@ test("dialogTitle follows the mode", () => {
   assert.equal(dialogTitle("work", "acme/widgets#12"), "Start /work on acme/widgets#12?");
   assert.equal(dialogTitle("quick", "acme/widgets#12"), "Quick action on acme/widgets#12?");
   assert.equal(dialogTitle("brief", "acme/widgets#12"), "Brief me on acme/widgets#12?");
+});
+
+// ---- tab marks: a dot on tabs whose terminal is linked to a card ----
+
+const mt = (address, tab, card, o = {}) => ({ address, state: "live", labels: [...(card ? [`card=${card}`] : []), ...(tab ? [`herdr.tab=${tab}`] : [])], ...o });
+const MITEMS = [{ repo: "acme/widgets", number: 12, title: "Fix the flaky checkout test" }, { repo: "acme/widgets", number: 7, title: "Short" }];
+
+test("tabMarks: a linked terminal's tab gets the dot, number and a trimmed title", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "claude", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+  assert.deepEqual(r.records, { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } });
+});
+
+test("tabMarks: a short title is kept whole", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#7")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.equal(r.renames[0].name, "● #7 Short");
+});
+
+test("tabMarks: an issue missing from the cache is just the dot and number", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#99")], tabs: [{ id: "tab1", name: "x", named: true }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #99" }]);
+  assert.deepEqual(r.records.tab1, { card: "acme/widgets#99", prevNamed: true, prevName: "x" });
+});
+
+test("tabMarks: unlinking restores a named tab's old name", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: true, prevName: "my tab" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", null)], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "my tab" }]);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: unlinking an unnamed tab hands naming back to Herdr", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const r = tabMarks({ terminals: [], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "" }]);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: a dead terminal counts as unlinked", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "c" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12", { state: "exited" })], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "" }]);
+});
+
+test("tabMarks: a tab renamed by hand is released and never overwritten", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const still = mt("t1", "tab1", "acme/widgets#12");
+  const r = tabMarks({ terminals: [still], tabs: [{ id: "tab1", name: "my own name", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, {});
+  const r2 = tabMarks({ terminals: [mt("t1", "tab1", null)], tabs: [{ id: "tab1", name: "my own name", named: true }], records, items: MITEMS });
+  assert.deepEqual(r2.renames, []);
+});
+
+test("tabMarks: nothing to do when the name is already right", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const args = { terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS };
+  const r = tabMarks(args);
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, records);
+});
+
+test("tabMarks: the title refreshes when the cache learns it, keeping the original previous name", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+  assert.deepEqual(r.records, records);
+});
+
+test("tabMarks: a tab that is already marked but has no record never saves the marker as its previous name", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12", named: true }], records: {}, items: MITEMS });
+  assert.deepEqual(r.records.tab1, { card: "acme/widgets#12", prevNamed: false, prevName: "" });
+});
+
+test("tabMarks: terminals sharing a tab use the lowest address", () => {
+  const r = tabMarks({ terminals: [mt("t9", "tab1", "acme/widgets#7"), mt("t2", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+});
+
+test("tabMarks: remote terminals and terminals without a tab label are ignored", () => {
+  const r = tabMarks({ terminals: [mt("box/t1", "tab1", "acme/widgets#12"), mt("t2", null, "acme/widgets#12")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: records of tabs that no longer exist are dropped", () => {
+  const r = tabMarks({ terminals: [], tabs: [], records: { gone: { card: "acme/widgets#12", prevNamed: false, prevName: "" } }, items: MITEMS });
+  assert.deepEqual(r.records, {});
+  assert.deepEqual(r.renames, []);
+});
+
+// ---- matching unlabelled agents, the Now strip, space history ----
+
+const ITEM = (n, o = {}) => ({ key: `acme/widgets#${n}`, repo: "acme/widgets", number: n, title: `Issue ${n}`, status: "In progress", state: "OPEN", epic: false, priority: "P1", prs: [], ...o });
+const MI = [ITEM(717), ITEM(8), ITEM(5, { repo: "acme/other", key: "acme/other#5" })];
+const cc = (address, o = {}) => ({ address, state: "live", app: "claude-code", status: "working", seq: 1, title: "claude", labels: ["herdr.space=sp1"], ...o });
+const SP = [{ id: "sp1", name: "widgets", branch: "main" }];
+
+test("linkTerminals: an unlabelled claude terminal whose title has #N token matches that issue", () => {
+  const [t] = linkTerminals([cc("t1", { title: "#717 Windows agent efficacy" })], MI, SP);
+  assert.deepEqual(t.matched, { key: "acme/widgets#717", by: "title" });
+  assert.equal(linkTerminals([cc("t1", { title: "#7170 nope" })], MI, SP)[0].matched, undefined);
+});
+
+test("linkTerminals: the space's branch number matches when it is a whole token", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-tamper" }];
+  assert.deepEqual(linkTerminals([cc("t1")], MI, sp)[0].matched, { key: "acme/widgets#717", by: "branch" });
+  assert.equal(linkTerminals([cc("t1")], MI, [{ id: "sp1", name: "widgets", branch: "feat/7171-x" }])[0].matched, undefined);
+});
+
+test("linkTerminals: a space named for another repo does not match", () => {
+  const sp = [{ id: "sp1", name: "other", branch: "feat/717-tamper" }];
+  assert.equal(linkTerminals([cc("t1")], MI, sp)[0].matched, undefined);
+  assert.deepEqual(linkTerminals([cc("t1")], MI, [{ id: "sp1", name: "other", branch: "fix/5" }])[0].matched, { key: "acme/other#5", by: "branch" });
+});
+
+test("linkTerminals: labelled, remote, dead and non-claude terminals are left alone", () => {
+  const ts = [cc("t1", { title: "#717 x", labels: ["card=acme/widgets#8", "herdr.space=sp1"] }), cc("box/t2", { title: "#717 x" }),
+    cc("t3", { title: "#717 x", state: "exited" }), cc("t4", { title: "#717 x", app: "codex" })];
+  assert.ok(linkTerminals(ts, MI, SP).every((t) => t.matched === undefined));
+});
+
+test("linkTerminals: never changes labels", () => {
+  const t = cc("t1", { title: "#717 x" });
+  assert.deepEqual(linkTerminals([t], MI, SP)[0].labels, t.labels);
+});
+
+test("cardAgents: a matched agent is flagged, and a labelled one beats it", () => {
+  const m = linkTerminals([cc("t1", { title: "#717 x" })], MI, SP);
+  assert.equal(cardAgents(m).get("acme/widgets#717")[0].matched, "title");
+  const both = linkTerminals([cc("t1", { title: "#717 x" }), cc("t2", { labels: ["card=acme/widgets#717"] })], MI, SP);
+  const a = cardAgents(both).get("acme/widgets#717");
+  assert.deepEqual(a.map((x) => x.address), ["t2"]);
+  assert.equal(a[0].matched, undefined);
+});
+
+test("cardAgents: several matches order title before branch, then newest seq", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-x" }];
+  const ts = linkTerminals([cc("b1", { seq: 9 }), cc("t1", { title: "#717 a", seq: 1 }), cc("t2", { title: "#717 b", seq: 5 })], MI, sp);
+  assert.deepEqual(cardAgents(ts).get("acme/widgets#717").map((x) => x.address), ["t2", "t1", "b1"]);
+});
+
+test("startPlan: a matched agent is focused instead of offering to start", () => {
+  const ts = linkTerminals([cc("t1", { title: "#717 x" })], MI, SP);
+  const p = startPlan({ ...MI[0] }, ts, null, CFG, "/h");
+  assert.deepEqual(p, { action: "focus", terminal: "t1" });
+});
+
+test("nowFlat: every issue with a live agent, blocked then working then the rest, hidden when none", () => {
+  assert.deepEqual(nowFlat(MI, []), []);
+  const ts = linkTerminals([cc("t1", { status: "idle", title: "#717 x" }), cc("t2", { status: "blocked", labels: ["card=acme/widgets#8"] }),
+    cc("t3", { status: "working", labels: ["card=acme/widgets#99"] })], MI, SP);
+  const f = nowFlat(MI, ts);
+  assert.equal(f[0].kind, "lane");
+  const rows = f.filter((x) => x.kind === "row");
+  assert.deepEqual(rows.map((x) => x.row.number), [8, 99, 717]);
+  assert.ok(rows.every((x) => x.key.startsWith("now:")));
+  assert.equal(rows[0].row.asking, "t2");
+});
+
+test("pushHistory: most recent first, deduped, capped at 10, local only", () => {
+  let h = [];
+  h = pushHistory(h, { space: "a", tab: "1" });
+  h = pushHistory(h, { space: "b", tab: "2" });
+  h = pushHistory(h, { space: "a", tab: "1" });
+  assert.deepEqual(h, [{ space: "a", tab: "1" }, { space: "b", tab: "2" }]);
+  assert.equal(pushHistory(h, { space: "a", tab: "1" }), h);
+  assert.equal(pushHistory(h, null), h);
+  assert.equal(pushHistory(h, { space: "m/x", tab: "m/y" }), h);
+  for (let i = 0; i < 15; i++) h = pushHistory(h, { space: `s${i}`, tab: "t" });
+  assert.equal(h.length, 10);
+  assert.equal(h[0].space, "s14");
+});
+
+test("linkTerminals: only the first number in the branch counts", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-tamper-w11-v4" }];
+  const items = [ITEM(717), ITEM(11), ITEM(4)];
+  assert.deepEqual(linkTerminals([cc("t1")], items, sp)[0].matched, { key: "acme/widgets#717", by: "branch" });
+  assert.equal(linkTerminals([cc("t1")], [ITEM(11), ITEM(4)], sp)[0].matched, undefined);
+});
+
+test("cardAgents: a title match beats a branch match even when the branch one is newer", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-x" }];
+  const ts = linkTerminals([cc("b1", { seq: 99 }), cc("t1", { title: "#717 a", seq: 1 })], MI, sp);
+  assert.deepEqual(cardAgents(ts).get("acme/widgets#717").map((x) => [x.address, x.matched]), [["t1", "title"], ["b1", "branch"]]);
 });
