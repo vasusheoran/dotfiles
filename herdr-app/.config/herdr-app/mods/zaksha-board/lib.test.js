@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor,
+  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks,
 } from "./lib.js";
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
@@ -817,4 +817,93 @@ test("dialogTitle follows the mode", () => {
   assert.equal(dialogTitle("work", "acme/widgets#12"), "Start /work on acme/widgets#12?");
   assert.equal(dialogTitle("quick", "acme/widgets#12"), "Quick action on acme/widgets#12?");
   assert.equal(dialogTitle("brief", "acme/widgets#12"), "Brief me on acme/widgets#12?");
+});
+
+// ---- tab marks: a dot on tabs whose terminal is linked to a card ----
+
+const mt = (address, tab, card, o = {}) => ({ address, state: "live", labels: [...(card ? [`card=${card}`] : []), ...(tab ? [`herdr.tab=${tab}`] : [])], ...o });
+const MITEMS = [{ repo: "acme/widgets", number: 12, title: "Fix the flaky checkout test" }, { repo: "acme/widgets", number: 7, title: "Short" }];
+
+test("tabMarks: a linked terminal's tab gets the dot, number and a trimmed title", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "claude", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+  assert.deepEqual(r.records, { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } });
+});
+
+test("tabMarks: a short title is kept whole", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#7")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.equal(r.renames[0].name, "● #7 Short");
+});
+
+test("tabMarks: an issue missing from the cache is just the dot and number", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#99")], tabs: [{ id: "tab1", name: "x", named: true }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #99" }]);
+  assert.deepEqual(r.records.tab1, { card: "acme/widgets#99", prevNamed: true, prevName: "x" });
+});
+
+test("tabMarks: unlinking restores a named tab's old name", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: true, prevName: "my tab" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", null)], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "my tab" }]);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: unlinking an unnamed tab hands naming back to Herdr", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const r = tabMarks({ terminals: [], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "" }]);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: a dead terminal counts as unlinked", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "c" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12", { state: "exited" })], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "" }]);
+});
+
+test("tabMarks: a tab renamed by hand is released and never overwritten", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const still = mt("t1", "tab1", "acme/widgets#12");
+  const r = tabMarks({ terminals: [still], tabs: [{ id: "tab1", name: "my own name", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, {});
+  const r2 = tabMarks({ terminals: [mt("t1", "tab1", null)], tabs: [{ id: "tab1", name: "my own name", named: true }], records, items: MITEMS });
+  assert.deepEqual(r2.renames, []);
+});
+
+test("tabMarks: nothing to do when the name is already right", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const args = { terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12 Fix the flaky checkout…", named: true }], records, items: MITEMS };
+  const r = tabMarks(args);
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, records);
+});
+
+test("tabMarks: the title refreshes when the cache learns it, keeping the original previous name", () => {
+  const records = { tab1: { card: "acme/widgets#12", prevNamed: false, prevName: "claude" } };
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12", named: true }], records, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+  assert.deepEqual(r.records, records);
+});
+
+test("tabMarks: a tab that is already marked but has no record never saves the marker as its previous name", () => {
+  const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12", named: true }], records: {}, items: MITEMS });
+  assert.deepEqual(r.records.tab1, { card: "acme/widgets#12", prevNamed: false, prevName: "" });
+});
+
+test("tabMarks: terminals sharing a tab use the lowest address", () => {
+  const r = tabMarks({ terminals: [mt("t9", "tab1", "acme/widgets#7"), mt("t2", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+});
+
+test("tabMarks: remote terminals and terminals without a tab label are ignored", () => {
+  const r = tabMarks({ terminals: [mt("box/t1", "tab1", "acme/widgets#12"), mt("t2", null, "acme/widgets#12")], tabs: [{ id: "tab1", name: "1", named: false }], records: {}, items: MITEMS });
+  assert.deepEqual(r.renames, []);
+  assert.deepEqual(r.records, {});
+});
+
+test("tabMarks: records of tabs that no longer exist are dropped", () => {
+  const r = tabMarks({ terminals: [], tabs: [], records: { gone: { card: "acme/widgets#12", prevNamed: false, prevName: "" } }, items: MITEMS });
+  assert.deepEqual(r.records, {});
+  assert.deepEqual(r.renames, []);
 });

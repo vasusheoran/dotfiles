@@ -7,7 +7,7 @@ import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
 import { exec, hc, run, props, panes, spaces, focused, terminals, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
-  needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, boardSpace, toggleBoard, ensureBoard,
+  needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
 
@@ -17,6 +17,7 @@ const SANS = "Geist";
 const ASK_MS = 5000; // how often blocked agents' screens are read for their question line
 const MODE_KEY = "zaksha-board.mode"; // "work" | "quick", set by the start dialog
 const NOTES_KEY = "zaksha-board.notes"; // the notes typed in the start dialog (zaksha-board-start), read once by startWork
+const MARKS_KEY = "zaksha-board.tabmarks"; // tab id -> {card, prevNamed, prevName}: what to restore when a tab loses its card label
 const FROM_KEY = "zaksha-board.from"; // where cmd-shift-b came from: shared, since the opener is another copy
 const NARROW = 1000;
 const H = { lane: 30, group: 24, row: 28, two: 46, more: 24, empty: 30, ehead: 26, epic: 40 };
@@ -279,6 +280,19 @@ export default class Board extends View {
     if (this.state !== "ready") return;
     const step = renameStep(board, needsCount(this.items, terminals()));
     if (step && this.renamed !== step[1].name) { this.renamed = step[1].name; cx.timer.after(0, () => run(...step)); }
+    this.markTabs(cx);
+  }
+
+  // dot + issue on tabs whose terminal carries a card label; records are saved only once the renames land,
+  // so a render in between doesn't read a half-renamed tab as renamed by hand
+  markTabs(cx) {
+    if (this.marking) return;
+    const records = shared(MARKS_KEY) ?? {};
+    const r = tabMarks({ terminals: terminals(), tabs: spaces().flatMap((s) => s.tabs), records, items: this.items });
+    if (!r.renames.length) { if (JSON.stringify(r.records) !== JSON.stringify(records)) setShared(MARKS_KEY, r.records); return; }
+    this.marking = true;
+    cx.timer.after(0, () => Promise.all(r.renames.map((x) => run("tab.rename", { id: x.tab, name: x.name })))
+      .catch(() => {}).finally(() => { setShared(MARKS_KEY, r.records); this.marking = false; }));
   }
 
   // ---- drawing ----

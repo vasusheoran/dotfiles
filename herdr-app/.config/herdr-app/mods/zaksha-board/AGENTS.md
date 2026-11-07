@@ -12,6 +12,8 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 - The started command labels its own terminal `card=<key>` before claude runs, so the board shows the agent at once.
 - `board.example.json`: committed template. `board.json`: your real one, gitignored. This repo is public: never commit real owner/project values, issue titles or screen text.
 
+- Tab marks: a live local terminal labelled `card=<key>` with a `herdr.tab` label renames its tab `● #<N> <title ≤22 chars>` (pure `tabMarks`), however the session got linked. The previous name is kept in shared `zaksha-board.tabmarks` and restored when the label goes; a tab the person renames by hand is released, never overwritten.
+
 ## board.json
 
 `owner`, `project` (the org/user and project number), `pollSeconds` (default 300, min 15) and optional `repoPaths` (`{"<owner/repo>": "<path>"}`, `~` expanded; default `~/workspace/vasu/<repo name>`). Fields read from the project: Status, Priority, Area.

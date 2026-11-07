@@ -548,3 +548,40 @@ export function facets(items) {
   const uniq = (f) => [...new Set(items.map(f).filter(Boolean))].sort();
   return { areas: uniq((it) => it.area), repos: uniq((it) => it.repo) };
 }
+
+// ---- tab marks: "● #N title" on tabs whose terminal is labelled card=<owner/repo>#<N> ----
+
+const MARK = "● #";
+const markName = (card, items) => {
+  const m = /^(.+)#(\d+)$/.exec(card);
+  const it = (items ?? []).find((i) => i.repo?.toLowerCase() === m[1].toLowerCase() && String(i.number) === m[2]);
+  const t = it?.title ?? "";
+  return `${MARK}${m[2]}${t ? ` ${t.length > 22 ? t.slice(0, 22) + "…" : t}` : ""}`;
+};
+
+// terminals + tabs + remembered previous names -> the renames to make and the records to keep
+export function tabMarks({ terminals, tabs, records, items }) {
+  const linked = new Map(); // tab id -> card, from the lowest-addressed live local terminal
+  for (const t of [...(terminals ?? [])].sort((a, b) => (a.address < b.address ? -1 : a.address > b.address ? 1 : 0))) {
+    if (t.state && t.state !== "live") continue;
+    if (String(t.address).includes("/")) continue;
+    const l = labelsOf(t);
+    if (!l["herdr.tab"] || !/^.+#\d+$/.test(l.card ?? "") || linked.has(l["herdr.tab"])) continue;
+    linked.set(l["herdr.tab"], l.card);
+  }
+  const renames = [], out = {};
+  for (const tab of tabs ?? []) {
+    const rec = records?.[tab.id], card = linked.get(tab.id);
+    if (rec && !tab.name.startsWith(`${MARK}${/#(\d+)$/.exec(rec.card)[1]}`)) continue; // renamed by hand: let go
+    if (!card) {
+      if (rec) renames.push({ tab: tab.id, name: rec.prevNamed ? rec.prevName : "" });
+      continue;
+    }
+    const name = markName(card, items);
+    out[tab.id] = rec ? { ...rec, card } : tab.name.startsWith(MARK)
+      ? { card, prevNamed: false, prevName: "" }
+      : { card, prevNamed: !!tab.named, prevName: tab.name };
+    if (tab.name !== name) renames.push({ tab: tab.id, name });
+  }
+  return { renames, records: out };
+}
