@@ -15,6 +15,7 @@ const MOD = "zaksha-board";
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const ASK_MS = 5000; // how often blocked agents' screens are read for their question line
+const NOTES_KEY = "zaksha-board.notes"; // the notes typed in the start dialog (zaksha-board-start), read once by startWork
 const FROM_KEY = "zaksha-board.from"; // where cmd-shift-b came from: shared, since the opener is another copy
 const NARROW = 1000;
 const H = { lane: 30, group: 24, row: 28, two: 46, more: 24, empty: 30, ehead: 26, epic: 40 };
@@ -199,20 +200,22 @@ export default class Board extends View {
     if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
     else if (p.action === "confirm") {
       this.asked = row;
-      openOverlay({ mod: "confirm", kind: "dialog", width: 420, height: 170, props: { title: p.title, detail: p.detail, command: { name: `${MOD}.start` } } });
+      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 230, props: { title: p.title, detail: p.detail, command: { name: `${MOD}.start` } } });
     }
   }
 
   async startWork(cx) {
     const row = this.asked;
     this.asked = null;
+    const notes = shared(NOTES_KEY) ?? "";
+    setShared(NOTES_KEY, "");
     if (!row || this.pending.has(row.key)) return;
     this.pending.add(row.key);
     try {
       const folder = repoFolder(row.repo, this.cfg, home());
       const ok = (await exec("test", ["-d", folder]).catch(() => ({ code: 1 }))).code === 0;
       const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch(() => null);
-      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok });
+      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes });
       if (p.action === "start") { run(...p.step); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
       if (p.action === "error") notify({ title: "Can't start /work", body: p.message, level: "error" });
       else if (p.action === "focus") run("agent.focus", { terminal: p.terminal });

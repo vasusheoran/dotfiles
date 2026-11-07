@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, repoFolder, deskFor,
+  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor,
 } from "./lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
@@ -720,4 +720,36 @@ test("startPlan confirmed: the tab name is short; a missing folder is an error, 
 
 test("keyboard: footer says what a does", () => {
   assert.equal(keyAction("a"), "agent");
+});
+
+test("startArgv: no notes -> exactly the plain /work command", () => {
+  const plain = ["claude", "/work acme/widgets#12"];
+  assert.deepEqual(startArgv("acme/widgets#12"), plain);
+  assert.deepEqual(startArgv("acme/widgets#12", ""), plain);
+  assert.deepEqual(startArgv("acme/widgets#12", "  \n\t "), plain, "whitespace-only is empty");
+  assert.deepEqual(startArgv("acme/widgets#12", null), plain);
+});
+
+test("startArgv: notes are trimmed and ride as one argv element after a blank line", () => {
+  assert.deepEqual(startArgv("acme/widgets#12", "  use the v2 API \n"),
+    ["claude", "/work acme/widgets#12\n\nNotes from Vasu: use the v2 API"]);
+  const multi = startArgv("acme/widgets#12", "line one\nline two; $(rm -rf /) 'quoted'");
+  assert.equal(multi.length, 2, "never split, never shell-quoted");
+  assert.equal(multi[1], "/work acme/widgets#12\n\nNotes from Vasu: line one\nline two; $(rm -rf /) 'quoted'");
+});
+
+test("startArgv: notes are capped at 2000 characters", () => {
+  const argv = startArgv("acme/widgets#12", "x".repeat(2500));
+  assert.equal(argv[1], `/work acme/widgets#12\n\nNotes from Vasu: ${"x".repeat(2000)}`);
+  assert.equal(startArgv("acme/widgets#12", "y".repeat(2000))[1].endsWith("y".repeat(2000)), true);
+  assert.equal(startArgv("acme/widgets#12", ` ${"z".repeat(2000)} `)[1].endsWith("z".repeat(2000)), true, "trim first, then cap");
+});
+
+test("startPlan confirmed: notes flow into the argv of either start step", () => {
+  const want = ["claude", "/work acme/widgets#12\n\nNotes from Vasu: mind the schema"];
+  const tab = startPlan(issue(12), [DESK], AREAS, CFG, HOME, { confirmed: true, notes: " mind the schema " });
+  assert.deepEqual(tab.step[1].argv, want);
+  const space = startPlan(issue(12), [], AREAS, CFG, HOME, { confirmed: true, notes: "mind the schema" });
+  assert.deepEqual(space.step[1].argv, want);
+  assert.deepEqual(startPlan(issue(12), [DESK], AREAS, CFG, HOME, { confirmed: true }).step[1].argv, ["claude", "/work acme/widgets#12"]);
 });
