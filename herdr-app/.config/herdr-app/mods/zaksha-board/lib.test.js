@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory,
+  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory, startMode,
 } from "./lib.js";
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
@@ -1015,4 +1015,11 @@ test("linkTerminals: only the first number in the branch counts", () => {
 test("cardAgents: a title match beats a branch match even when the branch one is newer", () => {
   const ts = link([two("b1", { seq: 99 }), two("t1", { title: "#717 a", seq: 1 })], MI, space({ branch: "feat/717-x" }));
   assert.deepEqual(cardAgents(ts).get("acme/widgets#717").map((x) => [x.address, x.matched]), [["t1", "title"], ["b1", "branch"]]);
+});
+
+test("startMode: uses the dialog's mode as given, work only when missing or unknown", () => {
+  assert.equal(startMode("work"), "work");
+  assert.equal(startMode("quick"), "quick");
+  assert.equal(startMode("brief"), "brief");
+  for (const bad of [undefined, null, "", "BRIEF", "other", 3]) assert.equal(startMode(bad), "work");
 });

@@ -643,3 +643,6 @@ export function pushHistory(history, focused) {
   if (history[0]?.space === here.space && history[0]?.tab === here.tab) return history;
   return [here, ...history.filter((h) => h.space !== here.space || h.tab !== here.tab)].slice(0, 10);
 }
+
+// The start dialog's mode as given; work when missing or unknown.
+export const startMode = (m) => (m === "quick" || m === "brief" ? m : "work");

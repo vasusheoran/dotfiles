@@ -8,10 +8,12 @@ import { exec, hc, run, props, panes, spaces, focused, terminals, agents, theme,
 import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
   needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
-  shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
+  shouldRefreshOnShow, syncLabel, startMode, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
+import { makeLog } from "./log.js";
 
 const MOD = "zaksha-board";
+const log = makeLog(MOD, { dir: appHome() }); // data/logs/zaksha-board.log
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const ASK_MS = 5000; // how often blocked agents' screens are read for their question line
@@ -90,7 +92,7 @@ export default class Board extends View {
     this.asked = null; this.pending = new Set(); // /work starts: the issue asked about, and those starting
     this.refresh(cx);
     cx.timer.every(ASK_MS, (cx) => this.readAsks(cx));
-    cx.spawn(async (cx) => { for (;;) { const c = await nextCommand(); if (c === "focus") { this.h.focus(); cx.notify(); } else if (c === "start") this.startWork(cx); } });
+    cx.spawn(async (cx) => { for (;;) { const c = await nextCommand(); log("info", "nextCommand", { name: c }); if (c === "focus") { this.h.focus(); cx.notify(); } else if (c === "start") this.startWork(cx); } });
   }
 
   refresh(cx) {
@@ -98,7 +100,7 @@ export default class Board extends View {
     if (!p) return; // one fetch in flight at a time
     this.fetching = true;
     cx.notify();
-    p.catch((e) => { this.problem = String(e?.message ?? e); }).finally(() => { this.fetching = false; cx.notify(); });
+    p.catch((e) => { this.problem = String(e?.message ?? e); log("error", "fetch failed", { message: this.problem }); }).finally(() => { this.fetching = false; cx.notify(); });
   }
 
   async load(cx) {
@@ -136,7 +138,7 @@ export default class Board extends View {
       let changed = false;
       for (const t of blocked) {
         let lines = [];
-        try { const r = await hc(["read", t.address, "--lines", "40"]); if (r.code === 0) lines = excerpt(r.stdout, 3); } catch { /* no screen */ }
+        try { const r = await hc(["read", t.address, "--lines", "40"]); if (r.code === 0) lines = excerpt(r.stdout, 3); } catch (e) { log("warn", "hc read failed", { terminal: t.address, message: String(e?.message ?? e) }); }
         if (JSON.stringify(lines) !== JSON.stringify(this.asks[t.address] ?? [])) { this.asks[t.address] = lines; changed = true; }
       }
       this.asking = false;
@@ -195,6 +197,7 @@ export default class Board extends View {
       a = primaryAction(row, { focus: this.ui.focus });
       if (a?.run?.[0] === "terminal.peek") { this.sel = afterPeek(this.rows.map((x) => x.key), row.key); this.follow = true; }
     } else a = rowButtons(row).find((b) => b.label.toLowerCase() === kind);
+    if (kind === "agent") log("info", "row key a", { key: row.key, hasRun: !!a?.run });
     if (kind === "agent" && !a?.run) this.askStart(row);
     else this.press(a);
     cx.notify();
@@ -203,36 +206,42 @@ export default class Board extends View {
   // `a` with no live agent: focus a card terminal that exists, else confirm, then startWork()
   askStart(row) {
     const p = startPlan(row, this.linked(), null, this.cfg, home(), { pending: this.pending });
+    log("info", "a pressed", { key: row.key, action: p.action });
     if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
     else if (p.action === "confirm") {
       this.asked = row;
-      openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 290, props: { title: p.title, key: row.key, detail: p.detail, command: { name: `${MOD}.start` } } });
+      const r = openOverlay({ mod: "zaksha-board-start", kind: "dialog", width: 460, height: 290, props: { title: p.title, key: row.key, detail: p.detail, command: { name: `${MOD}.start` } } });
+      log("info", "dialog opened", { key: row.key, result: r });
     }
   }
 
   async startWork(cx) {
     const row = this.asked;
     this.asked = null;
+    log("info", "startWork", { asked: row?.key ?? null, pending: [...this.pending] });
     const notes = shared(NOTES_KEY) ?? "";
     setShared(NOTES_KEY, "");
-    const mode = shared(MODE_KEY) === "quick" ? "quick" : "work";
-    if (!row || this.pending.has(row.key)) return;
+    const mode = startMode(shared(MODE_KEY));
+    if (!row || this.pending.has(row.key)) { log("warn", "startWork skipped", { asked: row?.key ?? null, pendingHit: !!row }); return; }
     this.pending.add(row.key);
     try {
       const folder = repoFolder(row.repo, this.cfg, home());
       const ok = (await exec("test", ["-d", folder]).catch(() => ({ code: 1 }))).code === 0;
-      const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch(() => null);
+      log("info", "folder check", { folder, exists: ok });
+      const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch((e) => { log("warn", "areas read failed", { message: String(e?.message ?? e) }); return null; });
+      if (areas !== null) log("info", "areas read ok", { bytes: areas.length });
       const p = startPlan(row, this.linked(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes, mode });
-      if (p.action === "start") { run(...p.step); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
+      log("info", "startPlan", { action: p.action, step: p.step?.[0], message: p.message, mode, notes: notes.length });
+      if (p.action === "start") { const r = run(...p.step); log("info", "run", { step: p.step[0], result: r }); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
       if (p.action === "error") notify({ title: "Can't start /work", body: p.message, level: "error" });
       else if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
-    } catch (e) { notify({ title: "Can't start /work", body: String(e?.message ?? e), level: "error" }); }
+    } catch (e) { log("error", "startWork failed", { message: String(e?.message ?? e) }); notify({ title: "Can't start /work", body: String(e?.message ?? e), level: "error" }); }
     this.pending.delete(row.key);
   }
 
   press(a) {
     if (a?.run) run(...a.run);
-    else if (a?.exec) exec(...a.exec).catch(() => {});
+    else if (a?.exec) exec(...a.exec).catch((e) => log("error", "exec failed", { cmd: a.exec[0], message: String(e?.message ?? e) }));
   }
 
   key(e, cx) {
@@ -298,7 +307,7 @@ export default class Board extends View {
     if (!r.renames.length) { if (JSON.stringify(r.records) !== JSON.stringify(records)) setShared(MARKS_KEY, r.records); return; }
     this.marking = true;
     cx.timer.after(0, () => Promise.all(r.renames.map((x) => run("tab.rename", { id: x.tab, name: x.name })))
-      .catch(() => {}).finally(() => { setShared(MARKS_KEY, r.records); this.marking = false; }));
+      .catch((e) => log("error", "tab rename failed", { message: String(e?.message ?? e) })).finally(() => { setShared(MARKS_KEY, r.records); this.marking = false; }));
   }
 
   // ---- drawing ----
