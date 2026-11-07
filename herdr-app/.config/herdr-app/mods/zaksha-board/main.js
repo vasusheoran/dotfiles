@@ -7,7 +7,7 @@ import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
 import { exec, hc, run, props, panes, spaces, focused, terminals, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
-  needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, boardSpace, toggleBoard, ensureBoard,
+  needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
 
@@ -18,6 +18,7 @@ const ASK_MS = 5000; // how often blocked agents' screens are read for their que
 const MODE_KEY = "zaksha-board.mode"; // "work" | "quick", set by the start dialog
 const NOTES_KEY = "zaksha-board.notes"; // the notes typed in the start dialog (zaksha-board-start), read once by startWork
 const MARKS_KEY = "zaksha-board.tabmarks"; // tab id -> {card, prevNamed, prevName}: what to restore when a tab loses its card label
+const HISTORY_KEY = "space-toggle.history"; // recent {space, tab}, read by the space-toggle mod
 const FROM_KEY = "zaksha-board.from"; // where cmd-shift-b came from: shared, since the opener is another copy
 const NARROW = 1000;
 const H = { lane: 30, group: 24, row: 28, two: 46, more: 24, empty: 30, ehead: 26, epic: 40 };
@@ -128,7 +129,7 @@ export default class Board extends View {
   // what blocked agents on issues show (hc read): their question line
   readAsks(cx) {
     if (this.asking) return;
-    const blocked = [...cardAgents(terminals()).values()].flat().filter((a) => a.status === "blocked");
+    const blocked = [...cardAgents(this.linked()).values()].flat().filter((a) => a.status === "blocked");
     if (!blocked.length) return;
     this.asking = true;
     cx.spawn(async (cx) => {
@@ -142,6 +143,8 @@ export default class Board extends View {
       if (changed) cx.notify();
     });
   }
+
+  linked() { return linkTerminals(terminals(), this.items, spaces()); }
 
   setUi(change) { this.ui = { ...this.ui, ...change }; }
 
@@ -158,24 +161,25 @@ export default class Board extends View {
 
   // what the main area shows now: {kind: "list" | "epics" | "status", ...}
   model() {
-    const ui = this.ui, t = terminals();
+    const ui = this.ui, t = this.linked();
+    const now = ui.query ? [] : nowFlat(this.items, t);
     if (ui.query) { const v = searchView(this.items, t, ui.query); return { kind: "list", flat: flatten({ lanes: v.groups }), search: v }; }
-    if (ui.focus) return { kind: "list", flat: flatten(focusView(this.items, t)) };
+    if (ui.focus) return { kind: "list", flat: [...now, ...flatten(focusView(this.items, t))] };
     if (ui.view === "epic") {
       const v = drillView(this.items, t, ui.epic, ui);
-      if (v) return { kind: "list", flat: flatten(v), drill: v };
+      if (v) return { kind: "list", flat: [...now, ...flatten(v)], drill: v };
       this.setUi({ view: "epics", epic: null });
     }
     if (ui.view === "epics") {
       const v = epicsView(this.items, t, Date.now());
-      return { kind: "list", flat: [{ kind: "ehead", key: "ehead" }, ...v.rows.map((r) => ({ kind: "epic", key: r.key, row: r }))] };
+      return { kind: "list", flat: [...now, { kind: "ehead", key: "ehead" }, ...v.rows.map((r) => ({ kind: "epic", key: r.key, row: r }))] };
     }
-    if (ui.view === "status") return { kind: "status", status: statusView(this.items, t, ui) };
-    return { kind: "list", flat: flatten(todayView(this.items, t, ui)) };
+    if (ui.view === "status") return { kind: "status", status: statusView(this.items, t, ui), now };
+    return { kind: "list", flat: [...now, ...flatten(todayView(this.items, t, ui))] };
   }
 
   rowsOf(m) {
-    if (m.kind === "status") return m.status.columns.flatMap((c) => c.rows.map((r) => ({ key: r.key, row: r })));
+    if (m.kind === "status") return [...m.now.filter((x) => x.kind === "row"), ...m.status.columns.flatMap((c) => c.rows.map((r) => ({ key: r.key, row: r })))];
     return m.flat.filter((x) => x.kind === "row" || x.kind === "epic");
   }
 
@@ -198,7 +202,7 @@ export default class Board extends View {
 
   // `a` with no live agent: focus a card terminal that exists, else confirm, then startWork()
   askStart(row) {
-    const p = startPlan(row, terminals(), null, this.cfg, home(), { pending: this.pending });
+    const p = startPlan(row, this.linked(), null, this.cfg, home(), { pending: this.pending });
     if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
     else if (p.action === "confirm") {
       this.asked = row;
@@ -218,7 +222,7 @@ export default class Board extends View {
       const folder = repoFolder(row.repo, this.cfg, home());
       const ok = (await exec("test", ["-d", folder]).catch(() => ({ code: 1 }))).code === 0;
       const areas = await readTextFile(`${home()}/handoffs/areas.txt`).catch(() => null);
-      const p = startPlan(row, terminals(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes, mode });
+      const p = startPlan(row, this.linked(), areas, this.cfg, home(), { confirmed: true, pending: this.pending, exists: () => ok, notes, mode });
       if (p.action === "start") { run(...p.step); cx.timer.after(30000, () => this.pending.delete(row.key)); return; }
       if (p.action === "error") notify({ title: "Can't start /work", body: p.message, level: "error" });
       else if (p.action === "focus") run("agent.focus", { terminal: p.terminal });
@@ -273,12 +277,14 @@ export default class Board extends View {
 
   // the board became visible: refresh (at most once a minute); keep the space's name carrying the count
   housekeeping(cx) {
+    const hist = shared(HISTORY_KEY) ?? [], next = pushHistory(hist, focused());
+    if (next !== hist) setShared(HISTORY_KEY, next);
     const board = boardSpace(spaces());
     const shown = !!board && focused()?.space === board.id;
     if (shouldRefreshOnShow(this.shown, shown, this.read, Date.now())) cx.timer.after(0, (cx) => this.refresh(cx));
     this.shown = shown;
     if (this.state !== "ready") return;
-    const step = renameStep(board, needsCount(this.items, terminals()));
+    const step = renameStep(board, needsCount(this.items, this.linked()));
     if (step && this.renamed !== step[1].name) { this.renamed = step[1].name; cx.timer.after(0, () => run(...step)); }
     this.markTabs(cx);
   }
@@ -325,7 +331,9 @@ export default class Board extends View {
       return div().w(12).h(12).rounded_full().flex().items_center().justify_center().bg(t[a.status] ?? t.idle)
         .font_family(MONO).text_size(9).font_weight(700).text_color(t.background).child(glyph);
     };
-    return [h_flex().gap(2).items_center().children(row.agents.map(dot))
+    const marked = (a) => (a.matched ? h_flex().id(`match-${a.address}`).gap(1).items_center().tooltip("matched by title/branch, not linked")
+      .child(mono(10, t.dim, "~")).child(dot(a)) : dot(a));
+    return [h_flex().gap(2).items_center().children(row.agents.map(marked))
       .child(mono(10, t.muted, row.agents.map((a) => a.address).join(",")))];
   }
 
@@ -514,7 +522,7 @@ export default class Board extends View {
     const ui = this.ui, narrow = this.width < NARROW;
     const inToday = (ui.view === "today" || ui.view === "status") && !ui.query && !ui.focus;
     const f = facets(this.items);
-    const live = liveSummary(terminals());
+    const live = liveSummary(this.linked());
     const blocked = / · (\d+) blocked/.exec(live);
     const sync = syncLabel({ now: Date.now(), read: this.read, fetching: this.fetching, count: this.items.length, error: this.problem });
     const views = h_flex().flex_none().p(2).rounded(7).bg(t.raised).children(VIEWS.map(([v, name, sub]) => {
@@ -639,7 +647,8 @@ export default class Board extends View {
       .child(sans(12, tone, text));
 
     const main = loading ? this.skeleton(t)
-      : m.kind === "status" ? this.statusBoard(t, m.status)
+      : m.kind === "status" ? v_flex().size_full().child(v_flex().flex_none().w_full().children(m.now.map((x) => (x.kind === "row" ? this.row(t, x.row) : this.laneHeader(t, x.lane)))))
+        .child(div().w_full().flex_1().min_h(0).child(this.statusBoard(t, m.status)))
       : m.search?.empty ? div().pt(30).pl(48).child(sans(12, t.dim, m.search.empty).italic())
       : this.list(t, m.flat);
 

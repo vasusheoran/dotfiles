@@ -6,7 +6,7 @@ import {
   parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, laneOf, todayView, epicsView, drillView, statusView,
   searchView, focusView, needsCount, flatten, rowButtons, primaryAction, keyAction, escapeStep, badgeName, renameStep,
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
-  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks,
+  scrollTop, clampTop, facets, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory,
 } from "./lib.js";
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
@@ -906,4 +906,87 @@ test("tabMarks: records of tabs that no longer exist are dropped", () => {
   const r = tabMarks({ terminals: [], tabs: [], records: { gone: { card: "acme/widgets#12", prevNamed: false, prevName: "" } }, items: MITEMS });
   assert.deepEqual(r.records, {});
   assert.deepEqual(r.renames, []);
+});
+
+// ---- matching unlabelled agents, the Now strip, space history ----
+
+const ITEM = (n, o = {}) => ({ key: `acme/widgets#${n}`, repo: "acme/widgets", number: n, title: `Issue ${n}`, status: "In progress", state: "OPEN", epic: false, priority: "P1", prs: [], ...o });
+const MI = [ITEM(717), ITEM(8), ITEM(5, { repo: "acme/other", key: "acme/other#5" })];
+const cc = (address, o = {}) => ({ address, state: "live", app: "claude-code", status: "working", seq: 1, title: "claude", labels: ["herdr.space=sp1"], ...o });
+const SP = [{ id: "sp1", name: "widgets", branch: "main" }];
+
+test("linkTerminals: an unlabelled claude terminal whose title has #N token matches that issue", () => {
+  const [t] = linkTerminals([cc("t1", { title: "#717 Windows agent efficacy" })], MI, SP);
+  assert.deepEqual(t.matched, { key: "acme/widgets#717", by: "title" });
+  assert.equal(linkTerminals([cc("t1", { title: "#7170 nope" })], MI, SP)[0].matched, undefined);
+});
+
+test("linkTerminals: the space's branch number matches when it is a whole token", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-tamper" }];
+  assert.deepEqual(linkTerminals([cc("t1")], MI, sp)[0].matched, { key: "acme/widgets#717", by: "branch" });
+  assert.equal(linkTerminals([cc("t1")], MI, [{ id: "sp1", name: "widgets", branch: "feat/7171-x" }])[0].matched, undefined);
+});
+
+test("linkTerminals: a space named for another repo does not match", () => {
+  const sp = [{ id: "sp1", name: "other", branch: "feat/717-tamper" }];
+  assert.equal(linkTerminals([cc("t1")], MI, sp)[0].matched, undefined);
+  assert.deepEqual(linkTerminals([cc("t1")], MI, [{ id: "sp1", name: "other", branch: "fix/5" }])[0].matched, { key: "acme/other#5", by: "branch" });
+});
+
+test("linkTerminals: labelled, remote, dead and non-claude terminals are left alone", () => {
+  const ts = [cc("t1", { title: "#717 x", labels: ["card=acme/widgets#8", "herdr.space=sp1"] }), cc("box/t2", { title: "#717 x" }),
+    cc("t3", { title: "#717 x", state: "exited" }), cc("t4", { title: "#717 x", app: "codex" })];
+  assert.ok(linkTerminals(ts, MI, SP).every((t) => t.matched === undefined));
+});
+
+test("linkTerminals: never changes labels", () => {
+  const t = cc("t1", { title: "#717 x" });
+  assert.deepEqual(linkTerminals([t], MI, SP)[0].labels, t.labels);
+});
+
+test("cardAgents: a matched agent is flagged, and a labelled one beats it", () => {
+  const m = linkTerminals([cc("t1", { title: "#717 x" })], MI, SP);
+  assert.equal(cardAgents(m).get("acme/widgets#717")[0].matched, "title");
+  const both = linkTerminals([cc("t1", { title: "#717 x" }), cc("t2", { labels: ["card=acme/widgets#717"] })], MI, SP);
+  const a = cardAgents(both).get("acme/widgets#717");
+  assert.deepEqual(a.map((x) => x.address), ["t2"]);
+  assert.equal(a[0].matched, undefined);
+});
+
+test("cardAgents: several matches order title before branch, then newest seq", () => {
+  const sp = [{ id: "sp1", name: "widgets", branch: "feat/717-x" }];
+  const ts = linkTerminals([cc("b1", { seq: 9 }), cc("t1", { title: "#717 a", seq: 1 }), cc("t2", { title: "#717 b", seq: 5 })], MI, sp);
+  assert.deepEqual(cardAgents(ts).get("acme/widgets#717").map((x) => x.address), ["t2", "t1", "b1"]);
+});
+
+test("startPlan: a matched agent is focused instead of offering to start", () => {
+  const ts = linkTerminals([cc("t1", { title: "#717 x" })], MI, SP);
+  const p = startPlan({ ...MI[0] }, ts, null, CFG, "/h");
+  assert.deepEqual(p, { action: "focus", terminal: "t1" });
+});
+
+test("nowFlat: every issue with a live agent, blocked then working then the rest, hidden when none", () => {
+  assert.deepEqual(nowFlat(MI, []), []);
+  const ts = linkTerminals([cc("t1", { status: "idle", title: "#717 x" }), cc("t2", { status: "blocked", labels: ["card=acme/widgets#8"] }),
+    cc("t3", { status: "working", labels: ["card=acme/widgets#99"] })], MI, SP);
+  const f = nowFlat(MI, ts);
+  assert.equal(f[0].kind, "lane");
+  const rows = f.filter((x) => x.kind === "row");
+  assert.deepEqual(rows.map((x) => x.row.number), [8, 99, 717]);
+  assert.ok(rows.every((x) => x.key.startsWith("now:")));
+  assert.equal(rows[0].row.asking, "t2");
+});
+
+test("pushHistory: most recent first, deduped, capped at 10, local only", () => {
+  let h = [];
+  h = pushHistory(h, { space: "a", tab: "1" });
+  h = pushHistory(h, { space: "b", tab: "2" });
+  h = pushHistory(h, { space: "a", tab: "1" });
+  assert.deepEqual(h, [{ space: "a", tab: "1" }, { space: "b", tab: "2" }]);
+  assert.equal(pushHistory(h, { space: "a", tab: "1" }), h);
+  assert.equal(pushHistory(h, null), h);
+  assert.equal(pushHistory(h, { space: "m/x", tab: "m/y" }), h);
+  for (let i = 0; i < 15; i++) h = pushHistory(h, { space: `s${i}`, tab: "t" });
+  assert.equal(h.length, 10);
+  assert.equal(h[0].space, "s14");
 });

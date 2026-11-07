@@ -114,16 +114,48 @@ const labelsOf = (t) => Array.isArray(t.labels)
   ? Object.fromEntries(t.labels.map((l) => { const i = String(l).indexOf("="); return i < 0 ? [l, ""] : [l.slice(0, i), l.slice(i + 1)]; }))
   : (t.labels ?? {});
 
-// live terminals labelled card=<owner/repo>#<N>, by lowercased key -> [{address, status, card}]
+// Unlabelled live claude terminals on this computer, matched read-only to an open issue: by a "#N" token in the
+// terminal title, else by N as a whole number in its space's branch (the space's name must fit the repo when it names one).
+// Returns the terminals, matched ones carrying matched: {key, by}. Never writes a label.
+export function linkTerminals(terminals, items, spaces) {
+  const open = (items ?? []).filter((it) => it.number && !it.epic && !isDone(it));
+  const shorts = new Set(open.map((it) => it.repo?.split("/").pop().toLowerCase()));
+  const byNumber = (n, space) => {
+    const name = space?.name?.toLowerCase();
+    const ok = (it) => !shorts.has(name) || it.repo.split("/").pop().toLowerCase() === name;
+    return open.find((it) => it.number === n && ok(it));
+  };
+  return (terminals ?? []).map((t) => {
+    if (t.state && t.state !== "live") return t;
+    if (labelsOf(t).card || String(t.address).includes("/") || t.app !== "claude-code") return t;
+    const space = (spaces ?? []).find((s) => s.id === labelsOf(t)["herdr.space"]);
+    for (const m of String(t.title ?? "").matchAll(/(?<![\w#])#(\d+)(?!\d)/g)) {
+      const it = byNumber(Number(m[1]), space);
+      if (it) return { ...t, matched: { key: it.key, by: "title" } };
+    }
+    for (const m of String(space?.branch ?? "").matchAll(/(?<!\d)\d+(?!\d)/g)) {
+      const it = byNumber(Number(m[0]), space);
+      if (it) return { ...t, matched: { key: it.key, by: "branch" } };
+    }
+    return t;
+  });
+}
+
+// live terminals labelled card=<owner/repo>#<N> (else matched by linkTerminals, only where nothing is labelled),
+// by lowercased key -> [{address, status, card, matched?}]
 export function cardAgents(terminals) {
-  const out = new Map();
+  const out = new Map(), guess = new Map();
+  const add = (map, key, a) => { if (!map.has(key)) map.set(key, []); map.get(key).push(a); };
   for (const t of terminals ?? []) {
     if (t.state && t.state !== "live") continue;
+    const status = STATUSES.has(t.status) ? t.status : "idle";
     const card = labelsOf(t).card;
-    if (!card) continue;
-    const key = card.toLowerCase();
-    if (!out.has(key)) out.set(key, []);
-    out.get(key).push({ address: t.address, status: STATUSES.has(t.status) ? t.status : "idle", card });
+    if (card) add(out, card.toLowerCase(), { address: t.address, status, card });
+    else if (t.matched) add(guess, t.matched.key.toLowerCase(), { address: t.address, status, card: t.matched.key, matched: t.matched.by, seq: t.seq ?? 0 });
+  }
+  for (const [k, a] of guess) {
+    if (out.has(k)) continue;
+    out.set(k, a.sort((x, y) => (x.matched === "title" ? 0 : 1) - (y.matched === "title" ? 0 : 1) || y.seq - x.seq));
   }
   return out;
 }
@@ -410,6 +442,8 @@ export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = 
   const key = issue.key.toLowerCase();
   const held = (terminals ?? []).find((t) => labelsOf(t).card?.toLowerCase() === key);
   if (held) return { action: "focus", terminal: held.address };
+  const matched = cardAgents(terminals).get(key)?.[0];
+  if (matched) return { action: "focus", terminal: matched.address };
   if (pending.has(issue.key)) return { action: "none" };
   if (!confirmed) return { action: "confirm", title: `Start /work on ${issue.key}?`, detail: issue.title };
   const folder = repoFolder(issue.repo, cfg, home);
@@ -584,4 +618,26 @@ export function tabMarks({ terminals, tabs, records, items }) {
     if (tab.name !== name) renames.push({ tab: tab.id, name });
   }
   return { renames, records: out };
+}
+
+// ---- Now: the issues with a live agent, on top of every view ----
+
+// flat entries (a lane, then rows keyed "now:<key>"): blocked first, then working, then done/idle; [] when none
+export function nowFlat(items, terminals) {
+  const agents = cardAgents(terminals);
+  const rank = (r) => (r.asking ? 0 : r.agents.some((a) => a.status === "working") ? 1 : 2);
+  const rows = [...items.filter((it) => !it.epic).map((it) => toRow(it, agents)), ...orphanRows(items, agents)]
+    .filter((r) => r.agents.length).sort((a, b) => rank(a) - rank(b) || byRow(a, b));
+  if (!rows.length) return [];
+  return flatten({ lanes: [{ key: "now", label: "Now", rows, total: rows.length }] })
+    .map((x) => (x.kind === "row" ? { ...x, key: `now:${x.key}`, row: { ...x.row, key: `now:${x.row.key}` } } : x));
+}
+
+// ---- where you have been, for the space toggle ----
+
+export function pushHistory(history, focused) {
+  if (!focused?.space || !focused.tab || String(focused.space).includes("/") || String(focused.tab).includes("/")) return history;
+  const here = { space: focused.space, tab: focused.tab };
+  if (history[0]?.space === here.space && history[0]?.tab === here.tab) return history;
+  return [here, ...history.filter((h) => h.space !== here.space || h.tab !== here.tab)].slice(0, 10);
 }

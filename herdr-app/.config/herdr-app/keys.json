@@ -5,7 +5,7 @@
     "cmd-alt-h": "app.hide_others",
     "cmd-t": "tab.new",
     "cmd-w": "tab.close",
-    "ctrl-tab": "tab.next",
+    "ctrl-tab": "mod.open:space-toggle",
     "ctrl-shift-tab": "tab.prev",
     "cmd-shift-]": "tab.next",
     "cmd-shift-[": "tab.prev",
