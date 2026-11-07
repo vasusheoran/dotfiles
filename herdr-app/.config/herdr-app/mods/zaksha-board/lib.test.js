@@ -2,7 +2,7 @@
 // All data here is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab } from "./lib.js";
+import { parseConfig, fetchAll, buildBoard, cardAgents, excerpt, cardButtons, single, boardTab, uiState, toggleEpic } from "./lib.js";
 
 const CFG = {
   owner: "acme", project: 7, priorities: ["P0", "P1", "P2"],
@@ -23,6 +23,8 @@ const issue = (o = {}) => ({
     title: o.title ?? `Synthetic task ${seq}`, number: o.number ?? seq, url: `https://github.com/acme/widgets/issues/${o.number ?? seq}`,
     repository: { nameWithOwner: o.repo ?? "acme/widgets" },
     closedByPullRequestsReferences: { nodes: o.prs ?? [] },
+    ...(o.parent !== undefined ? { parent: o.parent } : {}),
+    ...(o.sub !== undefined ? { subIssuesSummary: o.sub } : {}),
   },
 });
 const page = (nodes, hasNextPage = false, endCursor = null) =>
@@ -82,6 +84,7 @@ test("an item carries title, number, url, repo, status, priority, updatedAt, typ
   assert.deepEqual(r.items[0], {
     key: "acme/widgets#5", title: "Fake thing", number: 5, url: "https://github.com/acme/widgets/issues/5", repo: "acme/widgets",
     status: "Ready", priority: "P0", updatedAt: "2026-02-02T00:00:00Z", type: "Issue", prs: [pr],
+    parent: null, subIssues: null, epic: false,
   });
 });
 
@@ -272,4 +275,172 @@ test("boardTab finds a tab already showing the board, else null (so the opener m
   assert.equal(boardTab(panes, "zaksha-board"), "tabC");
   assert.equal(boardTab(panes.slice(0, 2), "zaksha-board"), null);
   assert.equal(boardTab([], "zaksha-board"), null);
+});
+
+// ---- epics, filters and sort ----
+
+test("the item query asks for each issue's parent and sub-issue summary", async () => {
+  let q = "";
+  await fetchAll(async (args) => { q = args.find((a) => a.startsWith("query=")); return page([]); }, CFG);
+  assert.match(q, /parent\s*\{\s*number\s+title\s+url\s*\}/);
+  assert.match(q, /subIssuesSummary\s*\{\s*total\s+completed\s+percentCompleted\s*\}/);
+});
+
+test("an issue with sub-issues is an epic; an issue with a parent knows its epic", async () => {
+  const r = await fetchAll(async () => page([
+    issue({ number: 1, title: "Synthetic epic", sub: { total: 3, completed: 1, percentCompleted: 33 }, parent: null }),
+    issue({ number: 2, parent: { number: 1, title: "Synthetic epic", url: "https://github.com/acme/widgets/issues/1" }, sub: { total: 0, completed: 0, percentCompleted: 0 } }),
+  ]), CFG);
+  assert.equal(r.items[0].epic, true);
+  assert.deepEqual(r.items[0].subIssues, { total: 3, completed: 1, percentCompleted: 33 });
+  assert.equal(r.items[0].parent, null);
+  assert.equal(r.items[1].epic, false);
+  assert.deepEqual(r.items[1].parent, { key: "acme/widgets#1", number: 1, title: "Synthetic epic", url: "https://github.com/acme/widgets/issues/1" });
+});
+
+const EPIC_A = { key: "acme/widgets#100", number: 100, title: "Alpha epic", url: "https://github.com/acme/widgets/issues/100" };
+const EPIC_B = { key: "acme/gadgets#200", number: 200, title: "Beta epic", url: "https://github.com/acme/gadgets/issues/200" };
+const card = (o) => ({
+  key: `${o.repo ?? "acme/widgets"}#${o.number}`, title: o.title ?? `Task ${o.number}`, number: o.number, url: `https://x/${o.number}`, repo: o.repo ?? "acme/widgets",
+  status: o.status ?? "Next", priority: "priority" in o ? o.priority : "P1", updatedAt: o.updatedAt ?? "2026-01-01T00:00:00Z", type: "Issue", prs: [],
+  parent: o.parent ?? null, subIssues: o.sub ?? null, epic: !!o.sub && o.sub.total > 0,
+});
+const epic = (e, o = {}) => card({ number: e.number, repo: e.key.split("#")[0], title: e.title, status: o.status ?? "In progress", priority: o.priority ?? "P1", sub: o.sub ?? { total: 4, completed: 1, percentCompleted: 25 } });
+const nums = (cards) => cards.map((c) => c.number);
+const allCards = (b) => b.columns.flatMap((c) => nums(c.cards));
+
+test("ui state defaults: priority sort, every configured priority on, no text, no epic, columns view", () => {
+  assert.deepEqual(uiState(CFG), { sort: "priority", priorities: ["P0", "P1", "P2"], text: "", epic: null, view: "columns", collapsed: [] });
+});
+
+test("saved ui state is restored; junk in it falls back to defaults", () => {
+  const saved = { sort: "updated", priorities: ["P0", "P9"], text: "abc", epic: "acme/widgets#100", view: "epics", collapsed: ["no-epic"] };
+  assert.deepEqual(uiState(CFG, saved), { sort: "updated", priorities: ["P0"], text: "abc", epic: "acme/widgets#100", view: "epics", collapsed: ["no-epic"] });
+  assert.deepEqual(uiState(CFG, { sort: "sideways", priorities: "P0", text: 5, view: "grid", collapsed: null }), uiState(CFG));
+  assert.deepEqual(uiState(CFG, "garbage"), uiState(CFG));
+});
+
+test("priority sort (default): P0, P1, P2, then no priority, each newest first", () => {
+  const cfg = { ...CFG, showUnprioritized: true };
+  const b = buildBoard([
+    card({ number: 1, priority: null, updatedAt: "2026-05-01T00:00:00Z" }),
+    card({ number: 2, priority: "P2", updatedAt: "2026-04-01T00:00:00Z" }),
+    card({ number: 3, priority: "P0", updatedAt: "2026-01-01T00:00:00Z" }),
+    card({ number: 4, priority: "P1", updatedAt: "2026-02-01T00:00:00Z" }),
+    card({ number: 5, priority: "P0", updatedAt: "2026-03-01T00:00:00Z" }),
+  ], cfg, []);
+  assert.deepEqual(nums(b.columns[2].cards), [5, 3, 4, 2, 1]);
+});
+
+test("updated sort ignores priority: newest first", () => {
+  const cfg = { ...CFG, showUnprioritized: true };
+  const b = buildBoard([
+    card({ number: 1, priority: null, updatedAt: "2026-05-01T00:00:00Z" }),
+    card({ number: 2, priority: "P2", updatedAt: "2026-04-01T00:00:00Z" }),
+    card({ number: 3, priority: "P0", updatedAt: "2026-01-01T00:00:00Z" }),
+  ], cfg, [], { ...uiState(cfg), sort: "updated" });
+  assert.deepEqual(nums(b.columns[2].cards), [1, 2, 3]);
+});
+
+test("priority chips: only the switched-on priorities show", () => {
+  const list = [card({ number: 1, priority: "P0" }), card({ number: 2, priority: "P1" }), card({ number: 3, priority: "P2" })];
+  const b = buildBoard(list, CFG, [], { ...uiState(CFG), priorities: ["P0", "P2"] });
+  assert.deepEqual(allCards(b).sort(), [1, 3]);
+});
+
+test("text filter: case-insensitive over title, #number, repo name and the parent epic's title", () => {
+  const list = [
+    card({ number: 11, title: "Fix the Login page" }),
+    card({ number: 12, repo: "acme/gadgets", title: "x" }),
+    card({ number: 13, title: "y", parent: EPIC_A }),
+    card({ number: 14, title: "z" }),
+  ];
+  const f = (text) => allCards(buildBoard(list, CFG, [], { ...uiState(CFG), text })).sort((a, b) => a - b);
+  assert.deepEqual(f("login"), [11]);
+  assert.deepEqual(f("#14"), [14]);
+  assert.deepEqual(f("GADGETS"), [12]);
+  assert.deepEqual(f("alpha"), [13]);
+  assert.deepEqual(f(""), [11, 12, 13, 14]);
+  assert.deepEqual(f("nothing-matches"), []);
+});
+
+test("epic filter: only that epic's sub-issues show, in every column and in done", () => {
+  const list = [
+    card({ number: 1, status: "Blocked", parent: EPIC_A }), card({ number: 2, status: "In progress", parent: EPIC_A }),
+    card({ number: 3, status: "Next", parent: EPIC_B }), card({ number: 4, status: "Next" }),
+    card({ number: 5, status: "Done", parent: EPIC_A }), card({ number: 6, status: "Done" }),
+  ];
+  const b = buildBoard(list, CFG, [], { ...uiState(CFG), epic: EPIC_A.key });
+  assert.deepEqual(b.columns.map((c) => nums(c.cards)), [[1], [2], []]);
+  assert.deepEqual(nums(b.done), [5]);
+});
+
+test("epics leave the columns and show in the epic bar: open ones, most open sub-issues first", () => {
+  const list = [
+    epic(EPIC_A, { sub: { total: 5, completed: 4, percentCompleted: 80 } }),
+    epic(EPIC_B, { sub: { total: 6, completed: 2, percentCompleted: 33 } }),
+    epic({ key: "acme/widgets#300", number: 300, title: "Closed epic" }, { status: "Done" }),
+    card({ number: 1, parent: EPIC_A }),
+  ];
+  const b = buildBoard(list, CFG, [term("t9", "acme/widgets#100", "working")]);
+  assert.deepEqual(allCards(b), [1]);
+  assert.deepEqual(nums(b.done), []);
+  assert.equal(b.hidden, 0);
+  assert.deepEqual(b.epics.map((e) => [e.key, e.title, e.completed, e.total]), [[EPIC_B.key, "Beta epic", 2, 6], [EPIC_A.key, "Alpha epic", 4, 5]]);
+  assert.deepEqual(b.epics[1].agents.map((a) => a.address), ["t9"]);
+});
+
+test("the epic bar ignores the priority chips, the text and the epic filter", () => {
+  const list = [epic(EPIC_A, { priority: "P2" }), epic(EPIC_B, { priority: "P0" })];
+  const b = buildBoard(list, CFG, [], { ...uiState(CFG), priorities: ["P0"], text: "zzz", epic: EPIC_B.key });
+  assert.equal(b.epics.length, 2);
+});
+
+test("toggleEpic sets the epic filter, and the same epic again clears it", () => {
+  const u = toggleEpic(uiState(CFG), EPIC_A.key);
+  assert.equal(u.epic, EPIC_A.key);
+  assert.equal(toggleEpic(u, EPIC_B.key).epic, EPIC_B.key);
+  assert.equal(toggleEpic(u, EPIC_A.key).epic, null);
+  assert.equal(toggleEpic(u, null).epic, null);
+});
+
+test("by epic: one row per open epic in bar order, then No epic; rows with no visible cards are hidden", () => {
+  const list = [
+    epic(EPIC_A, { sub: { total: 2, completed: 1, percentCompleted: 50 } }),
+    epic(EPIC_B, { sub: { total: 9, completed: 1, percentCompleted: 11 } }),
+    epic({ key: "acme/widgets#300", number: 300, title: "Empty epic" }, { sub: { total: 1, completed: 0, percentCompleted: 0 } }),
+    card({ number: 1, status: "Blocked", parent: EPIC_A }), card({ number: 2, status: "Next", parent: EPIC_A }),
+    card({ number: 3, status: "In progress", parent: EPIC_B }),
+    card({ number: 4, status: "Next" }),
+    card({ number: 5, status: "Done", parent: EPIC_B }),
+  ];
+  const b = buildBoard(list, CFG, []);
+  assert.deepEqual(b.rows.map((r) => [r.key, r.title, r.completed, r.total]), [
+    [EPIC_B.key, "Beta epic", 1, 9], [EPIC_A.key, "Alpha epic", 1, 2], ["no-epic", "No epic", null, null],
+  ]);
+  assert.deepEqual(b.rows[0].columns.map((c) => nums(c.cards)), [[], [3], []]);
+  assert.deepEqual(nums(b.rows[0].done), [5]);
+  assert.deepEqual(b.rows[1].columns.map((c) => nums(c.cards)), [[1], [], [2]]);
+  assert.deepEqual(b.rows[2].columns.map((c) => nums(c.cards)), [[], [], [4]]);
+});
+
+test("by epic: filters apply, and a row emptied by them is hidden", () => {
+  const list = [epic(EPIC_A), epic(EPIC_B), card({ number: 1, parent: EPIC_A, title: "keep me" }), card({ number: 2, parent: EPIC_B }), card({ number: 3 })];
+  assert.deepEqual(buildBoard(list, CFG, [], { ...uiState(CFG), text: "keep" }).rows.map((r) => r.key), [EPIC_A.key]);
+  assert.deepEqual(buildBoard(list, CFG, [], { ...uiState(CFG), epic: EPIC_B.key }).rows.map((r) => r.key), [EPIC_B.key]);
+});
+
+test("counts reflect the filtered view, with the unfiltered total of column cards", () => {
+  const list = [
+    epic(EPIC_A),
+    card({ number: 1, status: "Blocked", parent: EPIC_A }), card({ number: 2, status: "In progress" }),
+    card({ number: 3, status: "Next", parent: EPIC_A }), card({ number: 4, status: "Next", priority: "P2" }),
+    card({ number: 5, status: "Done", parent: EPIC_A }), card({ number: 6, status: "Done" }),
+  ];
+  const all = buildBoard(list, CFG, []);
+  assert.deepEqual(all.counts, { "NEEDS YOU": 1, WORKING: 1, "UP NEXT": 2, DONE: 2 });
+  assert.equal(all.total, 4);
+  const f = buildBoard(list, CFG, [], { ...uiState(CFG), epic: EPIC_A.key });
+  assert.deepEqual(f.counts, { "NEEDS YOU": 1, WORKING: 0, "UP NEXT": 1, DONE: 1 });
+  assert.equal(f.total, 4);
 });

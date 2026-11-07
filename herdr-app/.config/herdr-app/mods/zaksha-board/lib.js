@@ -30,7 +30,9 @@ const QUERY = `query($owner: String!, $number: Int!, $after: String) {
           ... on DraftIssue { title }
           ... on PullRequest { title number url repository { nameWithOwner } }
           ... on Issue { title number url repository { nameWithOwner }
-            closedByPullRequestsReferences(first: 10) { nodes { number url state } } }
+            closedByPullRequestsReferences(first: 10) { nodes { number url state } }
+            parent { number title url }
+            subIssuesSummary { total completed percentCompleted } }
         }
       }
     }
@@ -39,14 +41,21 @@ const QUERY = `query($owner: String!, $number: Int!, $after: String) {
 
 const TYPES = { ISSUE: "Issue", PULL_REQUEST: "PullRequest", DRAFT_ISSUE: "DraftIssue" };
 
+// https://github.com/<owner>/<repo>/issues/<n> -> <owner>/<repo>#<n>
+const keyOf = (url) => { const m = /github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/.exec(url ?? ""); return m ? `${m[1]}#${m[2]}` : null; };
+
 function toItem(n) {
   const c = n.content ?? {};
   const repo = c.repository?.nameWithOwner ?? null;
+  const p = c.parent;
+  const sub = c.subIssuesSummary ?? null;
   return {
     key: repo && c.number ? `${repo}#${c.number}` : `draft:${n.id}`,
     title: c.title ?? "(no title)", number: c.number ?? null, url: c.url ?? null, repo,
     status: n.status?.name ?? null, priority: n.priority?.name ?? null, updatedAt: n.updatedAt ?? null,
     type: TYPES[n.type] ?? n.type ?? null, prs: c.closedByPullRequestsReferences?.nodes ?? [],
+    parent: p ? { key: keyOf(p.url) ?? `#${p.number}`, number: p.number, title: p.title, url: p.url } : null,
+    subIssues: sub, epic: (sub?.total ?? 0) > 0,
   };
 }
 
@@ -106,30 +115,80 @@ export function cardAgents(terminals) {
 
 const newest = (a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
 
-// items + config + terminals() -> {columns: [{name, cards}], done: [cards], counts: {name: n, DONE: n}, hidden}
-export function buildBoard(items, cfg, terminals) {
+const SORTS = ["priority", "updated"];
+const VIEWS = ["columns", "epics"];
+export const NO_EPIC = "no-epic";
+
+// the board's UI state (saved by main.js), with anything missing or invalid set to its default
+export function uiState(cfg, saved) {
+  const s = saved && typeof saved === "object" ? saved : {};
+  return {
+    sort: SORTS.includes(s.sort) ? s.sort : "priority",
+    priorities: Array.isArray(s.priorities) ? cfg.priorities.filter((p) => s.priorities.includes(p)) : [...cfg.priorities],
+    text: typeof s.text === "string" ? s.text : "",
+    epic: typeof s.epic === "string" ? s.epic : null,
+    view: VIEWS.includes(s.view) ? s.view : "columns",
+    collapsed: Array.isArray(s.collapsed) ? s.collapsed.filter((k) => typeof k === "string") : [],
+  };
+}
+
+// clicking an epic filters to it; clicking the active one (or null: "All") clears it
+export const toggleEpic = (ui, key) => ({ ...ui, epic: key && key !== ui.epic ? key : null });
+
+const matches = (c, text) => !text || [c.title, c.number ? `#${c.number}` : "", c.repo ?? "", c.parent?.title ?? ""]
+  .some((s) => s.toLowerCase().includes(text));
+
+// items + config + terminals() + ui state ->
+//   {columns: [{name, cards}], done, counts: {name: n, DONE: n}, total, hidden, epics, rows}
+// columns/done/counts/rows are filtered by ui; total is the column cards before ui filters; epics (the bar) never are.
+export function buildBoard(items, cfg, terminals, ui = uiState(cfg)) {
   const agents = cardAgents(terminals);
   const rank = new Map(cfg.priorities.map((p, i) => [p, i]));
   const card = (it) => {
     const a = agents.get(it.key.toLowerCase()) ?? [];
     return { ...it, agents: a, needsYou: a.some((x) => x.status === "blocked") };
   };
+  const isDone = (it) => !!cfg.done?.status && it.status === cfg.done.status;
+  const epics = items.filter((it) => it.epic && !isDone(it)).map(card)
+    .map((e) => ({ ...e, total: e.subIssues.total, completed: e.subIssues.completed, percent: e.subIssues.percentCompleted ?? 0 }))
+    .sort((a, b) => (b.total - b.completed) - (a.total - a.completed) || a.title.localeCompare(b.title));
+
+  const chips = new Set(ui.priorities);
+  const text = ui.text.trim().toLowerCase();
+  const shows = (it) => matches(it, text) && (!ui.epic || it.parent?.key === ui.epic);
   const columns = cfg.columns.map((c) => ({ name: c.name, statuses: new Set(c.statuses ?? []), cards: [] }));
   const other = cfg.otherColumn ? { name: cfg.otherColumn, cards: [] } : null;
   const done = [];
-  let hidden = 0;
+  let hidden = 0, total = 0;
   for (const it of items) {
-    if (cfg.done?.status && it.status === cfg.done.status) { done.push(card(it)); continue; }
+    if (it.epic) continue; // epics live in the bar
+    if (isDone(it)) { if (shows(it)) done.push(card(it)); continue; }
     if (!rank.has(it.priority) && !cfg.showUnprioritized) { hidden++; continue; }
     const col = columns.find((c) => c.statuses.has(it.status)) ?? other;
     if (!col) { hidden++; continue; }
-    col.cards.push(card(it));
+    total++;
+    if (rank.has(it.priority) && !chips.has(it.priority)) continue;
+    if (shows(it)) col.cards.push(card(it));
   }
   const prio = (c) => rank.get(c.priority) ?? cfg.priorities.length;
-  const out = [...columns, ...(other ? [other] : [])].map((c) => ({ name: c.name, cards: c.cards.sort((a, b) => prio(a) - prio(b) || newest(a, b)) }));
-  const counts = Object.fromEntries(out.map((c) => [c.name, c.cards.length]));
+  const order = ui.sort === "updated" ? newest : (a, b) => prio(a) - prio(b) || newest(a, b);
+  const limit = cfg.done?.limit ?? 5;
+  const cols = [...columns, ...(other ? [other] : [])].map((c) => ({ name: c.name, cards: c.cards.sort(order) }));
+  done.sort(newest);
+  const counts = Object.fromEntries(cols.map((c) => [c.name, c.cards.length]));
   counts.DONE = done.length;
-  return { columns: out, done: done.sort(newest).slice(0, cfg.done?.limit ?? 5), counts, hidden };
+
+  // by epic: the bar's epics in order, then everything whose parent isn't one of them
+  const known = new Set(epics.map((e) => e.key));
+  const rowOf = (c) => (known.has(c.parent?.key) ? c.parent.key : NO_EPIC);
+  const rows = [...epics.map((e) => ({ key: e.key, title: e.title, url: e.url, completed: e.completed, total: e.total, agents: e.agents })),
+    { key: NO_EPIC, title: "No epic", url: null, completed: null, total: null, agents: [] }]
+    .map((r) => ({ ...r,
+      columns: cols.map((c) => ({ name: c.name, cards: c.cards.filter((x) => rowOf(x) === r.key) })),
+      done: done.filter((x) => rowOf(x) === r.key).slice(0, limit) }))
+    .filter((r) => r.done.length || r.columns.some((c) => c.cards.length));
+
+  return { columns: cols, done: done.slice(0, limit), counts, total, hidden, epics, rows };
 }
 
 // the last n non-empty lines of a screen, trimmed, each at most 120 chars
