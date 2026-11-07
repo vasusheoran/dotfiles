@@ -7,6 +7,7 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 - `lib.js`: all logic (config, the one paginated `gh api graphql` fetch, lanes, views, search, selection, keys, the Board space). No herdr/gpui imports.
 - `lib.test.js`: behavior tests for `lib.js`, synthetic data only. Write the test first for any logic change.
 - `main.js`: reads, polls and draws; keep logic out of it.
+- Starting /work (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: confirm plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
 - `board.example.json`: committed template. `board.json`: your real one, gitignored. This repo is public: never commit real owner/project values, issue titles or screen text.
 
 ## board.json

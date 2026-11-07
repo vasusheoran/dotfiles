@@ -376,9 +376,17 @@ export function deskFor(repo, areasText) {
   return null;
 }
 
+const NOTES_MAX = 2000;
+
+// argv for the agent: the plain /work command, plus the trimmed notes (capped) as one element
+export function startArgv(key, notes) {
+  const n = String(notes ?? "").trim().slice(0, NOTES_MAX);
+  return ["claude", n ? `/work ${key}\n\nNotes from Vasu: ${n}` : `/work ${key}`];
+}
+
 // What `a` does on an issue with no live agent: focus a card terminal that exists (even not live),
-// else ask once (confirm), then {action: "start", step} or {action: "error"}. opts: {confirmed, pending, exists}.
-export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true } = {}) {
+// else ask once (confirm), then {action: "start", step} or {action: "error"}. opts: {confirmed, pending, exists, notes}.
+export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true, notes = "" } = {}) {
   if (issue.epic || !issue.repo || !issue.number) return { action: "none" };
   const key = issue.key.toLowerCase();
   const held = (terminals ?? []).find((t) => labelsOf(t).card?.toLowerCase() === key);
@@ -390,7 +398,7 @@ export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = 
   const desk = deskFor(issue.repo, areasText);
   const space = desk && (terminals ?? []).map((t) => labelsOf(t)).find((l) => l.desk === desk && l["herdr.space"])?.["herdr.space"];
   const short = issue.title.length > 24 ? `${issue.title.slice(0, 23)}…` : issue.title;
-  const name = `#${issue.number} ${short}`, argv = ["claude", `/work ${issue.key}`];
+  const name = `#${issue.number} ${short}`, argv = startArgv(issue.key, notes);
   return { action: "start", step: space ? ["tab.new", { space, folder, name, argv }]
     : ["space.new", { name: desk ?? issue.repo.split("/").pop(), folder, tab: name, argv }] };
 }
