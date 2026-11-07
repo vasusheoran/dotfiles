@@ -114,6 +114,12 @@ const labelsOf = (t) => Array.isArray(t.labels)
   ? Object.fromEntries(t.labels.map((l) => { const i = String(l).indexOf("="); return i < 0 ? [l, ""] : [l.slice(0, i), l.slice(i + 1)]; }))
   : (t.labels ?? {});
 
+// The `card` label is a comma-separated list of refs; first occurrence wins, case-insensitive, order kept.
+export function cardList(value) {
+  const seen = new Set();
+  return String(value ?? "").split(",").map((r) => r.trim()).filter((r) => r && !seen.has(r.toLowerCase()) && seen.add(r.toLowerCase()));
+}
+
 // Unlabelled live claude terminals on this computer, matched read-only to an open issue: by a "#N" token in the
 // terminal title, else by N as a whole number in its space's branch (the space's name must fit the repo when it names one).
 // terminals() (hc ls shape) has labels and liveness but no title, app or seq: those come from agents() (AgentInfo), by address.
@@ -128,7 +134,7 @@ export function linkTerminals(terminals, items, spaces, agents) {
   };
   return (terminals ?? []).map((t) => {
     if (t.state && t.state !== "live") return t;
-    if (labelsOf(t).card || String(t.address).includes("/")) return t;
+    if (cardList(labelsOf(t).card).length || String(t.address).includes("/")) return t;
     const a = (agents ?? []).find((x) => x.address === t.address);
     if (!a || (a.app ?? t.report?.app) !== "claude-code") return t;
     const space = (spaces ?? []).find((s) => s.id === a.space);
@@ -151,9 +157,10 @@ export function cardAgents(terminals) {
   for (const t of terminals ?? []) {
     if (t.state && t.state !== "live") continue;
     const status = STATUSES.has(t.status) ? t.status : "idle";
-    const card = labelsOf(t).card;
-    if (card) add(out, card.toLowerCase(), { address: t.address, status, card });
-    else if (t.matched) add(guess, t.matched.key.toLowerCase(), { address: t.address, status, card: t.matched.key, matched: t.matched.by, seq: t.seq ?? 0 });
+    const cards = cardList(labelsOf(t).card);
+    for (const card of cards) add(out, card.toLowerCase(), { address: t.address, status, card });
+    if (cards.length) continue;
+    if (t.matched) add(guess, t.matched.key.toLowerCase(), { address: t.address, status, card: t.matched.key, matched: t.matched.by, seq: t.seq ?? 0 });
   }
   for (const [k, a] of guess) {
     if (out.has(k)) continue;
@@ -169,7 +176,7 @@ export function excerpt(text, n = 3) {
 }
 
 export function liveSummary(terminals) {
-  const all = [...cardAgents(terminals).values()].flat();
+  const all = [...new Map([...cardAgents(terminals).values()].flat().map((a) => [a.address, a])).values()]; // once per agent, not per issue
   const blocked = all.filter((a) => a.status === "blocked").length;
   return `${all.length} agent${all.length === 1 ? "" : "s"}${blocked ? ` · ${blocked} blocked` : ""}`;
 }
@@ -442,7 +449,7 @@ export function startArgv(key, notes, { mode = "work", title = "", url = "" } = 
 export function startPlan(issue, terminals, areasText, cfg, home, { confirmed = false, pending = new Set(), exists = () => true, notes = "", mode = "work" } = {}) {
   if (issue.epic || !issue.repo || !issue.number) return { action: "none" };
   const key = issue.key.toLowerCase();
-  const held = (terminals ?? []).find((t) => labelsOf(t).card?.toLowerCase() === key);
+  const held = (terminals ?? []).find((t) => cardList(labelsOf(t).card).some((c) => c.toLowerCase() === key));
   if (held) return { action: "focus", terminal: held.address };
   const matched = cardAgents(terminals).get(key)?.[0];
   if (matched) return { action: "focus", terminal: matched.address };
@@ -585,11 +592,12 @@ export function facets(items) {
   return { areas: uniq((it) => it.area), repos: uniq((it) => it.repo) };
 }
 
-// ---- tab marks: "● #N title" on tabs whose terminal is labelled card=<owner/repo>#<N> ----
+// ---- tab marks: "● #N title" (or "● #N +k" for several) on tabs whose terminal is labelled card=<owner/repo>#<N>[,...] ----
 
 const MARK = "● #";
 const markName = (card, items) => {
-  const m = /^(.+)#(\d+)$/.exec(card);
+  const refs = cardList(card), m = /^(.+)#(\d+)$/.exec(refs[0]);
+  if (refs.length > 1) return `${MARK}${m[2]} +${refs.length - 1}`;
   const it = (items ?? []).find((i) => i.repo?.toLowerCase() === m[1].toLowerCase() && String(i.number) === m[2]);
   const t = it?.title ?? "";
   return `${MARK}${m[2]}${t ? ` ${t.length > 22 ? t.slice(0, 22) + "…" : t}` : ""}`;
@@ -601,14 +609,14 @@ export function tabMarks({ terminals, tabs, records, items }) {
   for (const t of [...(terminals ?? [])].sort((a, b) => (a.address < b.address ? -1 : a.address > b.address ? 1 : 0))) {
     if (t.state && t.state !== "live") continue;
     if (String(t.address).includes("/")) continue;
-    const l = labelsOf(t);
-    if (!l["herdr.tab"] || !/^.+#\d+$/.test(l.card ?? "") || linked.has(l["herdr.tab"])) continue;
-    linked.set(l["herdr.tab"], l.card);
+    const l = labelsOf(t), refs = cardList(l.card).filter((r) => /^.+#\d+$/.test(r));
+    if (!l["herdr.tab"] || !refs.length || linked.has(l["herdr.tab"])) continue;
+    linked.set(l["herdr.tab"], refs.join(","));
   }
   const renames = [], out = {};
   for (const tab of tabs ?? []) {
     const rec = records?.[tab.id], card = linked.get(tab.id);
-    if (rec && !tab.name.startsWith(`${MARK}${/#(\d+)$/.exec(rec.card)[1]}`)) continue; // renamed by hand: let go
+    if (rec && !tab.name.startsWith(`${MARK}${/#(\d+)$/.exec(cardList(rec.card)[0])[1]}`)) continue; // renamed by hand: let go
     if (!card) {
       if (rec) renames.push({ tab: tab.id, name: rec.prevNamed ? rec.prevName : "" });
       continue;

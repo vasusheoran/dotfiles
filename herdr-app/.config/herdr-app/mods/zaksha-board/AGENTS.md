@@ -10,6 +10,7 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 - Starting (`a` on an issue with no agent) opens the sibling mod `zaksha-board-start`: pick /work, Quick or Brief, plus optional notes, passed on as one argv element (`startArgv`, capped at 2000 chars).
 - Start dialog keys are the pure `dialogKey` (in `zaksha-board-start/lib.js`, tested from here): `n` focuses notes, `w` /work, `q` Quick, `b` Brief (read-only catch-up, tab `#<N> brief`), Enter starts, Esc leaves the input then cancels.
 - The started command labels its own terminal `card=<key>` before claude runs, so the board shows the agent at once.
+- `card` holds a comma-separated list of refs (`<owner>/<repo>#<N>,...`, no spaces; `cardList` parses: trim, drop empties, case-insensitive dedupe, order kept). One session shows on every listed issue, counted once in the live pill; a single ref is a list of one, and a tab with several reads `● #<first N> +<k>`.
 - `board.example.json`: committed template. `board.json`: your real one, gitignored. This repo is public: never commit real owner/project values, issue titles or screen text.
 
 - Tab marks: a live local terminal labelled `card=<key>` with a `herdr.tab` label renames its tab `● #<N> <title ≤22 chars>` (pure `tabMarks`), however the session got linked. The previous name is kept in shared `zaksha-board.tabmarks` and restored when the label goes; a tab the person renames by hand is released, never overwritten.

@@ -131,7 +131,7 @@ export default class Board extends View {
   // what blocked agents on issues show (hc read): their question line
   readAsks(cx) {
     if (this.asking) return;
-    const blocked = [...cardAgents(this.linked()).values()].flat().filter((a) => a.status === "blocked");
+    const blocked = [...new Map([...cardAgents(this.linked()).values()].flat().filter((a) => a.status === "blocked").map((a) => [a.address, a])).values()]; // a multi-issue agent once
     if (!blocked.length) return;
     this.asking = true;
     cx.spawn(async (cx) => {
