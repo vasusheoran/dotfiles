@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
 import { exec, hc, run, props, panes, spaces, focused, terminals, agents, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
-  parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView,
+  parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView, agentsView, agentsFlat,
   needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, startMode, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
@@ -23,8 +23,8 @@ const MARKS_KEY = "zaksha-board.tabmarks"; // tab id -> {card, prevNamed, prevNa
 const HISTORY_KEY = "space-toggle.history"; // recent {space, tab}, read by the space-toggle mod
 const FROM_KEY = "zaksha-board.from"; // where cmd-shift-b came from: shared, since the opener is another copy
 const NARROW = 1000;
-const H = { lane: 30, group: 24, row: 28, two: 46, more: 24, empty: 30, ehead: 26, epic: 40 };
-const VIEWS = [["today", "Today", "what needs you, all issues"], ["epics", "Epics", "how each epic is doing"], ["status", "Status", "issues by GitHub status"]];
+const H = { lane: 30, group: 24, row: 28, two: 46, more: 24, empty: 30, ehead: 26, epic: 40, ahead: 26 };
+const VIEWS = [["today", "Today", "what needs you, all issues"], ["epics", "Epics", "how each epic is doing"], ["status", "Status", "issues by GitHub status"], ["agents", "Agents", "who works on what, by epic"]];
 
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
 const sans = (size, color, text) => div().font_family(SANS).text_size(size).text_color(color).child(text);
@@ -167,6 +167,7 @@ export default class Board extends View {
     const now = ui.query ? [] : nowFlat(this.items, t);
     if (ui.query) { const v = searchView(this.items, t, ui.query); return { kind: "list", flat: flatten({ lanes: v.groups }), search: v }; }
     if (ui.focus) return { kind: "list", flat: [...now, ...flatten(focusView(this.items, t))] };
+    if (ui.view === "agents") return { kind: "list", flat: agentsFlat(agentsView(this.items, t), ui.unlinkedOpen) };
     if (ui.view === "epic") {
       const v = drillView(this.items, t, ui.epic, ui);
       if (v) return { kind: "list", flat: [...now, ...flatten(v)], drill: v };
@@ -182,7 +183,7 @@ export default class Board extends View {
 
   rowsOf(m) {
     if (m.kind === "status") return [...m.now.filter((x) => x.kind === "row"), ...m.status.columns.flatMap((c) => c.rows.map((r) => ({ key: r.key, row: r })))];
-    return m.flat.filter((x) => x.kind === "row" || x.kind === "epic");
+    return m.flat.filter((x) => x.kind === "row" || x.kind === "epic" || (x.kind === "ahead" && x.selectable));
   }
 
   selected() { return this.rows.find((r) => r.key === this.sel) ?? null; }
@@ -190,7 +191,13 @@ export default class Board extends View {
   act(kind, cx) {
     const r = this.selected();
     if (!r) return;
+    if (r.kind === "ahead") { if (kind === "primary") this.setUi({ unlinkedOpen: !this.ui.unlinkedOpen }); cx.notify(); return; }
     const row = r.row;
+    if (this.ui.view === "agents" && !this.ui.query && !this.ui.focus) {
+      if (kind === "primary" || kind === "agent") this.press({ run: ["agent.focus", { terminal: row.address }] });
+      else if (kind === "issue" && row.url) this.press({ exec: ["open", [row.url]] });
+      return;
+    }
     if (row.epic && kind === "primary") { this.openEpic(row.key); cx.notify(); return; }
     let a = null;
     if (kind === "primary") {
@@ -264,7 +271,7 @@ export default class Board extends View {
       else { const s = escapeStep(ui); if (s.leave) return this.leave(); this.ui = s.ui; this.sel = null; if (!s.ui.query) this.input.set_value(""); }
     } else if (a === "down" || a === "up" || a === "down5" || a === "up5") this.move({ down: 1, up: -1, down5: 5, up5: -5 }[a]);
     else if (a === "primary" || a === "agent" || a === "issue" || a === "pr") return this.act(a, cx);
-    else if (a === "today" || a === "epics" || a === "status") { this.setUi({ focus: false }); this.setView(a); }
+    else if (a === "today" || a === "epics" || a === "status" || a === "agents") { this.setUi({ focus: false }); this.setView(a); }
     else if (a === "back") { if (ui.query) { this.setUi({ query: "" }); this.input.set_value(""); } else if (ui.view === "epic") this.setView("epics"); }
     else if (a.startsWith("prio:") && filters) this.togglePrio(a.slice(5));
     else if (a === "allprio" && filters) this.setUi({ priorities: [...PRIORITIES, ""], showLow: {} });
@@ -423,9 +430,34 @@ export default class Board extends View {
       .on_click(stop((_e, cx) => { this.setUi({ showLow: { ...this.ui.showLow, [x.lane]: true } }); cx.notify(); }))
       .child(sans(11, t.accent, x.more.label));
     if (x.kind === "empty") return div().w_full().h(H.empty).flex_none().pl(48).flex().items_center().child(sans(12, t.dim, x.text).italic());
+    if (x.kind === "ahead") return this.agentHead(t, x);
     if (x.kind === "ehead") return this.epicHead(t);
     if (x.kind === "epic") return this.epicRow(t, x.row);
+    if (this.ui.view === "agents" && !this.ui.query && !this.ui.focus) return this.agentRow(t, x.row);
     return this.row(t, x.row, { dim: !!this.ui.query && x.row.state && x.row.state !== "OPEN" });
+  }
+
+  // Agents view: a group header (epic #N title · agents; Unlinked folds, Enter or a click toggles) and one row per (card, agent)
+  agentHead(t, x) {
+    const g = x.group, sel = x.key === this.sel;
+    const toggle = stop((_e, cx) => { this.sel = x.key; this.setUi({ unlinkedOpen: !this.ui.unlinkedOpen }); cx.notify(); });
+    return h_flex().id(x.key).w_full().h(H.ahead).flex_none().px(14).gap(8).items_center().border_l_2().border_color(sel ? t.accent : t.background)
+      .when(sel, (el) => el.bg(t.selected)).when(x.selectable, (el) => el.cursor_pointer().on_click(toggle))
+      .when(x.selectable, (el) => el.child(mono(10, t.muted, x.folded ? "▸" : "▾")))
+      .when(!!g.number, (el) => el.child(mono(11, t.muted, `#${g.number}`)))
+      .child(sans(12, t.muted, g.label).font_semibold().truncate())
+      .child(sans(11, t.dim, `${g.count} agent${g.count === 1 ? "" : "s"}`));
+  }
+
+  agentRow(t, row) {
+    const sel = row.key === this.sel;
+    const title = row.epicSelf ? "epic itself" : row.title ?? (row.card ?? "");
+    return h_flex().id(`row-${row.key}`).w_full().h(H.row).flex_none().px(14).pl(28).gap(8).items_center().border_l_2()
+      .border_color(sel ? t.accent : t.background).when(sel, (el) => el.bg(t.selected)).when(!sel, (el) => el.hover((s) => s.bg(t.hover)))
+      .on_click((e, cx) => { this.sel = row.key; if (e.click_count > 1) this.act("primary", cx); else cx.notify(); })
+      .child(mono(11, t.muted, row.number ? `#${row.number}` : "").w(46).flex_none())
+      .child(sans(13, row.epicSelf ? t.dim : t.foreground, title).flex_1().min_w(0).truncate())
+      .children(this.agentDots(t, { agents: [{ address: row.address, status: row.agentStatus, matched: row.matched }] }));
   }
 
   epicCols(narrow) { return narrow ? [28, null, 120, 130, 70] : [28, null, 150, 160, 70, 40]; }

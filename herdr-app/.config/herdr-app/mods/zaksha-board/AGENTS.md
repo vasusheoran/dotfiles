@@ -25,7 +25,7 @@ A GitHub Projects v2 board in its own Herdr space, "Board" (kept first, so `ctrl
 
 ## Views and keys
 
-Today (`t`: Needs you, Running, Up next), Epics (`e`: health per open epic, Enter drills in with every child shown), Status (`s`: one column per GitHub Status), search (`/`: every fetched item), Focus (`F`: Needs you only; Enter peeks the agent with `terminal.peek`). The full key table is `keyAction` in `lib.js`; Esc order is `escapeStep`.
+Today (`t`: Needs you, Running, Up next), Epics (`e`: health per open epic, Enter drills in with every child shown), Status (`s`: one column per GitHub Status), search (`/`: every fetched item), Focus (`F`: Needs you only; Enter peeks the agent with `terminal.peek`), Agents (`Shift-A`: every live claude agent grouped by epic, one row per card and agent, Unlinked folded; Enter focuses the agent, or toggles the Unlinked header; pure `agentsView` and `agentsFlat`). The full key table is `keyAction` in `lib.js`; Esc order is `escapeStep`.
 
 GitHub is read on open, when the board becomes visible (at most once a minute), every `pollSeconds`, and on `Shift-R`. Everything else, search included, works on that cache. An agent shows on an issue when its terminal has the label `card=<owner/repo>#<N>` (`hc label t7 card=acme/widgets#12`).
 
@@ -34,7 +34,7 @@ GitHub is read on open, when the board becomes visible (at most once a minute), 
 ## Run the checks
 
 ```sh
-node --test herdr-app/.config/herdr-app/mods/zaksha-board/
+node --test herdr-app/.config/herdr-app/mods/zaksha-board/*.test.js
 herdr-app check herdr-app/.config/herdr-app/mods/zaksha-board
 ```
 
