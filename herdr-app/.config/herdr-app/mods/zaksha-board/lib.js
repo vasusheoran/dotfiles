@@ -188,8 +188,11 @@ const urgency = (s) => URGENCY[s] ?? 3;
 
 // groups [{key, label, number?, title?, count, folded?, rows}]: epics (most urgent first, then number), "none", "offboard", "unlinked".
 // A row is one (card, agent) pair: the item's fields plus key `${card}@${address}`, address, agentStatus, matched?, epicSelf?.
+// terminals() has no `agent` field: a claude terminal reports app "claude-code", or runs program "claude" (no report yet, or lost)
+const isClaude = (t) => t.report?.app === "claude-code" || t.program?.key === "claude" || t.agent === "claude-code";
+
 export function agentsView(items, terminals) {
-  const live = (terminals ?? []).filter((t) => t.agent === "claude-code");
+  const ts = terminals ?? [];
   const byKey = new Map((items ?? []).map((i) => [String(i.key).toLowerCase(), i]));
   const groups = new Map();
   const seen = new Set();
@@ -198,7 +201,7 @@ export function agentsView(items, terminals) {
     groups.get(g.key).rows.push(row);
     seen.add(row.address);
   };
-  for (const [k, agents] of cardAgents(live)) {
+  for (const [k, agents] of cardAgents(ts)) {
     const item = byKey.get(k);
     for (const a of agents) {
       const base = { key: `${a.card}@${a.address}`, card: a.card, address: a.address, agentStatus: a.status, ...(a.matched ? { matched: a.matched } : {}) };
@@ -208,8 +211,8 @@ export function agentsView(items, terminals) {
       else put({ key: "none", label: "No epic" }, { ...item, ...base });
     }
   }
-  for (const t of live) {
-    if (t.state && t.state !== "live" || seen.has(t.address)) continue;
+  for (const t of ts) {
+    if (!isClaude(t) || (t.state && t.state !== "live") || seen.has(t.address)) continue;
     put({ key: "unlinked", label: "Unlinked", folded: true }, { key: `unlinked@${t.address}`, address: t.address, agentStatus: STATUSES.has(t.status) ? t.status : "idle", number: null, title: null });
   }
   const rank = (g) => Math.min(...g.rows.map((r) => urgency(r.agentStatus)));

@@ -1112,7 +1112,7 @@ const AV_ITEMS = [
   it(300), // no parent
   it(401, { parent: { key: "acme/widgets#900", number: 900, title: "Epic not on board", url: "https://github.com/acme/widgets/issues/900" } }),
 ];
-const cct = (address, card, status = "working", extra = {}) => ({ address, agent: "claude-code", state: "live", status, labels: card ? { card } : {}, ...extra });
+const cct = (address, card, status = "working", extra = {}) => ({ address, argv: ["claude"], report: { app: "claude-code" }, program: { key: "claude" }, state: "live", status, labels: card ? { card } : {}, ...extra });
 const gk = (groups) => groups.map((g) => g.key);
 const grp = (groups, key) => groups.find((g) => g.key === key);
 
@@ -1167,14 +1167,15 @@ test("agentsView: live claude agents on no card form a folded 'unlinked' group, 
   assert.ok(u.rows.some((r) => r.key.endsWith("@agents/t7")));
 });
 
-test("agentsView: bash and finished terminals appear nowhere", () => {
-  const g = agentsView(AV_ITEMS, [
-    { address: "b1", agent: "bash", state: "live", status: "idle", labels: {} },
-    { address: "b2", agent: "bash", state: "live", status: "idle", labels: { card: "acme/widgets#101" } },
+test("agentsView: unlabelled shells and finished terminals appear nowhere; a labelled shell is a row like everywhere on the board", () => {
+  const sh = (address, labels) => ({ address, argv: ["zsh"], program: { key: "shell" }, state: "live", status: null, labels });
+  assert.deepEqual(agentsView(AV_ITEMS, [
+    sh("b1", {}),
     cct("t3", null, "done", { state: "finished" }),
     cct("t4", "acme/widgets#101", "done", { state: "finished" }),
-  ]);
-  assert.deepEqual(g, []);
+  ]), []);
+  const g = agentsView(AV_ITEMS, [sh("b2", { card: "acme/widgets#101" })]);
+  assert.deepEqual(grp(g, "acme/widgets#100").rows.map((r) => r.address), ["b2"]);
 });
 
 test("agentsView: a guessed match is a row under its matched card with `matched` set, not in unlinked", () => {
@@ -1246,4 +1247,20 @@ test("agentsFlat: only the unlinked header is selectable (Enter toggles it)", ()
 
 test("keyAction: shift-a opens the Agents view", () => {
   assert.equal(keyAction("shift-a"), "agents");
+});
+
+// terminals() as the board gets it: no `agent` field; the agent's report in `report`, the program in `program` (gpui-kit.d.ts)
+const rt = (address, card, extra = {}) => ({ address, argv: ["claude"], state: "live", status: "working", labels: card ? { card } : {}, ...extra });
+test("agentsView: real terminals() shape: linked rows need no agent field; unlinked counts report.app or program.key claude", () => {
+  const g = agentsView(AV_ITEMS, [
+    rt("t1", "acme/widgets#101", { report: { app: "claude-code" }, program: { key: "claude" } }),
+    rt("t2", "acme/widgets#300"), // linked, no report (status lost): still a row
+    rt("t3", null, { report: { app: "claude-code" }, program: { key: "claude" } }),
+    rt("t4", null, { program: { key: "claude" } }), // unlinked claude with no report
+    rt("t5", null, { argv: ["zsh"], program: { key: "shell" }, status: null }),
+    rt("t6", null, { report: { app: "codex" }, program: { key: "agent" } }),
+  ]);
+  assert.deepEqual(grp(g, "acme/widgets#100").rows.map((r) => r.address), ["t1"]);
+  assert.deepEqual(grp(g, "none").rows.map((r) => r.address), ["t2"]);
+  assert.deepEqual(grp(g, "unlinked").rows.map((r) => r.address).sort(), ["t3", "t4"]);
 });
