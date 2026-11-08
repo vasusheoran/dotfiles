@@ -181,6 +181,57 @@ export function liveSummary(terminals) {
   return `${all.length} agent${all.length === 1 ? "" : "s"}${blocked ? ` · ${blocked} blocked` : ""}`;
 }
 
+// ---- agents view: live claude agents grouped by epic ----
+
+const URGENCY = { blocked: 0, working: 1, done: 2, idle: 3 };
+const urgency = (s) => URGENCY[s] ?? 3;
+
+// groups [{key, label, number?, title?, count, folded?, rows}]: epics (most urgent first, then number), "none", "offboard", "unlinked".
+// A row is one (card, agent) pair: the item's fields plus key `${card}@${address}`, address, agentStatus, matched?, epicSelf?.
+export function agentsView(items, terminals) {
+  const live = (terminals ?? []).filter((t) => t.agent === "claude-code");
+  const byKey = new Map((items ?? []).map((i) => [String(i.key).toLowerCase(), i]));
+  const groups = new Map();
+  const seen = new Set();
+  const put = (g, row) => {
+    if (!groups.has(g.key)) groups.set(g.key, { ...g, rows: [] });
+    groups.get(g.key).rows.push(row);
+    seen.add(row.address);
+  };
+  for (const [k, agents] of cardAgents(live)) {
+    const item = byKey.get(k);
+    for (const a of agents) {
+      const base = { key: `${a.card}@${a.address}`, card: a.card, address: a.address, agentStatus: a.status, ...(a.matched ? { matched: a.matched } : {}) };
+      if (!item) put({ key: "offboard", label: "Not on board" }, { ...base, number: Number(/#(\d+)$/.exec(a.card)?.[1]) || null, title: null });
+      else if (item.epic) put({ key: item.key, label: item.title, number: item.number, title: item.title }, { ...item, ...base, epicSelf: true });
+      else if (item.parent) put({ key: item.parent.key, label: item.parent.title, number: item.parent.number, title: item.parent.title }, { ...item, ...base });
+      else put({ key: "none", label: "No epic" }, { ...item, ...base });
+    }
+  }
+  for (const t of live) {
+    if (t.state && t.state !== "live" || seen.has(t.address)) continue;
+    put({ key: "unlinked", label: "Unlinked", folded: true }, { key: `unlinked@${t.address}`, address: t.address, agentStatus: STATUSES.has(t.status) ? t.status : "idle", number: null, title: null });
+  }
+  const rank = (g) => Math.min(...g.rows.map((r) => urgency(r.agentStatus)));
+  const tail = ["none", "offboard", "unlinked"];
+  const all = [...groups.values()].map((g) => {
+    g.rows.sort((x, y) => urgency(x.agentStatus) - urgency(y.agentStatus) || (x.number ?? 0) - (y.number ?? 0));
+    return { ...g, count: new Set(g.rows.map((r) => r.address)).size };
+  });
+  return [
+    ...all.filter((g) => !tail.includes(g.key)).sort((a, b) => rank(a) - rank(b) || a.number - b.number),
+    ...tail.map((k) => all.find((g) => g.key === k)).filter(Boolean),
+  ];
+}
+
+// the lines main.js draws: a header per group, then its rows (unlinked rows only when open); only the unlinked header is selectable
+export function agentsFlat(groups, unlinkedOpen) {
+  return groups.flatMap((g) => {
+    const folded = !!g.folded && !unlinkedOpen;
+    return [{ kind: "ahead", key: `ahead:${g.key}`, group: g, folded, selectable: g.key === "unlinked" }, ...(folded ? [] : g.rows.map((r) => ({ kind: "row", key: r.key, row: r })))];
+  });
+}
+
 // ---- lanes ----
 
 const isDone = (it) => it.status === "Done" || it.state === "CLOSED" || it.state === "MERGED";
@@ -472,7 +523,7 @@ const KEYS = {
   "/": "search", escape: "escape", j: "down", down: "down", k: "up", up: "up", "shift-j": "down5", "shift-k": "up5",
   enter: "primary", a: "agent", i: "issue", p: "pr", t: "today", e: "epics", s: "status", left: "back", backspace: "back",
   0: "prio:P0", 1: "prio:P1", 2: "prio:P2", 3: "prio:P3", 4: "prio:P4", 5: "allprio",
-  g: "group", l: "live", "shift-r": "refresh", n: "needs", "shift-f": "focus",
+  g: "group", l: "live", "shift-r": "refresh", n: "needs", "shift-f": "focus", "shift-a": "agents",
 };
 export const keyAction = (keystroke) => KEYS[keystroke] ?? null;
 

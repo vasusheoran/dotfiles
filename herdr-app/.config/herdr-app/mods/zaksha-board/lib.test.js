@@ -8,6 +8,9 @@ import {
   boardSpace, toggleBoard, ensureBoard, shouldRefreshOnShow, syncLabel, ageText, liveSummary, moveSel, resolveSel, afterPeek,
   scrollTop, clampTop, facets, cardList, startPlan, startArgv, repoFolder, deskFor, tabMarks, linkTerminals, nowFlat, pushHistory, startMode,
 } from "./lib.js";
+// agentsView is read off the namespace so the file still loads (and its older tests run) before it exists
+import * as lib from "./lib.js";
+const { agentsView } = lib;
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
@@ -1095,4 +1098,152 @@ test("tabMarks: the list shrinking from three to one swaps '+k' for the title", 
   const records = { tab1: { card: "acme/widgets#12,acme/widgets#7", prevNamed: false, prevName: "claude" } };
   const r = tabMarks({ terminals: [mt("t1", "tab1", "acme/widgets#12")], tabs: [{ id: "tab1", name: "● #12 +1", named: true }], records, items: MITEMS });
   assert.deepEqual(r.renames, [{ tab: "tab1", name: "● #12 Fix the flaky checkout…" }]);
+});
+
+// ---- agents view: live claude agents grouped by epic ----
+// agentsView(items, linkTerminals output) -> groups [{key, label, count, folded?, number?, title?, rows: [{key, address, ...item fields, epicSelf?, matched?}]}]
+
+const E1 = epic(100, { title: "Synthetic epic A" });
+const E2 = epic(200, { title: "Synthetic epic B" });
+const AV_ITEMS = [
+  E1, E2,
+  it(101, { parent: childOf(E1) }), it(102, { parent: childOf(E1) }),
+  it(201, { parent: childOf(E2) }),
+  it(300), // no parent
+  it(401, { parent: { key: "acme/widgets#900", number: 900, title: "Epic not on board", url: "https://github.com/acme/widgets/issues/900" } }),
+];
+const cct = (address, card, status = "working", extra = {}) => ({ address, agent: "claude-code", state: "live", status, labels: card ? { card } : {}, ...extra });
+const gk = (groups) => groups.map((g) => g.key);
+const grp = (groups, key) => groups.find((g) => g.key === key);
+
+test("agentsView: one row per (card, agent) pair, keyed `${card}@${address}`, carrying the item's fields", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#101")]);
+  const [row] = grp(g, "acme/widgets#100").rows;
+  assert.equal(row.key, "acme/widgets#101@t1");
+  assert.equal(row.address, "t1");
+  assert.equal(row.number, 101);
+  assert.equal(row.title, "Synthetic 101");
+});
+
+test("agentsView: an agent labelled with several cards is a row under each card", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#101,acme/widgets#201")]);
+  assert.deepEqual(grp(g, "acme/widgets#100").rows.map((r) => r.key), ["acme/widgets#101@t1"]);
+  assert.deepEqual(grp(g, "acme/widgets#200").rows.map((r) => r.key), ["acme/widgets#201@t1"]);
+});
+
+test("agentsView: a card with a parent groups under parent.key, titled from item.parent even when the epic is not in items", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#401")]);
+  const pg = grp(g, "acme/widgets#900");
+  assert.ok(pg);
+  assert.equal(pg.number, 900);
+  assert.equal(pg.title, "Epic not on board");
+  assert.equal(pg.rows[0].key, "acme/widgets#401@t1");
+});
+
+test("agentsView: an agent on an epic itself sits in that epic's group, marked epicSelf", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#100"), cct("t2", "acme/widgets#101")]);
+  const rows = grp(g, "acme/widgets#100").rows;
+  assert.equal(rows.find((r) => r.address === "t1").epicSelf, true);
+  assert.ok(!rows.find((r) => r.address === "t2").epicSelf);
+});
+
+test("agentsView: a fetched card with no parent goes to 'none' (No epic)", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#300")]);
+  assert.equal(grp(g, "none").label, "No epic");
+  assert.equal(grp(g, "none").rows[0].number, 300);
+});
+
+test("agentsView: a labelled card not in items goes to 'offboard' (Not on board)", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#999")]);
+  assert.equal(grp(g, "offboard").label, "Not on board");
+  assert.equal(grp(g, "offboard").rows[0].key, "acme/widgets#999@t1");
+});
+
+test("agentsView: live claude agents on no card form a folded 'unlinked' group, remote addresses kept verbatim", () => {
+  const g = agentsView(AV_ITEMS, [cct("t9", null), cct("agents/t7", null)]);
+  const u = grp(g, "unlinked");
+  assert.equal(u.folded, true);
+  assert.deepEqual(u.rows.map((r) => r.address).sort(), ["agents/t7", "t9"]);
+  assert.ok(u.rows.some((r) => r.key.endsWith("@agents/t7")));
+});
+
+test("agentsView: bash and finished terminals appear nowhere", () => {
+  const g = agentsView(AV_ITEMS, [
+    { address: "b1", agent: "bash", state: "live", status: "idle", labels: {} },
+    { address: "b2", agent: "bash", state: "live", status: "idle", labels: { card: "acme/widgets#101" } },
+    cct("t3", null, "done", { state: "finished" }),
+    cct("t4", "acme/widgets#101", "done", { state: "finished" }),
+  ]);
+  assert.deepEqual(g, []);
+});
+
+test("agentsView: a guessed match is a row under its matched card with `matched` set, not in unlinked", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", null, "working", { matched: { key: "acme/widgets#101", by: "title" } })]);
+  const [row] = grp(g, "acme/widgets#100").rows;
+  assert.equal(row.address, "t1");
+  assert.equal(row.matched, "title");
+  assert.equal(grp(g, "unlinked"), undefined);
+});
+
+test("agentsView: groups order epics (most urgent status, then epic number), then none, offboard, unlinked", () => {
+  const g = agentsView(AV_ITEMS, [
+    cct("a", "acme/widgets#101", "idle"), cct("b", "acme/widgets#201", "blocked"),
+    cct("c", "acme/widgets#300"), cct("d", "acme/widgets#999"), cct("e", null),
+  ]);
+  assert.deepEqual(gk(g), ["acme/widgets#200", "acme/widgets#100", "none", "offboard", "unlinked"]);
+});
+
+test("agentsView: epics with equal urgency order by epic number ascending", () => {
+  const g = agentsView(AV_ITEMS, [cct("a", "acme/widgets#201", "working"), cct("b", "acme/widgets#101", "working")]);
+  assert.deepEqual(gk(g), ["acme/widgets#100", "acme/widgets#200"]);
+});
+
+test("agentsView: urgency is blocked > working > done > idle", () => {
+  const first = (s) => gk(agentsView(AV_ITEMS, [cct("a", "acme/widgets#201", s[0]), cct("b", "acme/widgets#101", s[1])]))[0];
+  assert.equal(first(["idle", "done"]), "acme/widgets#100");
+  assert.equal(first(["done", "working"]), "acme/widgets#100");
+  assert.equal(first(["working", "blocked"]), "acme/widgets#100");
+  assert.equal(first(["blocked", "working"]), "acme/widgets#200");
+});
+
+test("agentsView: rows within a group sort by status urgency, then card number", () => {
+  const g = agentsView(AV_ITEMS, [
+    cct("a", "acme/widgets#102", "working"), cct("b", "acme/widgets#101", "working"), cct("c", "acme/widgets#102", "blocked"),
+  ]);
+  assert.deepEqual(grp(g, "acme/widgets#100").rows.map((r) => r.key), ["acme/widgets#102@c", "acme/widgets#101@b", "acme/widgets#102@a"]);
+});
+
+test("agentsView: count is distinct agent addresses in the group", () => {
+  const g = agentsView(AV_ITEMS, [cct("a", "acme/widgets#101,acme/widgets#102"), cct("b", "acme/widgets#101")]);
+  const e = grp(g, "acme/widgets#100");
+  assert.equal(e.rows.length, 3);
+  assert.equal(e.count, 2);
+  assert.equal(e.label, "Synthetic epic A");
+});
+
+// ---- agents view: the lines main.js draws and moves through ----
+
+test("agentsFlat: a header line per group, then its rows keyed by row.key", () => {
+  const g = agentsView(AV_ITEMS, [cct("a", "acme/widgets#101"), cct("b", "acme/widgets#300")]);
+  const flat = lib.agentsFlat(g, false);
+  assert.deepEqual(flat.map((x) => x.kind), ["ahead", "row", "ahead", "row"]);
+  assert.deepEqual(flat.filter((x) => x.kind === "row").map((x) => x.key), ["acme/widgets#101@a", "acme/widgets#300@b"]);
+});
+
+test("agentsFlat: the unlinked group is folded (header only) until open", () => {
+  const g = agentsView(AV_ITEMS, [cct("t9", null)]);
+  assert.deepEqual(lib.agentsFlat(g, false).map((x) => x.kind), ["ahead"]);
+  assert.equal(lib.agentsFlat(g, false)[0].folded, true);
+  assert.deepEqual(lib.agentsFlat(g, true).map((x) => x.kind), ["ahead", "row"]);
+  assert.equal(lib.agentsFlat(g, true)[0].folded, false);
+});
+
+test("agentsFlat: only the unlinked header is selectable (Enter toggles it)", () => {
+  const g = agentsView(AV_ITEMS, [cct("a", "acme/widgets#101"), cct("t9", null)]);
+  const heads = lib.agentsFlat(g, false).filter((x) => x.kind === "ahead");
+  assert.deepEqual(heads.map((x) => !!x.selectable), [false, true]);
+});
+
+test("keyAction: shift-a opens the Agents view", () => {
+  assert.equal(keyAction("shift-a"), "agents");
 });
