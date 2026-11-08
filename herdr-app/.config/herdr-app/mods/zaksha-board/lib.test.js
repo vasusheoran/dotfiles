@@ -10,7 +10,7 @@ import {
 } from "./lib.js";
 // agentsView is read off the namespace so the file still loads (and its older tests run) before it exists
 import * as lib from "./lib.js";
-const { agentsView } = lib;
+const { agentsView, addCard } = lib;
 import { dialogKey, dialogTitle } from "../zaksha-board-start/lib.js";
 
 const CFG = { owner: "acme", project: 7, pollSeconds: 300 };
@@ -1263,4 +1263,39 @@ test("agentsView: real terminals() shape: linked rows need no agent field; unlin
   assert.deepEqual(grp(g, "acme/widgets#100").rows.map((r) => r.address), ["t1"]);
   assert.deepEqual(grp(g, "none").rows.map((r) => r.address), ["t2"]);
   assert.deepEqual(grp(g, "unlinked").rows.map((r) => r.address).sort(), ["t3", "t4"]);
+});
+
+// agents() (AgentInfo, gpui-kit.d.ts): what the sidebar lists. Names and Unlinked come from here.
+const ai = (address, o = {}) => ({ address, pane: `p-${address}`, space: `s-${address}`, space_name: "growth", tab: `tab-${address}`, tab_index: 0, tab_name: "ads review", status: "idle", app: "claude-code", program: { key: "claude", name: "Claude Code" }, title: "✳ Claude Code", seq: 1, pinned: false, focused: false, ...o });
+
+test("agentsView with agents(): every row is named 'space · tab' and carries its tab id", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#101")], [ai("t1", { space_name: "widgets", tab_name: "checkout" })]);
+  const [row] = grp(g, "acme/widgets#100").rows;
+  assert.equal(row.name, "widgets · checkout");
+  assert.equal(row.tab, "tab-t1");
+});
+
+test("agentsView with agents(): Unlinked is every listed agent on no card, named, whatever terminals() carries", () => {
+  const g = agentsView(AV_ITEMS, [cct("t1", "acme/widgets#101"), { address: "t2", state: "live", labels: {} }], [
+    ai("t1"), ai("t2", { space_name: "business", tab_name: "1", title: "Direction desk" }), ai("agents/t7", { space_name: "workspace", tab_name: "homelab", status: "working" }),
+  ]);
+  const u = grp(g, "unlinked");
+  assert.deepEqual(u.rows.map((r) => r.address).sort(), ["agents/t7", "t2"]);
+  // an automatic tab number says nothing: fall back to the terminal title
+  assert.equal(u.rows.find((r) => r.address === "t2").name, "business · Direction desk");
+  assert.equal(u.rows.find((r) => r.address === "agents/t7").name, "workspace · homelab");
+  assert.equal(u.rows.find((r) => r.address === "agents/t7").agentStatus, "working");
+  assert.equal(u.rows.find((r) => r.address === "t2").tab, "tab-t2");
+});
+
+test("addCard: appends a key to a card label, case-insensitive dedupe, order kept", () => {
+  assert.equal(addCard(undefined, "acme/widgets#4"), "acme/widgets#4");
+  assert.equal(addCard("", "acme/widgets#4"), "acme/widgets#4");
+  assert.equal(addCard("acme/widgets#1", "acme/widgets#4"), "acme/widgets#1,acme/widgets#4");
+  assert.equal(addCard("acme/widgets#1,Acme/Widgets#4", "acme/widgets#4"), "acme/widgets#1,Acme/Widgets#4");
+});
+
+test("keys: Shift-N renames (names) the tab, Shift-L links an agent to an issue", () => {
+  assert.equal(keyAction("shift-n"), "rename");
+  assert.equal(keyAction("shift-l"), "link");
 });
