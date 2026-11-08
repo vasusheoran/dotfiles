@@ -120,6 +120,9 @@ export function cardList(value) {
   return String(value ?? "").split(",").map((r) => r.trim()).filter((r) => r && !seen.has(r.toLowerCase()) && seen.add(r.toLowerCase()));
 }
 
+// card label + one more key (cardList dedupe), as the label value
+export const addCard = (label, key) => cardList(`${label ?? ""},${key}`).join(",");
+
 // Unlabelled live claude terminals on this computer, matched read-only to an open issue: by a "#N" token in the
 // terminal title, else by N as a whole number in its space's branch (the space's name must fit the repo when it names one).
 // terminals() (hc ls shape) has labels and liveness but no title, app or seq: those come from agents() (AgentInfo), by address.
@@ -191,14 +194,19 @@ const urgency = (s) => URGENCY[s] ?? 3;
 // terminals() has no `agent` field: a claude terminal reports app "claude-code", or runs program "claude" (no report yet, or lost)
 const isClaude = (t) => t.report?.app === "claude-code" || t.program?.key === "claude" || t.agent === "claude-code";
 
-export function agentsView(items, terminals) {
+export function agentsView(items, terminals, infos) {
   const ts = terminals ?? [];
+  const info = new Map((infos ?? []).map((i) => [i.address, i]));
+  const named = (address) => {
+    const i = info.get(address);
+    return i ? { name: `${i.space_name} · ${/^\d+$/.test(i.tab_name ?? "") ? i.title : i.tab_name}`, tab: i.tab } : {};
+  };
   const byKey = new Map((items ?? []).map((i) => [String(i.key).toLowerCase(), i]));
   const groups = new Map();
   const seen = new Set();
   const put = (g, row) => {
     if (!groups.has(g.key)) groups.set(g.key, { ...g, rows: [] });
-    groups.get(g.key).rows.push(row);
+    groups.get(g.key).rows.push({ ...row, ...named(row.address) });
     seen.add(row.address);
   };
   for (const [k, agents] of cardAgents(ts)) {
@@ -211,7 +219,12 @@ export function agentsView(items, terminals) {
       else put({ key: "none", label: "No epic" }, { ...item, ...base });
     }
   }
-  for (const t of ts) {
+  if (infos) {
+    for (const i of infos) {
+      if (seen.has(i.address)) continue;
+      put({ key: "unlinked", label: "Unlinked", folded: true }, { key: `unlinked@${i.address}`, address: i.address, agentStatus: STATUSES.has(i.status) ? i.status : "idle", number: null, title: null });
+    }
+  } else for (const t of ts) {
     if (!isClaude(t) || (t.state && t.state !== "live") || seen.has(t.address)) continue;
     put({ key: "unlinked", label: "Unlinked", folded: true }, { key: `unlinked@${t.address}`, address: t.address, agentStatus: STATUSES.has(t.status) ? t.status : "idle", number: null, title: null });
   }
@@ -526,7 +539,7 @@ const KEYS = {
   "/": "search", escape: "escape", j: "down", down: "down", k: "up", up: "up", "shift-j": "down5", "shift-k": "up5",
   enter: "primary", a: "agent", i: "issue", p: "pr", t: "today", e: "epics", s: "status", left: "back", backspace: "back",
   0: "prio:P0", 1: "prio:P1", 2: "prio:P2", 3: "prio:P3", 4: "prio:P4", 5: "allprio",
-  g: "group", l: "live", "shift-r": "refresh", n: "needs", "shift-f": "focus", "shift-a": "agents",
+  g: "group", l: "live", "shift-r": "refresh", n: "needs", "shift-f": "focus", "shift-a": "agents", "shift-n": "rename", "shift-l": "link",
 };
 export const keyAction = (keystroke) => KEYS[keystroke] ?? null;
 

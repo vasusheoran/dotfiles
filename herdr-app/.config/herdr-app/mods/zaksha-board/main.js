@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
 import { exec, hc, run, props, panes, spaces, focused, terminals, agents, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
-  parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView, agentsView, agentsFlat,
+  parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView, agentsView, agentsFlat, addCard,
   needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, startMode, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
@@ -84,6 +84,7 @@ export default class Board extends View {
     this.hover = null; this.dd = null; this.width = 1400; this.listH = 600;
     this.shown = false; this.renamed = null;
     this.typing = false;
+    this.linkFor = null;
     this.input = InputState.new({ placeholder: "Search all items — title, #number, area, repo" });
     this.input.on("change", (_e, cx) => { this.setUi({ query: this.input.value().trim() }); this.sel = null; cx.notify(); });
     this.input.on("submit", (_e, cx) => { this.act("primary", cx); });
@@ -167,7 +168,7 @@ export default class Board extends View {
     const now = ui.query ? [] : nowFlat(this.items, t);
     if (ui.query) { const v = searchView(this.items, t, ui.query); return { kind: "list", flat: flatten({ lanes: v.groups }), search: v }; }
     if (ui.focus) return { kind: "list", flat: [...now, ...flatten(focusView(this.items, t))] };
-    if (ui.view === "agents") return { kind: "list", flat: agentsFlat(agentsView(this.items, t), ui.unlinkedOpen) };
+    if (ui.view === "agents") return { kind: "list", flat: agentsFlat(agentsView(this.items, t, agents()), ui.unlinkedOpen) };
     if (ui.view === "epic") {
       const v = drillView(this.items, t, ui.epic, ui);
       if (v) return { kind: "list", flat: [...now, ...flatten(v)], drill: v };
@@ -193,6 +194,7 @@ export default class Board extends View {
     if (!r) return;
     if (r.kind === "ahead") { if (kind === "primary") this.setUi({ unlinkedOpen: !this.ui.unlinkedOpen }); cx.notify(); return; }
     const row = r.row;
+    if (this.linkFor && this.ui.query && kind === "primary") { this.linkTo(row); cx.notify(); return; }
     if (this.ui.view === "agents" && !this.ui.query && !this.ui.focus) {
       if (kind === "primary" || kind === "agent") this.press({ run: ["agent.focus", { terminal: row.address }] });
       else if (kind === "issue" && row.url) this.press({ exec: ["open", [row.url]] });
@@ -207,6 +209,24 @@ export default class Board extends View {
     if (kind === "agent") log("info", "row key a", { key: row.key, hasRun: !!a?.run });
     if (kind === "agent" && !a?.run) this.askStart(row);
     else this.press(a);
+    cx.notify();
+  }
+
+  // Shift-L in Agents: search for an issue, Enter adds it to the agent's card label
+  linkTo(row) {
+    const t = terminals().find((x) => x.address === this.linkFor.address);
+    const labels = Array.isArray(t?.labels) ? Object.fromEntries(t.labels.map((l) => String(l).split(/=(.*)/s).slice(0, 2))) : t?.labels ?? {};
+    hc(["label", this.linkFor.address, `card=${addCard(labels.card, row.key)}`]).catch((e) => log("error", "link failed", { message: String(e?.message ?? e) }));
+    this.linkFor = null;
+    this.setUi({ query: "" }); this.input.set_value(""); this.sel = null; this.h.focus();
+  }
+
+  // r / Shift-L act on the selected Agents row only
+  agentKey(a, cx) {
+    const r = this.selected();
+    if (this.ui.view !== "agents" || this.ui.query || this.ui.focus || r?.kind !== "row") return;
+    if (a === "rename") run("tab.rename", { id: r.row.tab });
+    else { this.linkFor = { address: r.row.address, name: r.row.name ?? r.row.address }; this.input.set_value(""); this.setUi({ query: "" }); this.input.focus(); }
     cx.notify();
   }
 
@@ -254,6 +274,7 @@ export default class Board extends View {
   key(e, cx) {
     if (this.typing) {
       if (e.keystroke === "escape") {
+        this.linkFor = null;
         if (this.ui.query) { this.input.set_value(""); this.setUi({ query: "" }); } else this.h.focus();
       } else if (e.keystroke === "down" || e.keystroke === "up") this.move(e.keystroke === "down" ? 1 : -1);
       else return;
@@ -268,8 +289,10 @@ export default class Board extends View {
     if (a === "search") this.input.focus();
     else if (a === "escape") {
       if (this.dd) this.dd = null;
+      else if (this.linkFor) this.linkFor = null;
       else { const s = escapeStep(ui); if (s.leave) return this.leave(); this.ui = s.ui; this.sel = null; if (!s.ui.query) this.input.set_value(""); }
     } else if (a === "down" || a === "up" || a === "down5" || a === "up5") this.move({ down: 1, up: -1, down5: 5, up5: -5 }[a]);
+    else if (a === "rename" || a === "link") return this.agentKey(a, cx);
     else if (a === "primary" || a === "agent" || a === "issue" || a === "pr") return this.act(a, cx);
     else if (a === "today" || a === "epics" || a === "status" || a === "agents") { this.setUi({ focus: false }); this.setView(a); }
     else if (a === "back") { if (ui.query) { this.setUi({ query: "" }); this.input.set_value(""); } else if (ui.view === "epic") this.setView("epics"); }
@@ -451,12 +474,13 @@ export default class Board extends View {
 
   agentRow(t, row) {
     const sel = row.key === this.sel;
-    const title = row.epicSelf ? "epic itself" : row.title ?? (row.card ?? "");
+    const title = row.epicSelf ? "epic itself" : row.title ?? row.name ?? (row.card ?? "");
     return h_flex().id(`row-${row.key}`).w_full().h(H.row).flex_none().px(14).pl(28).gap(8).items_center().border_l_2()
       .border_color(sel ? t.accent : t.background).when(sel, (el) => el.bg(t.selected)).when(!sel, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click((e, cx) => { this.sel = row.key; if (e.click_count > 1) this.act("primary", cx); else cx.notify(); })
       .child(mono(11, t.muted, row.number ? `#${row.number}` : "").w(46).flex_none())
       .child(sans(13, row.epicSelf ? t.dim : t.foreground, title).flex_1().min_w(0).truncate())
+      .when(!!row.name && (row.card || row.epicSelf), (el) => el.child(sans(11, t.dim, row.name).truncate()))
       .children(this.agentDots(t, { agents: [{ address: row.address, status: row.agentStatus, matched: row.matched }] }));
   }
 
@@ -634,7 +658,7 @@ export default class Board extends View {
 
   footer(t, m) {
     const ui = this.ui;
-    const note = ui.query ? "global search · ignores filters" : ui.focus ? "Focus" : ui.view === "epic" ? m.drill?.footer ?? ""
+    const note = this.linkFor ? `Link ${this.linkFor.name} to an issue: type to find, Enter links, Esc cancels` : ui.query ? "global search · ignores filters" : ui.focus ? "Focus" : ui.view === "epic" ? m.drill?.footer ?? ""
       : ui.view === "status" ? "Done column limited to 8; epics excluded" : ui.live ? "live only" : "";
     const hint = (k, text) => h_flex().gap(4).items_center().child(mono(10, t.muted, k).px(4).rounded(3).border(1).border_color(t.border).bg(t.background)).child(sans(11, t.muted, text));
     return h_flex().w_full().flex_none().gap(14).px(14).py(5).items_center().overflow_hidden().bg(t.chrome).border_t(1).border_color(t.border)
