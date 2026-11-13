@@ -89,7 +89,7 @@ export default class AgentsView extends View {
 
     const body = [
       this.lane(t, "Asks", vm.asks.length, t.blocked),
-      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), "", `waiting ${ageText(a.ageMs)}`], a.question)) : [this.empty(t, "No questions waiting.")]),
+      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], a.question)) : [this.empty(t, "No questions waiting.")]),
       this.lane(t, "Stuck", vm.stuck.length, t.blocked),
       ...(vm.stuck.length ? vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, s.text, s.ageMs == null ? "" : ageText(s.ageMs)])) : [this.empty(t, "Nothing stuck.")]),
       ...vm.groups.flatMap((g) => {

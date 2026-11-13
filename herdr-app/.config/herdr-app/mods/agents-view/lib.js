@@ -10,15 +10,15 @@ export function parseJsonl(text) {
   return out;
 }
 
-// One row per card: its last ask line, open when no later resumed line for that card. Oldest first.
+// One row per open url: an ask line (first per url) stays open until a later resumed line with the same url. Oldest first.
 export function openAsks(lines, nowMs) {
-  const last = new Map();
-  lines.forEach((l, i) => {
-    if (l.event === "ask") last.set(l.card, { l, i });
-    else if (l.event === "resumed") { const a = last.get(l.card); if (a && a.i < i) last.delete(l.card); }
-  });
-  return [...last.values()]
-    .map(({ l }) => ({ card: l.card, epic: l.epic ?? null, url: l.url, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts) }))
+  const open = new Map();
+  for (const l of lines) {
+    if (l.event === "ask" && !open.has(l.url)) open.set(l.url, l);
+    else if (l.event === "resumed") open.delete(l.url);
+  }
+  return [...open.values()]
+    .map((l) => ({ card: l.card, epic: l.epic ?? null, url: l.url, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker" }))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
 
@@ -66,7 +66,7 @@ export function stuckRows(terminals, events, asks, nowMs) {
   take("error", (t) => t.state === "error" && { text: "error" });
 
   const liveNames = new Set(live.map((t) => t.name).filter(Boolean));
-  const asked = new Set(asks.map((a) => a.card));
+  const asked = new Set(asks.filter((a) => a.from === "worker").map((a) => a.card));
   const names = [...new Set(events.map((e) => e.name).filter(Boolean))];
   for (const name of names) {
     const mine = events.filter((e) => e.name === name);
@@ -123,7 +123,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, nowMs })
 
 // Every selectable row in display order. A terminal in STUCK and in its epic group is selectable in both.
 export const flatRows = (vm) => [
-  ...vm.asks.map((a) => ({ key: `ask:${a.card}`, section: "asks", address: null, url: a.url, row: a })),
+  ...vm.asks.map((a) => ({ key: `ask:${a.url}`, section: "asks", address: null, url: a.url, row: a })),
   ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, url: null, row: s })),
   ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, url: null, row: r }))),
   ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, url: null, row: o })),

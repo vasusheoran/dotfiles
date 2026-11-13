@@ -16,7 +16,7 @@ const EPIC = "acme/app#10";
 const lead = (o = {}) => T({ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, state: "working", ...o });
 const worker = (o = {}) => T({ address: "tW", name: "card-app-12", labels: { role: "worker", epic: EPIC, card: "acme/app#12", model: "sonnet" }, state: "working", ...o });
 const ask = (card, agoMs, o = {}) => ({ ts: iso(agoMs), event: "ask", card, epic: EPIC, url: `https://example.test/${card}`, question: `q ${card}`, ...o });
-const resumed = (card, agoMs) => ({ ts: iso(agoMs), event: "resumed", card });
+const resumed = (card, agoMs, o = {}) => ({ ts: iso(agoMs), event: "resumed", card, url: `https://example.test/${card}`, ...o });
 const start = (name, agoMs, o = {}) => ({ ts: iso(agoMs), event: "start", name, address: "tX", role: "worker", epic: EPIC, card: "acme/app#12", model: "sonnet", ...o });
 const stop = (name, agoMs, reason) => ({ ts: iso(agoMs), event: "stop", name, reason });
 
@@ -38,9 +38,28 @@ test("openAsks: a second ask after a resume stays open, alone", () => {
   assert.equal(r[0].question, "again");
 });
 
-test("openAsks: two asks on one card with no resume give one row, the last", () => {
-  const r = openAsks([ask("acme/app#12", 3 * HOUR, { question: "first" }), ask("acme/app#12", HOUR, { question: "last" })], NOW);
-  assert.deepEqual(r.map((a) => a.question), ["last"]);
+test("openAsks: duplicate ask lines for one url give one row, the first", () => {
+  const r = openAsks([ask("acme/app#12", 3 * HOUR, { question: "first" }), ask("acme/app#12", HOUR, { question: "again" })], NOW);
+  assert.deepEqual(r.map((a) => a.question), ["first"]);
+});
+
+test("openAsks: two open asks on one card give two rows, oldest first", () => {
+  const r = openAsks([ask("acme/app#12", HOUR, { url: "u2", from: "lead" }), ask("acme/app#12", 2 * HOUR, { url: "u1", from: "worker" })], NOW);
+  assert.deepEqual(r.map((a) => [a.url, a.from]), [["u1", "worker"], ["u2", "lead"]]);
+});
+
+test("openAsks: resumed closes only the ask with its url", () => {
+  const r = openAsks([ask("acme/app#12", 3 * HOUR, { url: "u1", from: "worker" }), ask("acme/app#12", 2 * HOUR, { url: "u2", from: "lead" }), resumed("acme/app#12", HOUR, { url: "u1" })], NOW);
+  assert.deepEqual(r.map((a) => a.url), ["u2"]);
+});
+
+test("openAsks: a resumed whose url matches nothing closes nothing", () => {
+  const r = openAsks([ask("acme/app#12", 2 * HOUR), resumed("acme/app#12", HOUR, { url: "other" })], NOW);
+  assert.equal(r.length, 1);
+});
+
+test("openAsks: from defaults to worker when absent", () => {
+  assert.equal(openAsks([ask("acme/app#12", HOUR)], NOW)[0].from, "worker");
 });
 
 test("openAsks: asks from two epics, oldest first, with age from ts", () => {
@@ -112,6 +131,12 @@ test("stuckRows: gone worker with a live terminal of that name is fine", () => {
 test("stuckRows: gone worker with an open ask is not stuck", () => {
   const a = openAsks([ask("acme/app#12", HOUR)], NOW);
   assert.deepEqual(stuckRows([lead()], [start("card-app-12", 2 * HOUR), stop("card-app-12", HOUR, "exit")], a, NOW), []);
+});
+
+test("stuckRows: gone worker with only an open lead ask on its card is stuck", () => {
+  const a = openAsks([ask("acme/app#12", HOUR, { from: "lead" })], NOW);
+  const r = stuckRows([lead()], [start("card-app-12", 2 * HOUR), stop("card-app-12", HOUR, "exit")], a, NOW);
+  assert.deepEqual(r.map((x) => x.kind), ["gone"]);
 });
 
 test("stuckRows: gone worker whose latest stop is retired is not stuck", () => {
@@ -240,5 +265,6 @@ test("flatRows: asks, stuck, each group, others, in display order; stuck termina
   assert.equal(rows[1].address, "tL");
   assert.equal(rows[2].address, "tL");
   assert.equal(new Set(rows.map((r) => r.key)).size, 4);
+  assert.equal(rows[0].key, "ask:https://example.test/acme/app#12");
   assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], others: [] }), []);
 });
