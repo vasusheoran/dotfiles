@@ -33,15 +33,15 @@ export const DOUBLE_PRESS_MS = 10_000;
 const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 
 // What a key does on an open ask. `armed` is the pending first press ({ id, key, q, at }) or null.
-// Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
+// Returns { type: "post", text, key? } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
-  let text = null, pick = false;
+  let text = null, pick = false, optKey;
   if (key === "x" && ask.kind === "you") text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
-  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
+  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; optKey = o.key; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
   if (text == null) return armed ? { type: "cancel" } : null;
-  const done = pick ? { type: "pick", q, text } : { type: "post", text };
+  const done = pick ? { type: "pick", q, text } : { type: "post", text, ...(optKey && { key: optKey }) };
   if (!NEEDS_SECOND_KEY.has(ask.kind)) return done;
   if (armed && armed.id === ask.id && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
   return { type: "arm", armed: { id: ask.id, key, q, at: nowMs }, body: ask.body };
@@ -64,7 +64,8 @@ export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].include
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);
-export const answerArgv = (ask, text) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen"];
+// `key` is the picked option's key: ask.sh records it, and merge-green.sh reads it to tell a Merge from free text.
+export const answerArgv = (ask, text, key) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen", ...(key ? ["--key", key] : [])];
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
