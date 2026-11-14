@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel,
+  parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -235,7 +235,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", asks: [], stuck: [], groups: [], others: [] });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], others: [] });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -267,4 +267,53 @@ test("flatRows: asks, stuck, each group, others, in display order; stuck termina
   assert.equal(new Set(rows.map((r) => r.key)).size, 4);
   assert.equal(rows[0].key, "ask:https://example.test/acme/app#12");
   assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], others: [] }), []);
+});
+
+// the runner's up-next.json
+const up = (o = {}) => ({ at: iso(2 * MIN), runner: "off", epic: "acme/app#823", card: "acme/app#901", state: "would-start", reason: "", usage: { read: "ok", warn: "" }, screen_locked: false, ...o });
+const hhmm = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+test("upNextLine: each state of the runner's pick", () => {
+  assert.equal(upNextLine(up(), NOW), "Up next: #823 → card #901 · runner off, would start · checked 2m ago");
+  assert.equal(upNextLine(up({ state: "none", epic: null, card: null, at: iso(MIN) }), NOW), "Up next: nothing to start · checked 1m ago");
+  assert.equal(upNextLine(up({ runner: "on", state: "started" }), NOW), `Up next: #823 → card #901 · runner on, lead started ${hhmm(NOW - 2 * MIN)}`);
+  assert.equal(upNextLine(up({ runner: "on", state: "not-started", reason: "4 of 4 workers running" }), NOW), "Up next: #823 → card #901 · not started: 4 of 4 workers running");
+  assert.equal(upNextLine(up({ at: iso(30 * 1000) }), NOW), "Up next: #823 → card #901 · runner off, would start · checked <1m ago");
+});
+
+test("upNextLine: a runner silent for more than 12 minutes", () => {
+  assert.equal(upNextLine(up({ at: iso(17 * MIN) }), NOW), "Runner has not checked for 17m");
+  assert.equal(upNextLine(up({ at: iso(12 * MIN) }), NOW), "Up next: #823 → card #901 · runner off, would start · checked 12m ago");
+  assert.equal(upNextLine(up({ state: "none", at: iso(3 * HOUR) }), NOW), "Runner has not checked for 3h");
+});
+
+test("upNextLine: no file or a broken one shows no line", () => {
+  assert.equal(upNextLine(null, NOW), null);
+  assert.equal(upNextLine({}, NOW), null);
+  assert.equal(upNextLine([1], NOW), null);
+  assert.equal(upNextLine(up({ at: "not a time" }), NOW), null);
+  assert.equal(upNextLine(up({ state: "bogus" }), NOW), null);
+  assert.equal(upNextLine(up({ epic: null }), NOW), null);
+});
+
+test("viewModel: Up next from the file, and the header warns when the usage read is not ok", () => {
+  const usageJson = JSON.stringify({ limits: [{ kind: "weekly_all", percent: 75 }] });
+  const base = { terminals: [], asksText: null, eventsText: null, usageJson, nowMs: NOW };
+  let vm = viewModel({ ...base, upNextJson: JSON.stringify(up()) });
+  assert.equal(vm.upNext, "Up next: #823 → card #901 · runner off, would start · checked 2m ago");
+  assert.equal(vm.usage, "week 75%");
+  assert.equal(vm.usageWarn, false);
+
+  const warn = "usage read failed, last good read 20 min ago, not blocking";
+  vm = viewModel({ ...base, upNextJson: JSON.stringify(up({ usage: { read: "stale", warn } })) });
+  assert.equal(vm.usage, `${warn} · week 75%`);
+  assert.equal(vm.usageWarn, true);
+  vm = viewModel({ ...base, usageJson: null, upNextJson: JSON.stringify(up({ usage: { read: "failed", warn: "usage fetch failed" } })) });
+  assert.equal(vm.usage, "usage fetch failed");
+  assert.equal(vm.usageWarn, true);
+
+  vm = viewModel({ ...base, upNextJson: "{broken" });
+  assert.equal(vm.upNext, null);
+  assert.equal(vm.usage, "week 75%");
+  assert.equal(vm.usageWarn, false);
 });
