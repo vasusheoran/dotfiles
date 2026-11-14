@@ -22,7 +22,7 @@ export default class AgentsView extends View {
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = "";
+    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -96,7 +96,7 @@ export default class AgentsView extends View {
     if (k === "escape") return props()?.overlay ? closeOverlay(props()?.overlay) : undefined;
     if (k === "enter") return this.open(rows[this.selIdx]);
     this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1))); this.q = 1;
-    this.sel = rows[this.selIdx]?.key ?? null;
+    this.sel = rows[this.selIdx]?.key ?? null; this.touched = true;
     cx.notify();
   }
 
@@ -125,11 +125,16 @@ export default class AgentsView extends View {
     const a = r.row, sel = r.key === this.sel;
     const v = askView(a, this.picks.get(a.id) ?? {}, this.armed);
     const el = v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => { if (this.sel !== r.key) { this.sel = r.key; this.q = 1; } })
+      .on_click(() => { this.touched = true; if (this.sel !== r.key) { this.sel = r.key; this.q = 1; } })
       .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, v.card)).child(sans(12, t.muted, v.kind)).child(div().flex_1()).child(mono(12, t.muted, v.age)))
-      .child(sans(13, t.foreground, v.title).w_full().when(!sel, (e) => e.truncate()));
+      .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
+        .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
     if (!sel) return el;
-    return el.when(!!v.body, (e) => e.child(sans(12, t.muted, v.body).pt(4)))
+    return el.when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
+      .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
+        .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
+        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "v")))
+        .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
       .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
@@ -144,7 +149,7 @@ export default class AgentsView extends View {
   line(t, r, parts, tone) {
     const sel = r.key === this.sel;
     return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => { this.sel = r.key; this.open(r); })
+      .on_click(() => { this.touched = true; this.sel = r.key; this.open(r); })
       .child(div().size(6).flex_none().rounded(3).bg(tone ?? t.dim))
       .child(sans(13, t.foreground, parts[0]).flex_1().min_w(72).truncate())
       .child(mono(12, t.muted, parts[1] ?? "").flex_none())
@@ -155,6 +160,7 @@ export default class AgentsView extends View {
     const t = theme();
     const { vm, rows } = this.model();
     const keys = rows.map((r) => r.key);
+    if (!this.touched) this.sel = keys[0] ?? null; // until the owner moves, the panel rests on the first row, the oldest ask
     if (!keys.includes(this.sel)) this.sel = keys[Math.min(this.selIdx, keys.length - 1)] ?? null;
     this.selIdx = Math.max(0, keys.indexOf(this.sel));
     const at = (section, i) => rows.filter((r) => r.section === section)[i];

@@ -90,13 +90,23 @@ export function questionTitles(body) {
 
 const OLD_ASK_MS = 3600_000;
 
+// The plan or PR an ask points at: a PR URL reads "PR: owner/repo#n", anything else "Plan: <file name or URL>".
+export function planRef(plan) {
+  if (!plan) return null;
+  const pr = String(plan).match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  if (pr) return { kind: "pr", line: `PR: ${pr[1]}#${pr[2]}`, full: plan };
+  return { kind: "plan", line: `Plan: ${/^https?:/.test(plan) ? plan : String(plan).split("/").pop()}`, full: plan };
+}
+
 // What the panel draws for one ask: a short row, and the blocks shown when it is selected.
 export function askView(ask, picks, armed) {
   const titles = questionTitles(ask.body);
   const qs = questionsOf(ask);
   return {
     card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: firstLine(ask.question, 200),
-    body: ask.body && !qs.length ? ask.body : ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "").trim(),
+    body: [ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
+      .map((x) => x.trim()).filter(Boolean).join("\n"),
+    plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
       key: o.key, label: o.label, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
       armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key,

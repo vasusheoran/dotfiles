@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
-  runFiles, askView, questionTitles, firstLine,
+  runFiles, askView, questionTitles, firstLine, planRef,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -598,4 +598,56 @@ test("viewModel: other sessions collapse to one count line", () => {
   const one = viewModel({ terminals: [{ address: "a", name: "x", status: "working" }], asksText: "", eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW });
   assert.equal(one.othersLine, "+1 other session");
   assert.equal(viewModel({ terminals: [], asksText: "", eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW }).othersLine, "");
+});
+
+// ---- plan and PR context in an ask (kuchbhi#1058, owner note) ----
+
+test("planRef: a file plan shows its file name and full path; v opens it", () => {
+  assert.deepEqual(planRef("/Users/me/canvas/1058/plan.html"), { kind: "plan", line: "Plan: plan.html", full: "/Users/me/canvas/1058/plan.html" });
+  assert.deepEqual(planRef("https://example.test/p/plan.html"), { kind: "plan", line: "Plan: https://example.test/p/plan.html", full: "https://example.test/p/plan.html" });
+});
+
+test("planRef: a PR URL shows owner/repo#n", () => {
+  assert.deepEqual(planRef("https://github.com/acme/app/pull/15"), { kind: "pr", line: "PR: acme/app#15", full: "https://github.com/acme/app/pull/15" });
+});
+
+test("planRef: no plan is null", () => {
+  assert.equal(planRef(null), null);
+  assert.equal(planRef(""), null);
+});
+
+test("askView: an ask with a file plan has a plan line, a plan marker and the full path", () => {
+  const [a] = openAsks([rich({ plan: "/h/canvas/plan.html" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "plan");
+  assert.equal(v.plan.line, "Plan: plan.html");
+  assert.equal(v.plan.full, "/h/canvas/plan.html");
+});
+
+test("askView: a merge ask with a PR URL has a PR line and a PR marker", () => {
+  const [a] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "PR");
+  assert.equal(v.plan.line, "PR: acme/app#15");
+});
+
+test("askView: an ask with no plan has no marker and no plan line", () => {
+  const [a] = openAsks([rich({ plan: null })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "");
+  assert.equal(v.plan, null);
+});
+
+test("askView: the expanded body is the rest of the question and the whole body, not only the first line", () => {
+  const [a] = openAsks([rich({ question: "Approve?\nincluded: PR 9\nchecks: green", body: "what changes: one file" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.title, "Approve?");
+  assert.equal(v.body, "included: PR 9\nchecks: green\nwhat changes: one file");
+});
+
+test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
+  const [f] = openAsks([rich({ plan: "/h/plan.html" })], NOW);
+  assert.deepEqual(askKeyAction(f, "v", null, NOW), { type: "open", target: "/h/plan.html" });
+  const [p] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
+  assert.deepEqual(askKeyAction(p, "v", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
 });
