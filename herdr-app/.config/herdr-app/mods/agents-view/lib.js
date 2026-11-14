@@ -15,7 +15,8 @@ export function parseJsonl(text) {
 // tests share one fixture): an ask line (first per key) stays open until a later answered, applied or legacy resumed line with the
 // same key, and is superseded by a later ask of the same kind from the same role on the same card (a merge ask: for the same PR). The rows of a batched merge ask (one per PR, sharing
 // `batch`) are one entry carrying `targets`. Oldest first.
-const askKey = (l) => l.id ?? l.url;
+// an id-less row is legacy-<trailing digits of its url>, as asks.jq's aid has it
+const askKey = (l) => l.id ?? (l.url ? (/(\d+)$/.exec(l.url) ? `legacy-${/(\d+)$/.exec(l.url)[1]}` : l.url) : undefined);
 const batchOf = (l) => l.batch ?? askKey(l);
 const roleOf = (l) => l.from ?? "worker";
 const sameTarget = (a, b) => String(a.target?.repo ?? "").toLowerCase() === String(b.target?.repo ?? "").toLowerCase() && a.target?.pr === b.target?.pr;

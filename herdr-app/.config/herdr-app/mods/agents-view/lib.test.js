@@ -264,8 +264,8 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
   });
   const rows = flatRows(vm);
   assert.deepEqual(rows.map((r) => r.section), ["epic", "asks", "summary", "others"]); // an ask is waiting: running hides behind one line
-  assert.equal(rows[1].id, "https://example.test/acme/app#12"); // a legacy row without an id keys on its url
-  assert.equal(rows[1].key, "ask:https://example.test/acme/app#12");
+  assert.equal(rows[1].id, "legacy-12"); // a legacy row without an id keys on legacy-<trailing digits of its url>
+  assert.equal(rows[1].key, "ask:legacy-12");
   const full = flatRows(vm, { showRun: true });
   assert.deepEqual(full.map((r) => r.section), ["epic", "asks", "summary", "group", "desk", "stuck", "others"]);
   assert.equal(full[3].address, "tL");
@@ -520,7 +520,7 @@ test("isAskKey: option letters, x, v and question digits; navigation keys never,
 });
 
 test("viewModel: hidden ids leave Needs you", () => {
-  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenIds: new Set([URL1]) });
+  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenIds: new Set(["legacy-555"]) });
   assert.deepEqual(vm.asks, []);
 });
 
@@ -706,6 +706,7 @@ const FIX = [
   { ts: "2030-01-01T05:00:00Z", event: "ask", id: "a-7", card: "o/r#14", epic: "o/r#1", from: "lead", question: "Q6", body: "b", options: [{ q: 1, key: "a", label: "Merge" }, { q: 1, key: "b", label: "Hold" }], kind: "merge", title: "Merge 2 hook PRs for Epic 1", target: { repo: "o/r", pr: 2, head: "h2" }, batch: "a-6" },
 ];
 const AFTER = Date.parse("2030-01-01T06:00:00Z");
+const AFTER2 = Date.parse("2030-01-02T00:00:00Z");
 
 test("openAsks: the shared open rule: superseded, answered and applied asks are not open; a batch is one entry", () => {
   const r = openAsks(FIX, AFTER);
@@ -930,4 +931,31 @@ test("acceptRecommended: a single merge ask from ask.sh (Merge is Recommended) a
   const first = acceptRecommended(a, null, NOW);
   assert.equal(first.type, "arm");
   assert.deepEqual(acceptRecommended(a, first.armed, NOW + 1000), { type: "post", text: "1a: Merge (Recommended)", key: "a" });
+});
+
+// ---- round 3: the legacy id and the defaults agree with asks.jq (same extra rows as claude-plugins tests/test_ask.sh) ----
+const FIX3 = [
+  ...FIX,
+  {"ts":"2030-01-01T06:00:00Z","event":"ask","url":"https://x.test/o/r/issues/9#issuecomment-555","card":"o/r#40","from":"worker","question":"Legacy Q","kind":"decide"},
+  {"ts":"2030-01-01T06:10:00Z","event":"answered","id":"legacy-555","card":"o/r#40","text":"x","by":"owner","via":"screen"},
+  {"ts":"2030-01-01T07:00:00Z","event":"ask","id":"a-10","card":"o/r#30","epic":"o/r#1","question":"Q10","body":"b","options":[]},
+  {"ts":"2030-01-01T08:00:00Z","event":"ask","id":"a-11","card":"o/r#30","epic":"o/r#1","from":"worker","kind":"decide","question":"Q11","body":"b","options":[]},
+  {"ts":"2030-01-01T09:00:00Z","event":"ask","id":"a-12","from":"worker","kind":"decide","question":"Q12","body":"b","options":[]},
+  {"ts":"2030-01-01T10:00:00Z","event":"ask","id":"a-13","from":"worker","kind":"decide","question":"Q13","body":"b","options":[]},
+];
+
+test("openAsks: the whole shared fixture gives the same open ids as asks.jq (legacy ids, defaults, cardless asks)", () => {
+  assert.deepEqual(openAsks(FIX3, AFTER2).map((a) => a.id), ["a-2", "a-5", "a-6", "a-11", "a-12", "a-13"]); // a-7 is a-6's batch row
+});
+
+test("openAsks: an id-less ask is answered by legacy-<trailing comment id>, and answers as the same id", () => {
+  const legacy = { ts: "2030-01-01T06:00:00Z", event: "ask", url: "https://x.test/o/r/issues/9#issuecomment-555", card: "o/r#40", from: "worker", question: "Legacy Q", kind: "decide" };
+  assert.deepEqual(openAsks([legacy], AFTER2).map((a) => a.id), ["legacy-555"]);
+  assert.deepEqual(openAsks([legacy, { event: "answered", id: "legacy-555", ts: "2030-01-01T06:10:00Z" }], AFTER2), []);
+  assert.equal(answerArgv(openAsks([legacy], AFTER2)[0], "x")[2], "legacy-555");
+});
+
+test("openAsks: a missing role means worker and a missing kind means decide, and a cardless ask is never superseded", () => {
+  const plain = FIX3.filter((l) => ["a-10", "a-11", "a-12", "a-13"].includes(l.id));
+  assert.deepEqual(openAsks(plain, AFTER2).map((a) => a.id), ["a-11", "a-12", "a-13"]);
 });
