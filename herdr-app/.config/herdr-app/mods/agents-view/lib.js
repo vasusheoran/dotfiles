@@ -33,15 +33,26 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 // Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
-  let text = null;
+  let text = null, pick = false;
   if (key === "x") text = "Done.";
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
-  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) text = `${o.q}${o.key}: ${o.label}`; }
+  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
   if (text == null) return armed ? { type: "cancel" } : null;
-  if (!NEEDS_SECOND_KEY.has(ask.kind)) return { type: "post", text };
-  if (armed && armed.url === ask.url && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return { type: "post", text };
+  const done = pick ? { type: "pick", q, text } : { type: "post", text };
+  if (!NEEDS_SECOND_KEY.has(ask.kind)) return done;
+  if (armed && armed.url === ask.url && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
   return { type: "arm", armed: { url: ask.url, key, q, at: nowMs }, body: ask.body };
 }
+
+const questionsOf = (ask) => [...new Set(ask.options.map((o) => o.q))].sort((a, b) => a - b);
+
+// One comment for a multi-question ask: a line per question, once every question has a pick ({ q: text }); else null.
+export function composeAnswer(ask, picks) {
+  const qs = questionsOf(ask);
+  return qs.length && qs.every((q) => picks[q]) ? qs.map((q) => picks[q]).join("\n") : null;
+}
+
+export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ? `${picks[q].split(":")[0]} ✓` : `${q} ?`)).join(" · ");
 
 // Whether a key belongs to the selected ask: option letters, x, v, a question digit, or any single key while an answer is armed
 // (it cancels). j, k and the arrows always navigate, so they never count.

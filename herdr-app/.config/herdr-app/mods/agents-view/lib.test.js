@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
-  askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey,
+  askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -449,16 +449,17 @@ const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, 
 
 test("askKeyAction: in a 2-question ask the letter picks within the selected question", () => {
   const [a] = openAsks([rich({ options: two })], NOW);
-  assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "post", text: "1a: yes" });
-  assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "post", text: "2a: now" });
-  assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "post", text: "2b: later" });
+  assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "pick", q: 1, text: "1a: yes" });
+  assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "pick", q: 2, text: "2a: now" });
+  assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "pick", q: 2, text: "2b: later" });
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
   assert.equal(askKeyAction(a, "c", null, NOW, 2), null);
 });
 
 test("askKeyAction: a second press arms per question", () => {
   const [a] = openAsks([rich({ options: two, kind: "merge" })], NOW);
   const first = askKeyAction(a, "a", null, NOW, 2);
-  assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 1000, 2), { type: "post", text: "2a: now" });
+  assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 1000, 2), { type: "pick", q: 2, text: "2a: now" });
   assert.equal(askKeyAction(a, "a", first.armed, NOW + 1000, 1).type, "arm");
 });
 
@@ -474,4 +475,20 @@ test("isAskKey: option letters, x, v and question digits; navigation keys never,
 test("viewModel: hidden urls leave Needs you", () => {
   const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenUrls: new Set([URL1]) });
   assert.deepEqual(vm.asks, []);
+});
+
+test("composeAnswer: nothing until every question has a pick, then one line per question", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.equal(composeAnswer(a, {}), null);
+  assert.equal(composeAnswer(a, { 1: "1a: yes" }), null);
+  assert.equal(composeAnswer(a, { 2: "2b: later" }), null);
+  assert.equal(composeAnswer(a, { 1: "1a: yes", 2: "2b: later" }), "1a: yes\n2b: later");
+  const [one] = openAsks([rich()], NOW);
+  assert.equal(composeAnswer(one, { 1: "1a: x" }), "1a: x");
+});
+
+test("picksText: shows each question's pick or a question mark", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.equal(picksText(a, { 1: "1a: yes" }), "1a ✓ · 2 ?");
+  assert.equal(picksText(a, {}), "1 ? · 2 ?");
 });

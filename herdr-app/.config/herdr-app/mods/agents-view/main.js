@@ -5,7 +5,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, answerArgv, isAskKey, selectTarget, rightPaneId, perform } from "./lib.js";
+import { viewModel, flatRows, ageText, shortCard, askKeyAction, answerArgv, isAskKey, composeAnswer, picksText, selectTarget, rightPaneId, perform } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -20,7 +20,7 @@ export default class AgentsView extends View {
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.shown = null; this.note = "";
+    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = "";
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -56,9 +56,15 @@ export default class AgentsView extends View {
   askKey(a, k, cx) {
     this.note = "";
     if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.armed = null; return cx.notify(); }
-    const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
+    let r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (!r) return;
     this.armed = r.type === "arm" ? r.armed : null;
+    if (r.type === "pick") { // kept by url, so a refreshed row keeps its picks
+      const picks = { ...this.picks.get(a.url), [r.q]: r.text }; this.picks.set(a.url, picks);
+      const text = composeAnswer(a, picks);
+      if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
+      r = { type: "post", text };
+    }
     if (r.type === "post") {
       if (this.hidden.has(a.url)) return; // a post for this ask is in flight or done
       this.hidden.add(a.url);
@@ -129,7 +135,7 @@ export default class AgentsView extends View {
     const running = vm.groups.length + vm.sides.length;
     const body = [
       this.lane(t, "Needs you", vm.asks.length, t.blocked),
-      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? ` · q${this.q}: ` + a.options.filter((o) => o.q === this.q).map((o) => `${o.key} ${o.label}`).join(" · ") : ""}`)) : [this.empty(t, "No questions waiting.")]),
+      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? ` · q${this.q}: ` + a.options.filter((o) => o.q === this.q).map((o) => `${o.key} ${o.label}`).join(" · ") + (new Set(a.options.map((o) => o.q)).size > 1 ? ` · ${picksText(a, this.picks.get(a.url) ?? {})}` : "") : ""}`)) : [this.empty(t, "No questions waiting.")]),
       this.lane(t, "Running", running, t.muted),
       ...(running ? [] : [this.empty(t, "Nothing running.")]),
       ...vm.groups.flatMap((g) => {
