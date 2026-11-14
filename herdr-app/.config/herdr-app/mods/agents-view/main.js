@@ -21,7 +21,7 @@ export default class AgentsView extends View {
   init(_props, cx) {
     this.h = cx.focus_handle();
     this.h.focus();
-    this.files = { asks: null, events: null, usage: null, upNext: null };
+    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
@@ -30,11 +30,11 @@ export default class AgentsView extends View {
   async read(cx) {
     // the fixture folder wins when it holds any of the four files; one read of each, no subprocess
     const read1 = (p) => readTextFile(p).catch(() => null);
-    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext].map(read1));
+    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings].map(read1));
     this.fixture = got.some((x) => x != null);
-    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext].map(read1)); }
-    const [asks, events, usage, upNext] = got;
-    this.files = { asks, events, usage, upNext };
+    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings].map(read1)); }
+    const [asks, events, usage, upNext, settings] = got;
+    this.files = { asks, events, usage, upNext, settings };
     if (this.armed && Date.now() - this.armed.at > 10_000) this.armed = null;
     this.note = ""; // a note lasts one refresh, so the usage warning comes back
     this.deskIfGone();
@@ -42,7 +42,7 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now(), hiddenIds: this.hidden });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, nowMs: Date.now(), hiddenIds: this.hidden });
     return { vm, rows: flatRows(vm).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
@@ -181,6 +181,7 @@ export default class AgentsView extends View {
       this.line(t, at("desk", 0), [vm.desk.name, "", vm.desk.state], tone(vm.desk.state)),
       ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked))] : []),
       ...(vm.upNext ? [mono(12, t.muted, vm.upNext).w_full().flex_none().px(14).pt(12)] : []),
+      ...(vm.runnerLine ? [mono(12, t.muted, vm.runnerLine).w_full().flex_none().px(14).pt(vm.upNext ? 4 : 12)] : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
     ];
 
