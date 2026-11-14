@@ -262,7 +262,7 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
   });
   const rows = flatRows(vm);
   assert.deepEqual(rows.map((r) => r.section), ["asks", "group", "desk", "stuck", "others"]);
-  assert.equal(rows[0].url, "https://example.test/acme/app#12");
+  assert.equal(rows[0].id, "https://example.test/acme/app#12"); // a legacy row without an id keys on its url
   assert.equal(rows[1].address, "tL");
   assert.equal(rows[3].address, "tL");
   assert.equal(new Set(rows.map((r) => r.key)).size, 5);
@@ -366,8 +366,42 @@ test("askKeyAction: x on a merge ask is also a second-key action", () => {
   assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "Done." });
 });
 
-test("answerArgv: work ask answer <card> --question <id from url> --text", () => {
-  assert.deepEqual(answerArgv({ card: "acme/app#12", url: URL1 }, "1a: x"), ["ask", "answer", "acme/app#12", "--question", "555", "--text", "1a: x"]);
+test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
+  assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: x"), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: x", "--via", "screen"]);
+});
+
+test("answerArgv: a legacy row without an id answers as legacy-<comment id>", () => {
+  const [a] = openAsks([rich()], NOW);
+  assert.deepEqual(answerArgv(a, "x"), ["ask", "answer", "legacy-555", "--text", "x", "--via", "screen"]);
+});
+
+// ---- asks keyed by id (the local asks file; no issue comments) ----
+const idAsk = (id, agoMs, o = {}) => ({ ts: iso(agoMs), event: "ask", id, card: "acme/app#12", epic: EPIC, from: "worker", terminal: "card-app-12", url: null, question: `q ${id}`, options: [], kind: "decide", plan: null, body: "", ...o });
+const ev = (event, id, o = {}) => ({ ts: iso(0), event, id, ...o });
+
+test("openAsks: a row keys on its id, and its url may be null", () => {
+  const [r] = openAsks([idAsk("a-1", HOUR)], NOW);
+  assert.deepEqual([r.id, r.url], ["a-1", null]);
+});
+
+test("openAsks: answered closes the ask with its id only", () => {
+  const r = openAsks([idAsk("a-1", 3 * HOUR), idAsk("a-2", 2 * HOUR), ev("answered", "a-1", { text: "x", by: "owner", via: "screen" })], NOW);
+  assert.deepEqual(r.map((a) => a.id), ["a-2"]);
+});
+
+test("openAsks: applied closes an ask, delivered does not", () => {
+  assert.deepEqual(openAsks([idAsk("a-1", HOUR), ev("delivered", "a-1", { terminal: "t" })], NOW).map((a) => a.id), ["a-1"]);
+  assert.deepEqual(openAsks([idAsk("a-1", HOUR), ev("applied", "a-1", { terminal: "t" })], NOW), []);
+});
+
+test("openAsks: a legacy resumed line by url closes a legacy row, and an id event never closes by url", () => {
+  assert.deepEqual(openAsks([ask("acme/app#12", 2 * HOUR), resumed("acme/app#12", HOUR)], NOW), []);
+  assert.deepEqual(openAsks([idAsk("a-1", HOUR, { url: "u" }), { ts: iso(0), event: "resumed", url: "u" }], NOW).map((a) => a.id), ["a-1"]);
+});
+
+test("openAsks: a migrated row keeps its legacy id and is answered by it", () => {
+  const rows = openAsks([idAsk("legacy-555", HOUR, { url: URL1 })], NOW);
+  assert.deepEqual(answerArgv(rows[0], "ok"), ["ask", "answer", "legacy-555", "--text", "ok", "--via", "screen"]);
 });
 
 test("sideJobs and deskRow: role=side rows by themselves, one desk row", () => {
@@ -466,14 +500,14 @@ test("askKeyAction: a second press arms per question", () => {
 test("isAskKey: option letters, x, v and question digits; navigation keys never, even while armed", () => {
   const [a] = openAsks([rich({ options: two })], NOW);
   for (const k of ["a", "b", "x", "v", "1", "2"]) assert.equal(isAskKey(a, k, null), true, k);
-  for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { url: a.url, key: "a", at: NOW }), false, k);
+  for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { id: a.id, key: "a", at: NOW }), false, k);
   assert.equal(isAskKey(a, "3", null), false);
-  assert.equal(isAskKey(a, "z", { url: a.url, key: "a", at: NOW }), true); // armed: any other key cancels
+  assert.equal(isAskKey(a, "z", { id: a.id, key: "a", at: NOW }), true); // armed: any other key cancels
   assert.equal(isAskKey(a, "z", null), false);
 });
 
-test("viewModel: hidden urls leave Needs you", () => {
-  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenUrls: new Set([URL1]) });
+test("viewModel: hidden ids leave Needs you", () => {
+  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenIds: new Set([URL1]) });
   assert.deepEqual(vm.asks, []);
 });
 

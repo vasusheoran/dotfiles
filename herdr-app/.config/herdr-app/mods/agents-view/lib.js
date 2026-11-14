@@ -11,16 +11,19 @@ export function parseJsonl(text) {
   return out;
 }
 
-// One row per open url: an ask line (first per url) stays open until a later resumed or answered line with the same url. Oldest first.
+// One row per open ask, keyed by its id (a row from before ids has only its url). An ask line (first per key) stays open
+// until a later answered, applied or legacy resumed line with the same key. Oldest first.
+const askKey = (l) => l.id ?? l.url;
 export function openAsks(lines, nowMs) {
   const open = new Map();
   for (const l of lines) {
-    if (l.event === "ask" && !open.has(l.url)) open.set(l.url, l);
-    else if (l.event === "resumed" || l.event === "answered") open.delete(l.url);
+    const k = askKey(l);
+    if (l.event === "ask") { if (!open.has(k)) open.set(k, l); }
+    else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) open.delete(k);
   }
   return [...open.values()]
     .map((l) => ({
-      card: l.card, epic: l.epic ?? null, url: l.url, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker",
+      id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker",
       options: Array.isArray(l.options) ? l.options : [], kind: l.kind ?? "decide", plan: l.plan ?? null, body: l.body ?? "",
     }))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -29,7 +32,7 @@ export function openAsks(lines, nowMs) {
 export const DOUBLE_PRESS_MS = 10_000;
 const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 
-// What a key does on an open ask. `armed` is the pending first press ({ url, key, at }) or null.
+// What a key does on an open ask. `armed` is the pending first press ({ id, key, q, at }) or null.
 // Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
@@ -40,8 +43,8 @@ export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   if (text == null) return armed ? { type: "cancel" } : null;
   const done = pick ? { type: "pick", q, text } : { type: "post", text };
   if (!NEEDS_SECOND_KEY.has(ask.kind)) return done;
-  if (armed && armed.url === ask.url && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
-  return { type: "arm", armed: { url: ask.url, key, q, at: nowMs }, body: ask.body };
+  if (armed && armed.id === ask.id && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
+  return { type: "arm", armed: { id: ask.id, key, q, at: nowMs }, body: ask.body };
 }
 
 const questionsOf = (ask) => [...new Set(ask.options.map((o) => o.q))].sort((a, b) => a - b);
@@ -59,8 +62,9 @@ export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ?
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
   && (ask.options.some((o) => o.key === k) || k === "x" || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
 
-// The `work` arguments that post an answer to an ask; the comment id is the url's last number.
-export const answerArgv = (ask, text) => ["ask", "answer", ask.card, "--question", String(ask.url).match(/(\d+)$/)?.[1] ?? "", "--text", text];
+// The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
+const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);
+export const answerArgv = (ask, text) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen"];
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
@@ -182,9 +186,9 @@ export function upNextLine(up, nowMs) {
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs, hiddenUrls }) {
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs, hiddenIds }) {
   const ts = (terminals ?? []).map(normalize);
-  const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenUrls?.has(a.url));
+  const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenIds?.has(a.id));
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
@@ -194,12 +198,12 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
 // Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.
 // A terminal in STUCK and in its epic group is selectable in both.
 export const flatRows = (vm) => [
-  ...vm.asks.map((a) => ({ key: `ask:${a.url}`, section: "asks", address: null, url: a.url, row: a })),
-  ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, url: null, row: r }))),
-  ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, url: null, row: s })),
-  { key: "desk", section: "desk", address: vm.desk.address, url: null, row: vm.desk },
-  ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, url: null, row: s })),
-  ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, url: null, row: o })),
+  ...vm.asks.map((a) => ({ key: `ask:${a.id}`, section: "asks", address: null, id: a.id, row: a })),
+  ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, id: null, row: r }))),
+  ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, id: null, row: s })),
+  { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
+  ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, id: null, row: s })),
+  ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, id: null, row: o })),
 ];
 
 // Enter on a row: show its terminal in the right-hand pane, or start the desk when there is none. Asks are not shown.
