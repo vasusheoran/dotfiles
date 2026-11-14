@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
-  askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS,
+  askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -443,4 +443,35 @@ test("control-room layout: the agents-view mod at about 40% beside the active ta
   assert.ok(parent.children.indexOf(list) < parent.children.indexOf(pane), "list on the left");
   const w = (n) => n.size?.weight ?? 1;
   assert.ok(Math.abs(w(list) / (w(list) + w(pane)) - 0.4) < 0.01, "about 40%");
+});
+
+const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later" }];
+
+test("askKeyAction: in a 2-question ask the letter picks within the selected question", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "post", text: "1a: yes" });
+  assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "post", text: "2a: now" });
+  assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "post", text: "2b: later" });
+  assert.equal(askKeyAction(a, "c", null, NOW, 2), null);
+});
+
+test("askKeyAction: a second press arms per question", () => {
+  const [a] = openAsks([rich({ options: two, kind: "merge" })], NOW);
+  const first = askKeyAction(a, "a", null, NOW, 2);
+  assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 1000, 2), { type: "post", text: "2a: now" });
+  assert.equal(askKeyAction(a, "a", first.armed, NOW + 1000, 1).type, "arm");
+});
+
+test("isAskKey: option letters, x, v and question digits; navigation keys never, even while armed", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  for (const k of ["a", "b", "x", "v", "1", "2"]) assert.equal(isAskKey(a, k, null), true, k);
+  for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { url: a.url, key: "a", at: NOW }), false, k);
+  assert.equal(isAskKey(a, "3", null), false);
+  assert.equal(isAskKey(a, "z", { url: a.url, key: "a", at: NOW }), true); // armed: any other key cancels
+  assert.equal(isAskKey(a, "z", null), false);
+});
+
+test("viewModel: hidden urls leave Needs you", () => {
+  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenUrls: new Set([URL1]) });
+  assert.deepEqual(vm.asks, []);
 });

@@ -31,16 +31,22 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 
 // What a key does on an open ask. `armed` is the pending first press ({ url, key, at }) or null.
 // Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
-export function askKeyAction(ask, key, armed, nowMs) {
+// `q` is the selected question of the ask (default 1); a letter picks an option within it.
+export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null;
   if (key === "x") text = "Done.";
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
-  else { const o = ask.options.find((o) => o.key === key); if (o) text = `${o.q}${o.key}: ${o.label}`; }
+  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) text = `${o.q}${o.key}: ${o.label}`; }
   if (text == null) return armed ? { type: "cancel" } : null;
   if (!NEEDS_SECOND_KEY.has(ask.kind)) return { type: "post", text };
-  if (armed && armed.url === ask.url && armed.key === key && nowMs - armed.at <= DOUBLE_PRESS_MS) return { type: "post", text };
-  return { type: "arm", armed: { url: ask.url, key, at: nowMs }, body: ask.body };
+  if (armed && armed.url === ask.url && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return { type: "post", text };
+  return { type: "arm", armed: { url: ask.url, key, q, at: nowMs }, body: ask.body };
 }
+
+// Whether a key belongs to the selected ask: option letters, x, v, a question digit, or any single key while an answer is armed
+// (it cancels). j, k and the arrows always navigate, so they never count.
+export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
+  && (ask.options.some((o) => o.key === k) || k === "x" || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that post an answer to an ask; the comment id is the url's last number.
 export const answerArgv = (ask, text) => ["ask", "answer", ask.card, "--question", String(ask.url).match(/(\d+)$/)?.[1] ?? "", "--text", text];
@@ -165,9 +171,9 @@ export function upNextLine(up, nowMs) {
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs }) {
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs, hiddenUrls }) {
   const ts = (terminals ?? []).map(normalize);
-  const asks = openAsks(parseJsonl(asksText), nowMs);
+  const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenUrls?.has(a.url));
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");

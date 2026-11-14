@@ -5,7 +5,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, answerArgv, selectTarget, rightPaneId, perform } from "./lib.js";
+import { viewModel, flatRows, ageText, shortCard, askKeyAction, answerArgv, isAskKey, selectTarget, rightPaneId, perform } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -20,7 +20,7 @@ export default class AgentsView extends View {
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.shown = null; this.note = "";
+    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.shown = null; this.note = "";
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -36,7 +36,7 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now() });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now(), hiddenUrls: this.hidden });
     return { vm, rows: flatRows(vm) };
   }
 
@@ -54,11 +54,19 @@ export default class AgentsView extends View {
 
   // a key on an open ask: post the answer, open its plan, or arm a merge/roll/money answer for its second key
   askKey(a, k, cx) {
-    const r = askKeyAction(a, k, this.armed, Date.now());
     this.note = "";
+    if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.armed = null; return cx.notify(); }
+    const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (!r) return;
     this.armed = r.type === "arm" ? r.armed : null;
-    if (r.type === "post") perform({ type: "post", argv: answerArgv(a, r.text) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? `answered ${shortCard(a.card)}` : "answer failed"; cx.notify(); });
+    if (r.type === "post") {
+      if (this.hidden.has(a.url)) return; // a post for this ask is in flight or done
+      this.hidden.add(a.url);
+      perform({ type: "post", argv: answerArgv(a, r.text) }, { run, exec, pane: null }).then((x) => {
+        if (x?.code === 0) this.note = `answered ${shortCard(a.card)}`; else { this.hidden.delete(a.url); this.note = "answer failed"; }
+        cx.notify();
+      });
+    }
     else if (r.type === "open") perform(r, { run, exec, pane: null });
     else if (r.type === "arm") this.note = `${r.body || "no details"} · press ${k} again within 10s to send`;
     cx.notify();
@@ -68,12 +76,13 @@ export default class AgentsView extends View {
     const k = e.keystroke;
     const { rows } = this.model();
     const cur = rows[this.selIdx];
-    if (cur?.section === "asks" && k.length === 1 && (cur.row.options.some((o) => o.key === k) || k === "x" || k === "v" || this.armed)) { cx.stop_propagation(); return this.askKey(cur.row, k, cx); }
+    if (cur?.section === "asks" && isAskKey(cur.row, k, this.armed)) { cx.stop_propagation(); return this.askKey(cur.row, k, cx); }
+    this.armed = null; // navigation cancels an armed answer and still moves
     if (!["escape", "enter", "down", "up", "j", "k"].includes(k)) return;
     cx.stop_propagation();
     if (k === "escape") return props().overlay ? closeOverlay(props().overlay) : undefined;
     if (k === "enter") return this.open(rows[this.selIdx]);
-    this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1)));
+    this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1))); this.q = 1;
     this.sel = rows[this.selIdx]?.key ?? null;
     cx.notify();
   }
@@ -120,7 +129,7 @@ export default class AgentsView extends View {
     const running = vm.groups.length + vm.sides.length;
     const body = [
       this.lane(t, "Needs you", vm.asks.length, t.blocked),
-      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? " · " + a.options.map((o) => `${o.key} ${o.label}`).join(" · ") : ""}`)) : [this.empty(t, "No questions waiting.")]),
+      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? ` · q${this.q}: ` + a.options.filter((o) => o.q === this.q).map((o) => `${o.key} ${o.label}`).join(" · ") : ""}`)) : [this.empty(t, "No questions waiting.")]),
       this.lane(t, "Running", running, t.muted),
       ...(running ? [] : [this.empty(t, "Nothing running.")]),
       ...vm.groups.flatMap((g) => {
