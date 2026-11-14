@@ -37,7 +37,7 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null, pick = false;
-  if (key === "x") text = "Done.";
+  if (key === "x" && ask.kind === "you") text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
   else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
   if (text == null) return armed ? { type: "cancel" } : null;
@@ -57,10 +57,10 @@ export function composeAnswer(ask, picks) {
 
 export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ? `${picks[q].split(":")[0]} ✓` : `${q} ?`)).join(" · ");
 
-// Whether a key belongs to the selected ask: option letters, x, v, a question digit, or any single key while an answer is armed
+// Whether a key belongs to the selected ask: option letters, x (you asks), v, a question digit, or any single key while an answer is armed
 // (it cancels). j, k and the arrows always navigate, so they never count.
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || k === "x" || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);

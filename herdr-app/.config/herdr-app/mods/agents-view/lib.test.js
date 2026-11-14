@@ -338,13 +338,23 @@ test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at o
   assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off" });
 });
 
-test("askKeyAction: x posts Done., v opens the plan, an unknown key does nothing", () => {
-  const [a] = openAsks([rich({ plan: "https://p.test/x" })], NOW);
+test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key does nothing", () => {
+  const [a] = openAsks([rich({ kind: "you", options: [], plan: "https://p.test/x" })], NOW);
   assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
   assert.deepEqual(askKeyAction(a, "v", null, NOW), { type: "open", target: "https://p.test/x" });
   assert.equal(askKeyAction(a, "z", null, NOW), null);
   const [noPlan] = openAsks([rich()], NOW);
   assert.equal(askKeyAction(noPlan, "v", null, NOW), null);
+});
+
+test("askKeyAction: on a decide ask x is an option key when the ask has one, else nothing", () => {
+  const withX = [...opts, { q: 1, key: "x", label: "Merge it" }];
+  const [a] = openAsks([rich({ options: withX })], NOW);
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it" });
+  const [b] = openAsks([rich()], NOW);
+  assert.equal(askKeyAction(b, "x", null, NOW), null);
+  assert.equal(isAskKey(b, "x", null), false);
+  assert.equal(isAskKey(a, "x", null), true);
 });
 
 for (const kind of ["merge", "roll", "money"]) {
@@ -360,11 +370,13 @@ for (const kind of ["merge", "roll", "money"]) {
   });
 }
 
-test("askKeyAction: x on a merge ask is also a second-key action", () => {
-  const [a] = openAsks([rich({ kind: "merge" })], NOW);
+test("askKeyAction: x on a merge ask is its option key, a second-key action, never Done.", () => {
+  const [a] = openAsks([rich({ kind: "merge", options: [{ q: 1, key: "x", label: "Merge it" }, { q: 1, key: "b", label: "Hold" }] })], NOW);
   const first = askKeyAction(a, "x", null, NOW);
   assert.equal(first.type, "arm");
-  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "Done." });
+  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it" });
+  const [none] = openAsks([rich({ kind: "merge" })], NOW);
+  assert.equal(askKeyAction(none, "x", null, NOW), null);
 });
 
 test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
@@ -480,7 +492,7 @@ test("main-agents layout: agents-view is a child of the panel-body stack, the ta
 const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later" }];
 
 test("askKeyAction: in a 2-question ask the letter picks within the selected question", () => {
-  const [a] = openAsks([rich({ options: two })], NOW);
+  const [a] = openAsks([rich({ kind: "you", options: two })], NOW);
   assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "pick", q: 1, text: "1a: yes" });
   assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "pick", q: 2, text: "2a: now" });
   assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "pick", q: 2, text: "2b: later" });
@@ -496,7 +508,7 @@ test("askKeyAction: a second press arms per question", () => {
 });
 
 test("isAskKey: option letters, x, v and question digits; navigation keys never, even while armed", () => {
-  const [a] = openAsks([rich({ options: two })], NOW);
+  const [a] = openAsks([rich({ kind: "you", options: two })], NOW);
   for (const k of ["a", "b", "x", "v", "1", "2"]) assert.equal(isAskKey(a, k, null), true, k);
   for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { id: a.id, key: "a", at: NOW }), false, k);
   assert.equal(isAskKey(a, "3", null), false);
