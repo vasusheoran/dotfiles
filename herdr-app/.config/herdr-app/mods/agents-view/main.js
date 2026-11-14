@@ -37,7 +37,7 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now(), hiddenUrls: this.hidden });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now(), hiddenIds: this.hidden });
     return { vm, rows: flatRows(vm) };
   }
 
@@ -60,17 +60,17 @@ export default class AgentsView extends View {
     let r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (!r) return;
     this.armed = r.type === "arm" ? r.armed : null;
-    if (r.type === "pick") { // kept by url, so a refreshed row keeps its picks
-      const picks = { ...this.picks.get(a.url), [r.q]: r.text }; this.picks.set(a.url, picks);
+    if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks
+      const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
       const text = composeAnswer(a, picks);
       if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
       r = { type: "post", text };
     }
     if (r.type === "post") {
-      if (this.hidden.has(a.url)) return; // a post for this ask is in flight or done
-      this.hidden.add(a.url);
+      if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
+      this.hidden.add(a.id);
       perform({ type: "post", argv: answerArgv(a, r.text) }, { run, exec, pane: null }).then((x) => {
-        if (x?.code === 0) this.note = `answered ${shortCard(a.card)}`; else { this.hidden.delete(a.url); this.note = "answer failed"; }
+        if (x?.code === 0) this.note = `answered ${shortCard(a.card)}`; else { this.hidden.delete(a.id); this.note = "answer failed"; }
         cx.notify();
       });
     }
@@ -136,7 +136,7 @@ export default class AgentsView extends View {
     const running = vm.groups.length + vm.sides.length;
     const body = [
       this.lane(t, "Needs you", vm.asks.length, t.blocked),
-      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? ` · q${this.q}: ` + a.options.filter((o) => o.q === this.q).map((o) => `${o.key} ${o.label}`).join(" · ") + (new Set(a.options.map((o) => o.q)).size > 1 ? ` · ${picksText(a, this.picks.get(a.url) ?? {})}` : "") : ""}`)) : [this.empty(t, "No questions waiting.")]),
+      ...(vm.asks.length ? vm.asks.map((a, i) => this.line(t, at("asks", i), [shortCard(a.card), a.from === "lead" ? "from lead" : "", `waiting ${ageText(a.ageMs)}`], `${a.question}${a.options.length ? ` · q${this.q}: ` + a.options.filter((o) => o.q === this.q).map((o) => `${o.key} ${o.label}`).join(" · ") + (new Set(a.options.map((o) => o.q)).size > 1 ? ` · ${picksText(a, this.picks.get(a.id) ?? {})}` : "") : ""}`)) : [this.empty(t, "No questions waiting.")]),
       this.lane(t, "Running", running, t.muted),
       ...(running ? [] : [this.empty(t, "Nothing running.")]),
       ...vm.groups.flatMap((g) => {
