@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
-  runFiles, askView, questionTitles, firstLine, planRef,
+  runFiles, askView, questionTitles, firstLine, planRef, runnerLine,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -237,7 +237,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -539,9 +539,9 @@ test("picksText: shows each question's pick or a question mark", () => {
 
 // ---- side panel (kuchbhi#1058) ----
 
-test("runFiles: live files by default, the fixture folder's four files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json" });
+test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
@@ -662,4 +662,29 @@ test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
   assert.deepEqual(askKeyAction(f, "v", null, NOW), { type: "open", target: "/h/plan.html" });
   const [p] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
   assert.deepEqual(askKeyAction(p, "v", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
+});
+
+test("runnerLine: runner state, worker limit and the reviewers that are on", () => {
+  const line = (o) => runnerLine(JSON.stringify(o));
+  assert.equal(line({ runner: true, worker_limit: 3, reviewers: { verifier: true, codex: false, agy: false } }), "Runner setting: on · 3 workers · reviewers: verifier");
+  assert.equal(line({ runner: false, worker_limit: 4, reviewers: { verifier: true, codex: true } }), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(line({ runner: false, worker_limit: 1, reviewers: { verifier: false, codex: false, agy: true } }), "Runner setting: off · 1 worker · reviewers: agy");
+  assert.equal(line({ reviewers: { verifier: false, codex: false, agy: false } }), "Runner setting: off · 4 workers · reviewers: none");
+});
+
+test("runnerLine: keys the file lacks read as the settings defaults; projects and epics are ignored", () => {
+  assert.equal(runnerLine("{}"), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(runnerLine(JSON.stringify({ version: 1, projects: { "a/b": {} }, epics: ["a/b#1"], reviewers: { codex: false } })), "Runner setting: off · 4 workers · reviewers: verifier");
+});
+
+test("runnerLine: no file or a broken one shows no line", () => {
+  assert.equal(runnerLine(null), null);
+  assert.equal(runnerLine("{broken"), null);
+  assert.equal(runnerLine("[1]"), null);
+});
+
+test("viewModel: the runner line comes from the settings file", () => {
+  const vm = viewModel({ terminals: [], nowMs: NOW, settingsJson: JSON.stringify({ runner: true, worker_limit: 2 }) });
+  assert.equal(vm.runnerLine, "Runner setting: on · 2 workers · reviewers: verifier, codex");
+  assert.equal(viewModel({ terminals: [], nowMs: NOW }).runnerLine, null);
 });

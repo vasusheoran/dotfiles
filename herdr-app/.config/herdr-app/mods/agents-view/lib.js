@@ -71,9 +71,9 @@ export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.
 
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
-  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json` }; }
+  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json` }; }
   const d = `${home}/handoffs/run`;
-  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json` };
+  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json` };
 }
 
 export function firstLine(text, max) {
@@ -230,16 +230,25 @@ export function upNextLine(up, nowMs) {
   return what ? `Up next: ${num(up.epic)} → card ${num(up.card)} · ${what}` : null;
 }
 
+// The run settings as one line: runner on or off, worker limit, the reviewers that are on. Defaults match run-settings.sh.
+export function runnerLine(text) {
+  const s = parse(text);
+  if (!s || typeof s !== "object" || Array.isArray(s)) return null;
+  const n = s.worker_limit ?? 4, r = { verifier: true, codex: true, agy: false, ...s.reviewers };
+  const on = Object.keys(r).filter((k) => r[k]);
+  return `Runner setting: ${s.runner ? "on" : "off"} · ${n} worker${n === 1 ? "" : "s"} · reviewers: ${on.join(", ") || "none"}`;
+}
+
 const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs, hiddenIds }) {
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, nowMs, hiddenIds }) {
   const ts = (terminals ?? []).map(normalize);
   const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenIds?.has(a.id));
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.
