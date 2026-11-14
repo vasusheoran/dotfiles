@@ -10,6 +10,7 @@ import { viewModel, flatRows, ageText, shortCard, askKeyAction, answerArgv, isAs
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const REFRESH_MS = 5000;
+const POPUP_BODY_H = 560;
 const H = { lane: 30, row: 28, two: 46, empty: 30 };
 
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
@@ -86,7 +87,7 @@ export default class AgentsView extends View {
     this.armed = null; // navigation cancels an armed answer and still moves
     if (!["escape", "enter", "down", "up", "j", "k"].includes(k)) return;
     cx.stop_propagation();
-    if (k === "escape") return props().overlay ? closeOverlay(props().overlay) : undefined;
+    if (k === "escape") return props()?.overlay ? closeOverlay(props()?.overlay) : undefined;
     if (k === "enter") return this.open(rows[this.selIdx]);
     this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1))); this.q = 1;
     this.sel = rows[this.selIdx]?.key ?? null;
@@ -158,7 +159,8 @@ export default class AgentsView extends View {
       .child(h_flex().w_full().flex_none().px(14).py(8).gap(10).items_center().border_b(1).border_color(t.border)
         .child(sans(14, t.foreground, "Agents view").font_semibold()).child(div().flex_1()).child(mono(11, vm.usageWarn ? t.blocked : t.muted, vm.usage)))
       .when(!!vm.upNext, (el) => el.child(div().w_full().flex_none().px(14).py(5).border_b(1).border_color(t.border).child(mono(12, t.foreground, vm.upNext))))
-      .child(v_flex().id("av-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(body))
+      // a popup is sized to its content, so there the body needs its own height
+      .child(v_flex().id("av-body").w_full().flex_1().min_h(props()?.overlay ? POPUP_BODY_H : 0).overflow_y_scrollbar().children(body))
       .child(h_flex().w_full().flex_none().gap(14).px(14).py(5).bg(t.chrome).border_t(1).border_color(t.border)
         .child(sans(11, this.note ? t.foreground : t.muted, this.note || "j k move · ↵ show terminal · on an ask: option key · x done · v plan · esc close")));
   }
