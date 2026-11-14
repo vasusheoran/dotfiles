@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
+  askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -235,7 +236,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], others: [] });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [] });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -253,20 +254,20 @@ test("viewModel: raw terminals and file text in", () => {
   assert.deepEqual(vm.others, []);
 });
 
-test("flatRows: asks, stuck, each group, others, in display order; stuck terminal selectable twice", () => {
+test("flatRows: asks, each group, the desk, stuck, others, in display order; stuck terminal selectable twice", () => {
   const vm = viewModel({
     terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "blocked" }, { address: "tO", name: "me", status: "idle" }],
     asksText: JSON.stringify(ask("acme/app#12", HOUR)),
     eventsText: "", usageJson: null, nowMs: NOW,
   });
   const rows = flatRows(vm);
-  assert.deepEqual(rows.map((r) => r.section), ["asks", "stuck", "group", "others"]);
+  assert.deepEqual(rows.map((r) => r.section), ["asks", "group", "desk", "stuck", "others"]);
   assert.equal(rows[0].url, "https://example.test/acme/app#12");
   assert.equal(rows[1].address, "tL");
-  assert.equal(rows[2].address, "tL");
-  assert.equal(new Set(rows.map((r) => r.key)).size, 4);
+  assert.equal(rows[3].address, "tL");
+  assert.equal(new Set(rows.map((r) => r.key)).size, 5);
   assert.equal(rows[0].key, "ask:https://example.test/acme/app#12");
-  assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], others: [] }), []);
+  assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], sides: [], desk: { address: null }, others: [] }).map((r) => r.section), ["desk"]);
 });
 
 // the runner's up-next.json
@@ -316,4 +317,178 @@ test("viewModel: Up next from the file, and the header warns when the usage read
   assert.equal(vm.upNext, null);
   assert.equal(vm.usage, "week 75%");
   assert.equal(vm.usageWarn, false);
+});
+
+// ---- control room: answering asks, side jobs, the desk, the right-hand pane ----
+const URL1 = "https://github.com/acme/app/issues/12#issuecomment-555";
+const opts = [{ q: 1, key: "a", label: "merge (Recommended)" }, { q: 1, key: "b", label: "hold off" }];
+const rich = (o = {}) => ({ ...ask("acme/app#12", HOUR, { url: URL1 }), options: opts, kind: "decide", plan: null, body: "included: PR 9", ...o });
+
+test("openAsks: an answered line closes the ask, and options, kind, plan and body ride along", () => {
+  assert.deepEqual(openAsks([rich(), { ts: iso(0), event: "answered", card: "acme/app#12", url: URL1 }], NOW), []);
+  const [r] = openAsks([rich({ kind: "merge", plan: "https://p.test/x" })], NOW);
+  assert.deepEqual([r.options, r.kind, r.plan, r.body], [opts, "merge", "https://p.test/x", "included: PR 9"]);
+  const [old] = openAsks([ask("acme/app#12", HOUR)], NOW);
+  assert.deepEqual([old.options, old.kind, old.plan], [[], "decide", null]);
+});
+
+test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at once", () => {
+  const [a] = openAsks([rich()], NOW);
+  assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off" });
+});
+
+test("askKeyAction: x posts Done., v opens the plan, an unknown key does nothing", () => {
+  const [a] = openAsks([rich({ plan: "https://p.test/x" })], NOW);
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
+  assert.deepEqual(askKeyAction(a, "v", null, NOW), { type: "open", target: "https://p.test/x" });
+  assert.equal(askKeyAction(a, "z", null, NOW), null);
+  const [noPlan] = openAsks([rich()], NOW);
+  assert.equal(askKeyAction(noPlan, "v", null, NOW), null);
+});
+
+for (const kind of ["merge", "roll", "money"]) {
+  test(`askKeyAction: a ${kind} ask needs the same key twice within ${DOUBLE_PRESS_MS / 1000}s`, () => {
+    const [a] = openAsks([rich({ kind })], NOW);
+    const first = askKeyAction(a, "a", null, NOW);
+    assert.equal(first.type, "arm");
+    assert.equal(first.body, "included: PR 9");
+    assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 9_000), { type: "post", text: "1a: merge (Recommended)" });
+    assert.equal(askKeyAction(a, "a", first.armed, NOW + 11_000).type, "arm"); // too late: arms again
+    assert.deepEqual(askKeyAction(a, "b", first.armed, NOW + 1_000).type, "arm"); // a different option arms that one
+    assert.deepEqual(askKeyAction(a, "z", first.armed, NOW + 1_000), { type: "cancel" }); // any other key cancels
+  });
+}
+
+test("askKeyAction: x on a merge ask is also a second-key action", () => {
+  const [a] = openAsks([rich({ kind: "merge" })], NOW);
+  const first = askKeyAction(a, "x", null, NOW);
+  assert.equal(first.type, "arm");
+  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "Done." });
+});
+
+test("answerArgv: work ask answer <card> --question <id from url> --text", () => {
+  assert.deepEqual(answerArgv({ card: "acme/app#12", url: URL1 }, "1a: x"), ["ask", "answer", "acme/app#12", "--question", "555", "--text", "1a: x"]);
+});
+
+test("sideJobs and deskRow: role=side rows by themselves, one desk row", () => {
+  const side = T({ address: "tS", name: "card-app-9", labels: { role: "side", card: "acme/app#9", model: "sonnet" }, state: "working" });
+  assert.deepEqual(sideJobs([side, lead(), worker()]).map((s) => [s.name, s.address, s.card]), [["card-app-9", "tS", "acme/app#9"]]);
+  assert.deepEqual(sideJobs([T({ labels: { role: "side" }, live: false })]), []);
+  const desk = T({ address: "tD", name: "desk", labels: { role: "desk" }, state: "idle" });
+  assert.deepEqual(deskRow([desk, lead()]), { name: "desk", address: "tD", state: "idle" });
+  assert.deepEqual(deskRow([lead()]), { name: "desk", address: null, state: "not started" });
+});
+
+test("viewModel: side jobs are not in the epic groups or other sessions; desk is its own row", () => {
+  const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side", "card=acme/app#9"] };
+  const desk = { address: "tD", name: "desk", status: "idle", labels: ["role=desk"] };
+  const vm = viewModel({ terminals: [side, desk, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: "", eventsText: "", nowMs: NOW });
+  assert.equal(vm.sides.length, 1);
+  assert.equal(vm.desk.address, "tD");
+  assert.deepEqual(vm.others, []);
+  assert.deepEqual(vm.groups.map((g) => g.epic), [EPIC]);
+  assert.deepEqual(flatRows(vm).map((r) => r.section), ["group", "side", "desk"]);
+});
+
+test("flatRows: sections in order asks, running (epics then side jobs), desk, stuck, others", () => {
+  const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side"] };
+  const blocked = { address: "tB", name: "x", status: { state: "blocked", kind: "permission" }, labels: [] };
+  const vm = viewModel({ terminals: [side, blocked, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW });
+  assert.deepEqual([...new Set(flatRows(vm).map((r) => r.section))], ["asks", "group", "side", "desk", "stuck", "others"]);
+});
+
+test("selectTarget: a terminal row shows its terminal; the desk row starts one when none is live", () => {
+  assert.deepEqual(selectTarget({ section: "group", address: "tL" }), { show: "tL" });
+  assert.deepEqual(selectTarget({ section: "side", address: "tS" }), { show: "tS" });
+  assert.deepEqual(selectTarget({ section: "desk", address: "tD" }), { show: "tD" });
+  const t = selectTarget({ section: "desk", address: null }, "/home/x");
+  assert.deepEqual(t.start, ["run", "--bg", "--json", "--name", "desk", "--no-parent", "--label", "role=desk", "--cwd", "/home/x", "--", "claude"]);
+  assert.equal(selectTarget({ section: "asks", address: null }), null);
+});
+
+test("rightPaneId: the one terminal pane of the focused tab, never a mod pane", () => {
+  const panes = [{ pane: "p1", terminal: "tA", tab: "t1", focused: true }, { pane: "pm", terminal: null, mod: "x", tab: "t1" }, { pane: "p2", terminal: "tB", tab: "t2" }];
+  assert.equal(rightPaneId(panes, "t1"), "p1");
+  assert.equal(rightPaneId(panes, "t2"), "p2");
+  assert.equal(rightPaneId(panes, "t9"), null);
+  assert.equal(rightPaneId([], "t1"), null);
+});
+
+test("perform: show calls terminal.show with the terminal and the right-hand pane; work calls go through `work`", async () => {
+  const calls = [];
+  const io = { run: (n, a) => calls.push(["run", n, a]), exec: async (c, a) => { calls.push(["exec", c, a]); return { code: 0, stdout: JSON.stringify({ address: "tNew" }) }; } };
+  await perform({ type: "show", terminal: "tL" }, { ...io, pane: "p1" });
+  assert.deepEqual(calls.pop(), ["run", "terminal.show", { terminal: "tL", pane: "p1" }]);
+  await perform({ type: "post", argv: ["ask", "answer", "acme/app#12", "--question", "555", "--text", "1a: x"] }, { ...io, pane: "p1" });
+  assert.deepEqual(calls.pop(), ["exec", "work", ["ask", "answer", "acme/app#12", "--question", "555", "--text", "1a: x"]]);
+  await perform({ type: "open", target: "https://p.test/x" }, { ...io, pane: "p1" });
+  assert.deepEqual(calls.pop(), ["exec", "open", ["https://p.test/x"]]);
+  await perform({ type: "start-desk", argv: ["run", "--bg"] }, { ...io, pane: "p1" });
+  assert.deepEqual(calls, [["exec", "hc", ["run", "--bg"]], ["run", "terminal.show", { terminal: "tNew", pane: "p1" }]]);
+  const none = []; await perform({ type: "show", terminal: "tL" }, { run: (...a) => none.push(a), exec: io.exec, pane: null });
+  assert.deepEqual(none, [], "no right-hand pane: nothing is called");
+});
+
+test("control-room layout: the agents-view mod at about 40% beside the active tab's terminal pane", async () => {
+  const { readFileSync } = await import("node:fs");
+  const l = JSON.parse(readFileSync(new URL("../../layouts/control-room.json", import.meta.url), "utf8"));
+  const row = JSON.stringify(l).includes('"type":"row"') ? l : null;
+  const find = (n, f) => (f(n) ? [n] : (n.children ?? []).flatMap((c) => find(c, f)));
+  const [list] = find(l, (n) => n.content?.mod === "agents-view");
+  const [pane] = find(l, (n) => n.content?.tab === "active");
+  assert.ok(row && list && pane, "has the mod block and the active-tab block");
+  assert.ok(!find(l, (n) => n.content?.terminal).length, "no fixed terminal block: terminal.show fails while one is focused");
+  const parent = find(l, (n) => n.children?.includes(list))[0];
+  assert.equal(parent.type, "row");
+  assert.ok(parent.children.indexOf(list) < parent.children.indexOf(pane), "list on the left");
+  const w = (n) => n.size?.weight ?? 1;
+  assert.ok(Math.abs(w(list) / (w(list) + w(pane)) - 0.4) < 0.01, "about 40%");
+});
+
+const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later" }];
+
+test("askKeyAction: in a 2-question ask the letter picks within the selected question", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "pick", q: 1, text: "1a: yes" });
+  assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "pick", q: 2, text: "2a: now" });
+  assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "pick", q: 2, text: "2b: later" });
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
+  assert.equal(askKeyAction(a, "c", null, NOW, 2), null);
+});
+
+test("askKeyAction: a second press arms per question", () => {
+  const [a] = openAsks([rich({ options: two, kind: "merge" })], NOW);
+  const first = askKeyAction(a, "a", null, NOW, 2);
+  assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 1000, 2), { type: "pick", q: 2, text: "2a: now" });
+  assert.equal(askKeyAction(a, "a", first.armed, NOW + 1000, 1).type, "arm");
+});
+
+test("isAskKey: option letters, x, v and question digits; navigation keys never, even while armed", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  for (const k of ["a", "b", "x", "v", "1", "2"]) assert.equal(isAskKey(a, k, null), true, k);
+  for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { url: a.url, key: "a", at: NOW }), false, k);
+  assert.equal(isAskKey(a, "3", null), false);
+  assert.equal(isAskKey(a, "z", { url: a.url, key: "a", at: NOW }), true); // armed: any other key cancels
+  assert.equal(isAskKey(a, "z", null), false);
+});
+
+test("viewModel: hidden urls leave Needs you", () => {
+  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenUrls: new Set([URL1]) });
+  assert.deepEqual(vm.asks, []);
+});
+
+test("composeAnswer: nothing until every question has a pick, then one line per question", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.equal(composeAnswer(a, {}), null);
+  assert.equal(composeAnswer(a, { 1: "1a: yes" }), null);
+  assert.equal(composeAnswer(a, { 2: "2b: later" }), null);
+  assert.equal(composeAnswer(a, { 1: "1a: yes", 2: "2b: later" }), "1a: yes\n2b: later");
+  const [one] = openAsks([rich()], NOW);
+  assert.equal(composeAnswer(one, { 1: "1a: x" }), "1a: x");
+});
+
+test("picksText: shows each question's pick or a question mark", () => {
+  const [a] = openAsks([rich({ options: two })], NOW);
+  assert.equal(picksText(a, { 1: "1a: yes" }), "1a ✓ · 2 ?");
+  assert.equal(picksText(a, {}), "1 ? · 2 ?");
 });
