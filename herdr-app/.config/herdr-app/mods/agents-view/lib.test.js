@@ -255,6 +255,41 @@ test("viewModel: raw terminals and file text in", () => {
   assert.deepEqual(vm.others, []);
 });
 
+const rawLead = { address: "tL", name: "lead-app-10", state: "live", labels: { role: "lead", epic: EPIC }, status: "working" };
+const rawWorker = (status) => ({ address: "tW", name: "card-app-12", state: "live", labels: { role: "worker", epic: EPIC, card: "acme/app#12" }, status });
+const flag = (terminal, kind, agoMs, card = "acme/app#12") => ({ terminal, card, kind, since: iso(agoMs) });
+
+test("viewModel: stuck.json adds one Stuck row per flagged terminal, aged from since", () => {
+  const vm = viewModel({ terminals: [lead()], stuckJson: JSON.stringify([flag("card-app-12", "idle-open", 40 * MIN)]), nowMs: NOW });
+  assert.equal(vm.stuck.length, 1);
+  assert.deepEqual([vm.stuck[0].kind, vm.stuck[0].name, vm.stuck[0].ageMs], ["idle-open", "card-app-12", 40 * MIN]);
+  assert.match(vm.stuck[0].text, /idle/);
+});
+
+test("viewModel: a flagged live terminal keeps its address, and the file wins over the view's own rule for it", () => {
+  const vm = viewModel({ terminals: [rawLead, rawWorker("blocked")], stuckJson: JSON.stringify([flag("card-app-12", "blocked", 31 * MIN)]), nowMs: NOW });
+  assert.equal(vm.stuck.length, 1);
+  assert.equal(vm.stuck[0].kind, "blocked");
+  assert.equal(vm.stuck[0].ageMs, 31 * MIN);
+  assert.equal(vm.stuck[0].address, "tW");
+});
+
+test("viewModel: the view's own rows for other terminals stay beside the file's", () => {
+  const vm = viewModel({ terminals: [rawLead, rawWorker("blocked")], stuckJson: JSON.stringify([flag("card-app-99", "silent", HOUR)]), nowMs: NOW });
+  assert.deepEqual(vm.stuck.map((s) => s.name).sort(), ["card-app-12", "card-app-99"]);
+});
+
+test("viewModel: a missing, broken or oddly shaped stuck.json adds nothing", () => {
+  for (const stuckJson of [undefined, null, "{broken", "{}", "[1,null,{\"kind\":\"x\"}]"]) {
+    assert.deepEqual(viewModel({ terminals: [lead()], stuckJson, nowMs: NOW }).stuck, [], String(stuckJson));
+  }
+});
+
+test("flatRows: a file row is selectable like any stuck row", () => {
+  const vm = viewModel({ terminals: [lead()], stuckJson: JSON.stringify([flag("card-app-12", "gone", HOUR)]), nowMs: NOW });
+  assert.ok(flatRows(vm).some((r) => r.key === "stuck:gone:card-app-12"));
+});
+
 test("flatRows: asks, each group, the desk, stuck, others, in display order; stuck terminal selectable twice", () => {
   const vm = viewModel({
     terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "blocked" }, { address: "tO", name: "me", status: "idle" }],
@@ -527,9 +562,9 @@ test("picksText: shows each question's pick or a question mark", () => {
 
 // ---- side panel (kuchbhi#1058) ----
 
-test("runFiles: live files by default, the fixture folder's four files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json" });
+test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", stuck: "/h/handoffs/run/stuck.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
