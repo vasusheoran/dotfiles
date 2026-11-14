@@ -1,5 +1,5 @@
 // Agents view: leads, workers, questions waiting on the owner, and what is stuck. Reads terminals(), asks.jsonl,
-// events.jsonl and the usage file; no network. The logic is in lib.js (tested with node --test); this file reads, draws and handles keys.
+// events.jsonl, the runner's up-next.json and the usage file; no network. The logic is in lib.js (tested with node --test); this file reads, draws and handles keys.
 // Opened from keys.json as mod.open {"name": "agents-view"}.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -18,7 +18,7 @@ export default class AgentsView extends View {
   init(_props, cx) {
     this.h = cx.focus_handle();
     this.h.focus();
-    this.files = { asks: null, events: null, usage: null };
+    this.files = { asks: null, events: null, usage: null, upNext: null };
     this.sel = null; this.selIdx = 0;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
@@ -26,14 +26,14 @@ export default class AgentsView extends View {
 
   async read(cx) {
     const dir = `${home()}/handoffs/run`;
-    const [asks, events, usage] = await Promise.all([`${dir}/asks.jsonl`, `${dir}/events.jsonl`, `${home()}/.claude/.usage-cache.json`]
+    const [asks, events, usage, upNext] = await Promise.all([`${dir}/asks.jsonl`, `${dir}/events.jsonl`, `${home()}/.claude/.usage-cache.json`, `${dir}/up-next.json`]
       .map((p) => readTextFile(p).catch(() => null)));
-    this.files = { asks, events, usage };
+    this.files = { asks, events, usage, upNext };
     cx.notify();
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, nowMs: Date.now() });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, nowMs: Date.now() });
     return { vm, rows: flatRows(vm) };
   }
 
@@ -105,7 +105,8 @@ export default class AgentsView extends View {
       .track_focus(this.h).on_mouse_down("left", () => this.h.focus())
       .on_key_down((e, cx) => this.key(e, cx))
       .child(h_flex().w_full().flex_none().px(14).py(8).gap(10).items_center().border_b(1).border_color(t.border)
-        .child(sans(14, t.foreground, "Agents view").font_semibold()).child(div().flex_1()).child(mono(11, t.muted, vm.usage)))
+        .child(sans(14, t.foreground, "Agents view").font_semibold()).child(div().flex_1()).child(mono(11, vm.usageWarn ? t.blocked : t.muted, vm.usage)))
+      .when(!!vm.upNext, (el) => el.child(div().w_full().flex_none().px(14).py(5).border_b(1).border_color(t.border).child(mono(12, t.foreground, vm.upNext))))
       .child(v_flex().id("av-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(body))
       .child(h_flex().w_full().flex_none().gap(14).px(14).py(5).bg(t.chrome).border_t(1).border_color(t.border)
         .child(sans(11, t.muted, "j k move · ↵ open terminal / ask · esc close")));

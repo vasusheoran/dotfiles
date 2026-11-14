@@ -1,5 +1,6 @@
 // Agents view: pure logic (tested with node --test). main.js reads the inputs, draws and handles keys.
 const GONE_MAX_MS = 7 * 24 * 3600_000; // a worker gone longer than this is history, not stuck
+const RUNNER_SILENT_MS = 12 * 60_000; // the runner ticks every 5 minutes
 const BLOCKED_TEXT = { permission: "permission prompt", question: "question", auth: "sign-in needed" };
 
 export function parseJsonl(text) {
@@ -113,12 +114,30 @@ export function ageText(ms) {
 
 export const shortCard = (ref) => String(ref ?? "").split("/").pop();
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, nowMs }) {
+const num = (ref) => `#${String(ref).split("#").pop()}`;
+const hhmm = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+// The runner's pick (up-next.json) as one line, or null when there is no file or it can't be read.
+export function upNextLine(up, nowMs) {
+  const at = Date.parse(up?.at);
+  if (Number.isNaN(at)) return null;
+  const age = nowMs - at;
+  if (age > RUNNER_SILENT_MS) return `Runner has not checked for ${ageText(age)}`;
+  if (up.state === "none") return `Up next: nothing to start · checked ${ageText(age)} ago`;
+  if (!up.epic || !up.card) return null;
+  const what = { "would-start": `runner off, would start · checked ${ageText(age)} ago`, started: `runner on, lead started ${hhmm(at)}`, "not-started": `not started: ${up.reason}` }[up.state];
+  return what ? `Up next: ${num(up.epic)} → card ${num(up.card)} · ${what}` : null;
+}
+
+const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
+
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs }) {
   const ts = (terminals ?? []).map(normalize);
   const asks = openAsks(parseJsonl(asksText), nowMs);
-  let usage = null;
-  try { usage = JSON.parse(usageJson); } catch { /* missing or broken */ }
-  return { usage: usageText(usage), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), others: otherSessions(ts) };
+  const up = parse(upNextJson);
+  const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
+  const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), others: otherSessions(ts) };
 }
 
 // Every selectable row in display order. A terminal in STUCK and in its epic group is selectable in both.
