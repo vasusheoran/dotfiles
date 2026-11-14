@@ -6,6 +6,7 @@ import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
   runFiles, askView, questionTitles, firstLine, planRef, runnerLine,
+  askGroups, recommended, acceptRecommended, checklistStep, noteStep, noteArgv, runSummary, footerHint,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -237,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], askGroups: [], runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -262,12 +263,14 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
     eventsText: "", usageJson: null, nowMs: NOW,
   });
   const rows = flatRows(vm);
-  assert.deepEqual(rows.map((r) => r.section), ["asks", "group", "desk", "stuck", "others"]);
-  assert.equal(rows[0].id, "https://example.test/acme/app#12"); // a legacy row without an id keys on its url
-  assert.equal(rows[1].address, "tL");
-  assert.equal(rows[3].address, "tL");
-  assert.equal(new Set(rows.map((r) => r.key)).size, 5);
-  assert.equal(rows[0].key, "ask:https://example.test/acme/app#12");
+  assert.deepEqual(rows.map((r) => r.section), ["epic", "asks", "summary", "others"]); // an ask is waiting: running hides behind one line
+  assert.equal(rows[1].id, "https://example.test/acme/app#12"); // a legacy row without an id keys on its url
+  assert.equal(rows[1].key, "ask:https://example.test/acme/app#12");
+  const full = flatRows(vm, { showRun: true });
+  assert.deepEqual(full.map((r) => r.section), ["epic", "asks", "summary", "group", "desk", "stuck", "others"]);
+  assert.equal(full[3].address, "tL");
+  assert.equal(full[5].address, "tL");
+  assert.equal(new Set(full.map((r) => r.key)).size, 7);
   assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], sides: [], desk: { address: null }, others: [] }).map((r) => r.section), ["desk"]);
 });
 
@@ -335,7 +338,7 @@ test("openAsks: an answered line closes the ask, and options, kind, plan and bod
 
 test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at once", () => {
   const [a] = openAsks([rich()], NOW);
-  assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off" });
+  assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off", key: "b" });
 });
 
 test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key does nothing", () => {
@@ -350,7 +353,7 @@ test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key
 test("askKeyAction: on a decide ask x is an option key when the ask has one, else nothing", () => {
   const withX = [...opts, { q: 1, key: "x", label: "Merge it" }];
   const [a] = openAsks([rich({ options: withX })], NOW);
-  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it" });
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it", key: "x" });
   const [b] = openAsks([rich()], NOW);
   assert.equal(askKeyAction(b, "x", null, NOW), null);
   assert.equal(isAskKey(b, "x", null), false);
@@ -363,7 +366,7 @@ for (const kind of ["merge", "roll", "money"]) {
     const first = askKeyAction(a, "a", null, NOW);
     assert.equal(first.type, "arm");
     assert.equal(first.body, "included: PR 9");
-    assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 9_000), { type: "post", text: "1a: merge (Recommended)" });
+    assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 9_000), { type: "post", text: "1a: merge (Recommended)", key: "a" });
     assert.equal(askKeyAction(a, "a", first.armed, NOW + 11_000).type, "arm"); // too late: arms again
     assert.deepEqual(askKeyAction(a, "b", first.armed, NOW + 1_000).type, "arm"); // a different option arms that one
     assert.deepEqual(askKeyAction(a, "z", first.armed, NOW + 1_000), { type: "cancel" }); // any other key cancels
@@ -374,7 +377,7 @@ test("askKeyAction: x on a merge ask is its option key, a second-key action, nev
   const [a] = openAsks([rich({ kind: "merge", options: [{ q: 1, key: "x", label: "Merge it" }, { q: 1, key: "b", label: "Hold" }] })], NOW);
   const first = askKeyAction(a, "x", null, NOW);
   assert.equal(first.type, "arm");
-  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it" });
+  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it", key: "x" });
   const [none] = openAsks([rich({ kind: "merge" })], NOW);
   assert.equal(askKeyAction(none, "x", null, NOW), null);
 });
@@ -441,7 +444,7 @@ test("flatRows: sections in order asks, running (epics then side jobs), desk, st
   const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side"] };
   const blocked = { address: "tB", name: "x", status: { state: "blocked", kind: "permission" }, labels: [] };
   const vm = viewModel({ terminals: [side, blocked, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW });
-  assert.deepEqual([...new Set(flatRows(vm).map((r) => r.section))], ["asks", "group", "side", "desk", "stuck", "others"]);
+  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["epic", "asks", "summary", "group", "side", "desk", "stuck", "others"]);
 });
 
 test("selectTarget: a terminal row shows its terminal; the desk row starts one when none is live", () => {
@@ -687,4 +690,194 @@ test("viewModel: the runner line comes from the settings file", () => {
   const vm = viewModel({ terminals: [], nowMs: NOW, settingsJson: JSON.stringify({ runner: true, worker_limit: 2 }) });
   assert.equal(vm.runnerLine, "Runner setting: on · 2 workers · reviewers: verifier, codex");
   assert.equal(viewModel({ terminals: [], nowMs: NOW }).runnerLine, null);
+});
+
+// ---- #1074: open asks only, one line per epic, Enter accepts the recommendation, a batched merge ask, notes ----
+// The open-rule fixture below matches the one in claude-plugins tests/test_ask.sh: same rows, same open ids.
+const FIX = [
+  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "a-1", card: "o/r#10", epic: "o/r#1", from: "worker", question: "1. Approve this plan?", body: "b", options: [], kind: "plan" },
+  { ts: "2030-01-01T02:00:00Z", event: "ask", id: "a-2", card: "o/r#10", epic: "o/r#1", from: "worker", question: "**In plain words:** Roll it?", body: "b", options: [], kind: "decide", title: "Roll the fix today?" },
+  { ts: "2030-01-01T02:30:00Z", event: "ask", id: "a-3", card: "o/r#11", epic: "o/r#1", from: "worker", question: "Q3", body: "b", options: [], kind: "decide", title: "T3" },
+  { ts: "2030-01-01T02:40:00Z", event: "answered", id: "a-3", card: "o/r#11", text: "x", by: "owner", via: "screen" },
+  { ts: "2030-01-01T03:00:00Z", event: "ask", id: "a-4", card: "o/r#12", epic: "o/r#1", from: "lead", question: "Q4", body: "b", options: [], kind: "decide", title: "T4" },
+  { ts: "2030-01-01T03:10:00Z", event: "applied", id: "a-4" },
+  { ts: "2030-01-01T04:00:00Z", event: "ask", id: "a-5", card: "o/r#13", epic: "o/r#1", from: "lead", question: "Q5", body: "b", options: [], kind: "decide", title: "T5" },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "a-6", card: "o/r#14", epic: "o/r#1", from: "lead", question: "Q6", body: "b", options: [{ q: 1, key: "a", label: "Merge" }, { q: 1, key: "b", label: "Hold" }], kind: "merge", title: "Merge 2 hook PRs for Epic 1", target: { repo: "o/r", pr: 1, head: "h1" } },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "a-7", card: "o/r#14", epic: "o/r#1", from: "lead", question: "Q6", body: "b", options: [{ q: 1, key: "a", label: "Merge" }, { q: 1, key: "b", label: "Hold" }], kind: "merge", title: "Merge 2 hook PRs for Epic 1", target: { repo: "o/r", pr: 2, head: "h2" }, batch: "a-6" },
+];
+const AFTER = Date.parse("2030-01-01T06:00:00Z");
+
+test("openAsks: the shared open rule: superseded, answered and applied asks are not open; a batch is one entry", () => {
+  const r = openAsks(FIX, AFTER);
+  assert.deepEqual(r.map((a) => a.id), ["a-2", "a-5", "a-6"]);
+});
+
+test("openAsks: a batch entry carries its targets, in order, and the all / pick options", () => {
+  const b = openAsks(FIX, AFTER).find((a) => a.id === "a-6");
+  assert.deepEqual(b.targets, [{ id: "a-6", repo: "o/r", pr: 1, head: "h1" }, { id: "a-7", repo: "o/r", pr: 2, head: "h2" }]);
+  assert.deepEqual(b.options.map((o) => [o.q, o.key]), [[1, "a"], [1, "b"]]);
+  assert.match(b.options[0].label, /all 2/i);
+  assert.match(b.options[0].label, /\(Recommended\)/);
+});
+
+test("openAsks: title is the row's own, else the first line without markup or numbering", () => {
+  const all = openAsks(FIX.filter((l) => l.id !== "a-2"), AFTER); // a-1 is open again once a-2 is gone
+  assert.equal(all.find((a) => a.id === "a-1").title, "Approve this plan?");
+  assert.equal(openAsks(FIX, AFTER).find((a) => a.id === "a-2").title, "Roll the fix today?");
+  const plain = openAsks([{ ...FIX[1], title: undefined }], AFTER)[0];
+  assert.equal(plain.title, "Roll it?");
+});
+
+test("openAsks: a newer ask for the same card and role supersedes; another role does not", () => {
+  const lead = { ...FIX[1], id: "a-9", from: "lead", ts: "2030-01-01T02:10:00Z" };
+  assert.deepEqual(openAsks([...FIX.slice(0, 2), lead], AFTER).map((a) => a.id), ["a-2", "a-9"]);
+});
+
+test("openAsks: a noted line marks the open ask 'note sent' and does not close it", () => {
+  const r = openAsks([...FIX, { ts: "2030-01-01T05:30:00Z", event: "noted", id: "a-5", card: "o/r#13", text: "look at the logs" }], AFTER);
+  assert.equal(r.find((a) => a.id === "a-5").noteSent, true);
+  assert.equal(r.find((a) => a.id === "a-2").noteSent, false);
+});
+
+const grp = () => askGroups(openAsks([
+  FIX[6], FIX[7], FIX[8],
+  { ...FIX[1], id: "b-1", card: "p/q#3", epic: "p/q#2", ts: "2030-01-01T05:50:00Z", title: "Other epic" },
+  { ...FIX[1], id: "b-2", card: "p/q#4", epic: "p/q#2", ts: "2030-01-01T05:10:00Z", kind: "you", title: "Do this yourself" },
+], AFTER));
+
+test("askGroups: one group per epic, the oldest first; merges, then decisions, then do-this-yourself", () => {
+  const g = grp();
+  assert.deepEqual(g.map((x) => x.key), ["o/r#1", "p/q#2"]);
+  assert.deepEqual(g[0].asks.map((a) => a.kind), ["merge", "decide"]); // the batch is one entry
+  assert.deepEqual(g[1].asks.map((a) => a.id), ["b-1", "b-2"]);
+});
+
+test("askGroups: the one-line summary counts by kind and gives the oldest age", () => {
+  const g = grp();
+  assert.equal(g[0].line, "r#1 · 2 merges · 1 decision · oldest 2h");
+  assert.equal(g[1].line, "q#2 · 1 decision · 1 task · oldest 50m");
+});
+
+test("askGroups: an ask with no epic groups under its own card; none gives no groups", () => {
+  const g = askGroups(openAsks([{ ...FIX[1], epic: null }], AFTER));
+  assert.equal(g[0].key, "o/r#10");
+  assert.deepEqual(askGroups([]), []);
+});
+
+test("flatRows: an epic is one row; only the open epic lists its asks; running hides behind one summary row while asks wait", () => {
+  const vm = viewModel({
+    terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "working" }],
+    asksText: [FIX[7], FIX[8], { ...FIX[1], id: "a-9", card: "p/q#4", epic: "p/q#2", ts: "2030-01-01T05:30:00Z" }].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: AFTER,
+  });
+  const keys = (o) => flatRows(vm, o).map((r) => r.key);
+  assert.deepEqual(keys({}).filter((k) => /^(epic|ask|summary)/.test(k)), ["epic:o/r#1", "ask:a-6", "epic:p/q#2", "summary:running"]); // default: the first epic open
+  assert.deepEqual(keys({ openEpic: "p/q#2" }).filter((k) => /^(epic|ask)/.test(k)), ["epic:o/r#1", "epic:p/q#2", "ask:a-9"]);
+  assert.ok(!keys({}).some((k) => k.startsWith("group:") || k === "desk")); // hidden behind the summary
+  assert.ok(keys({ showRun: true }).some((k) => k.startsWith("group:")));
+  assert.ok(flatRows({ ...vm, asks: [], askGroups: [] }).some((r) => r.key === "desk")); // nothing needs you: running comes back in full
+});
+
+test("runSummary: one line for running, stuck and the runner", () => {
+  const vm = viewModel({ terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "blocked" }], eventsText: "", nowMs: NOW, settingsJson: JSON.stringify({ runner: true }) });
+  assert.equal(runSummary(vm), "Running 1 · Stuck 1 · Runner on");
+  assert.equal(runSummary(viewModel({ terminals: [], nowMs: NOW })), "Running 0 · Stuck 0");
+});
+
+// ---- Enter accepts the recommendation ----
+const recAsk = (o = {}) => openAsks([{ ...FIX[4], id: "a-r1", ts: iso(HOUR), kind: "decide", body: "", options: [{ q: 1, key: "a", label: "Hold off" }, { q: 1, key: "b", label: "Roll now (Recommended); then run install.sh" }], ...o }], NOW)[0];
+
+test("recommended: the option marked (Recommended), per question", () => {
+  assert.deepEqual(recommended(recAsk()), { 1: "b" });
+  assert.deepEqual(recommended(recAsk({ options: [{ q: 1, key: "a", label: "x" }] })), {});
+  assert.deepEqual(recommended(recAsk({ options: [{ q: 1, key: "a", label: "x (recommended)" }, { q: 2, key: "c", label: "y (Recommended)" }] })), { 1: "a", 2: "c" });
+});
+
+test("acceptRecommended: a decide ask posts the recommended option with its key", () => {
+  assert.deepEqual(acceptRecommended(recAsk(), null, NOW), { type: "post", text: "1b: Roll now (Recommended); then run install.sh", key: "b" });
+});
+
+test("acceptRecommended: a merge ask arms first, the second Enter posts", () => {
+  const a = recAsk({ kind: "merge", options: [{ q: 1, key: "a", label: "Merge now (Recommended)" }, { q: 1, key: "b", label: "Hold" }] });
+  const first = acceptRecommended(a, null, NOW);
+  assert.equal(first.type, "arm");
+  assert.deepEqual(acceptRecommended(a, first.armed, NOW + 1000), { type: "post", text: "1a: Merge now (Recommended)", key: "a" });
+});
+
+test("acceptRecommended: a many-question ask posts one line per question once each has a recommendation", () => {
+  const o = [{ q: 1, key: "a", label: "yes (Recommended)" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later (Recommended)" }];
+  assert.deepEqual(acceptRecommended(recAsk({ options: o }), null, NOW), { type: "post", text: "1a: yes (Recommended)\n2b: later (Recommended)" });
+  assert.equal(acceptRecommended(recAsk({ options: o.slice(0, 3) }), null, NOW), null);
+});
+
+test("acceptRecommended: nothing recommended, or a you ask, does nothing", () => {
+  assert.equal(acceptRecommended(recAsk({ options: [{ q: 1, key: "a", label: "x" }] }), null, NOW), null);
+  assert.equal(acceptRecommended(recAsk({ kind: "you", options: [] }), null, NOW), null);
+});
+
+test("askView: each option says whether it is the recommended one", () => {
+  const v = askView(recAsk(), {}, null);
+  assert.deepEqual(v.questions[0].options.map((o) => o.rec), [false, true]);
+  assert.equal(v.title, "T4");
+});
+
+// ---- a batched merge ask ----
+const batch = () => openAsks(FIX, AFTER).find((a) => a.id === "a-6");
+
+test("askKeyAction: on a batch, a arms then posts 'all' with key a; b opens the checklist", () => {
+  const b = batch();
+  const first = askKeyAction(b, "a", null, NOW);
+  assert.equal(first.type, "arm");
+  const done = askKeyAction(b, "a", first.armed, NOW + 1000);
+  assert.equal(done.type, "post");
+  assert.equal(done.key, "a");
+  assert.deepEqual(askKeyAction(b, "b", null, NOW), { type: "checklist" });
+});
+
+test("checklistStep: j k move, space toggles, enter sends the chosen PRs with key a, none chosen holds all, escape cancels", () => {
+  const b = batch();
+  let s = { cur: 0, chosen: [] };
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6"]);
+  s = checklistStep(b, s, "j"); assert.equal(s.cur, 1);
+  s = checklistStep(b, s, "j"); assert.equal(s.cur, 1); // stops at the end
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6", "a-7"]);
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6"]);
+  assert.deepEqual(checklistStep(b, s, "enter"), { type: "send", key: "a", only: [1], text: "Merge 1 of 2: o/r#1" });
+  assert.deepEqual(checklistStep(b, { cur: 0, chosen: [] }, "enter"), { type: "send", key: "b", only: [], text: "Hold all 2" });
+  assert.deepEqual(checklistStep(b, s, "escape"), { type: "cancel" });
+});
+
+test("answerArgv: a single-question pick passes --key; a note passes --note; a batch pick passes --only", () => {
+  const a = recAsk();
+  assert.deepEqual(answerArgv(a, "1b: x", { key: "b" }), ["ask", "answer", "a-r1", "--text", "1b: x", "--via", "screen", "--key", "b"]);
+  assert.deepEqual(answerArgv(a, "1b: x", { key: "b", note: "after lunch" }), ["ask", "answer", "a-r1", "--text", "1b: x", "--via", "screen", "--key", "b", "--note", "after lunch"]);
+  assert.deepEqual(answerArgv(batch(), "all", { key: "a", only: [1] }), ["ask", "answer", "a-6", "--text", "all", "--via", "screen", "--key", "a", "--only", "1"]);
+  assert.deepEqual(answerArgv(batch(), "all", { key: "a" }), ["ask", "answer", "a-6", "--text", "all", "--via", "screen", "--key", "a"]);
+});
+
+test("noteArgv: a note alone goes through ask answer --note with no text and no key", () => {
+  assert.deepEqual(noteArgv(recAsk(), "look at the logs"), ["ask", "answer", "a-r1", "--note", "look at the logs", "--via", "screen"]);
+});
+
+// ---- notes ----
+test("noteStep: typing builds the line, enter sends, tab keeps it for the next pick, escape cancels", () => {
+  let s = "";
+  for (const k of ["h", "i", "space", "t", "h", "e", "r", "e", "x", "backspace"]) s = noteStep(s, k).text;
+  assert.equal(s, "hi there");
+  assert.deepEqual(noteStep("hi", "enter"), { type: "send", text: "hi" });
+  assert.deepEqual(noteStep("hi", "tab"), { type: "keep", text: "hi" });
+  assert.deepEqual(noteStep("hi", "escape"), { type: "cancel" });
+  assert.deepEqual(noteStep("  ", "enter"), { type: "cancel" }); // a blank note sends nothing
+  assert.equal(noteStep("hi", "up").text, "hi"); // other named keys are ignored
+});
+
+test("isAskKey: n opens a note on any ask, never an option key", () => {
+  assert.equal(isAskKey(recAsk(), "n", null), true);
+  assert.equal(isAskKey(recAsk({ kind: "you", options: [] }), "n", null), true);
+});
+
+test("footerHint: asks say how to accept, note and open; other rows say how to show the terminal", () => {
+  assert.equal(footerHint("asks"), "↵ accept recommended · n note · v open");
+  assert.equal(footerHint("epic"), "↵ open epic · j k move");
+  assert.equal(footerHint("summary"), "↵ show running · j k move");
+  assert.equal(footerHint("group"), "j k move · ↵ show terminal");
 });

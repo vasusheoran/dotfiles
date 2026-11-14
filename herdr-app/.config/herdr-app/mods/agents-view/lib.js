@@ -11,21 +11,38 @@ export function parseJsonl(text) {
   return out;
 }
 
-// One row per open ask, keyed by its id (a row from before ids has only its url). An ask line (first per key) stays open
-// until a later answered, applied or legacy resumed line with the same key. Oldest first.
+// One row per open ask, keyed by its id (a row from before ids has only its url). The open rule is asks.jq's (claude-plugins; both
+// tests share one fixture): an ask line (first per key) stays open until a later answered, applied or legacy resumed line with the
+// same key, and is superseded by a later ask from the same role on the same card. The rows of a batched merge ask (one per PR, sharing
+// `batch`) are one entry carrying `targets`. Oldest first.
 const askKey = (l) => l.id ?? l.url;
+const batchOf = (l) => l.batch ?? askKey(l);
+const roleOf = (l) => l.from ?? "worker";
+// the question's first line without markup or numbering: the title of a row from before --title
+export const plainTitle = (q) => firstLine(q, 200).replace(/[*_`#]/g, "").replace(/^\s*\d+\.\s+/, "").replace(/^\s*In plain words:\s*/, "").trim();
+
 export function openAsks(lines, nowMs) {
-  const open = new Map();
+  const open = new Map(), seq = [], noted = new Set();
   for (const l of lines) {
     const k = askKey(l);
-    if (l.event === "ask") { if (!open.has(k)) open.set(k, l); }
-    else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) open.delete(k);
+    if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
+    else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) { open.delete(k); noted.delete(k); }
+    else if (k != null && l.event === "noted") noted.add(k);
   }
-  return [...open.values()]
-    .map((l) => ({
-      id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker",
-      options: Array.isArray(l.options) ? l.options : [], kind: l.kind ?? "decide", plan: l.plan ?? null, body: l.body ?? "",
-    }))
+  const live = [...open.values()].filter((l) => !seq.slice(seq.indexOf(l) + 1).some((n) => n.card === l.card && roleOf(n) === roleOf(l) && batchOf(n) !== batchOf(l)));
+  const groups = new Map();
+  for (const l of live) groups.set(batchOf(l), [...(groups.get(batchOf(l)) ?? []), l]);
+  return [...groups.values()]
+    .map((rows) => {
+      const l = rows[0];
+      const targets = rows.length > 1 ? rows.map((r) => ({ id: askKey(r), repo: r.target?.repo, pr: r.target?.pr, head: r.target?.head })) : [];
+      return {
+        id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
+        ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: roleOf(l),
+        options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : Array.isArray(l.options) ? l.options : [],
+        kind: l.kind ?? "decide", plan: l.plan ?? null, body: l.body ?? "", targets, noteSent: noted.has(askKey(l)),
+      };
+    })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
 
@@ -36,18 +53,70 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 // Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
-  let text = null, pick = false;
+  let text = null, pick = false, okey = null;
   if (key === "x" && ask.kind === "you") text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
-  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
+  else if (key === "b" && ask.targets?.length > 1) return { type: "checklist" }; // a batched merge ask: b picks which PRs
+  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; okey = o.key; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
   if (text == null) return armed ? { type: "cancel" } : null;
-  const done = pick ? { type: "pick", q, text } : { type: "post", text };
+  const done = pick ? { type: "pick", q, text } : { type: "post", text, ...(okey ? { key: okey } : {}) };
   if (!NEEDS_SECOND_KEY.has(ask.kind)) return done;
   if (armed && armed.id === ask.id && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
   return { type: "arm", armed: { id: ask.id, key, q, at: nowMs }, body: ask.body };
 }
 
 const questionsOf = (ask) => [...new Set(ask.options.map((o) => o.q))].sort((a, b) => a - b);
+
+// The option marked "(Recommended)" of each question: { q: key }.
+export function recommended(ask) {
+  const out = {};
+  for (const o of ask.options) if (/\(recommended\)/i.test(o.label) && out[o.q] == null) out[o.q] = o.key;
+  return out;
+}
+
+// Enter on an ask: pick the recommended option of each question. A merge, roll or money ask still needs the second press.
+// Returns what askKeyAction returns ({ type: "post" | "arm" | ... }), or null when there is nothing recommended to accept.
+export function acceptRecommended(ask, armed, nowMs) {
+  const rec = recommended(ask), qs = questionsOf(ask);
+  if (!qs.length || ask.kind === "you") return null;
+  if (qs.length === 1) return rec[qs[0]] ? askKeyAction(ask, rec[qs[0]], armed, nowMs, qs[0]) : null;
+  if (!qs.every((q) => rec[q])) return null;
+  if (NEEDS_SECOND_KEY.has(ask.kind) && !(armed && armed.id === ask.id && armed.key === "enter" && nowMs - armed.at <= DOUBLE_PRESS_MS)) {
+    return { type: "arm", armed: { id: ask.id, key: "enter", q: 0, at: nowMs }, body: ask.body };
+  }
+  return { type: "post", text: qs.map((q) => `${q}${rec[q]}: ${ask.options.find((o) => o.q === q && o.key === rec[q]).label}`).join("\n") };
+}
+
+// The checklist of a batched merge ask: state { cur, chosen: [target ids] }. j k move, space toggles, enter sends, escape cancels.
+// A step that changes the list returns the new state; enter returns { type: "send", key, only, text }, escape { type: "cancel" }.
+export function checklistStep(ask, s, key) {
+  const ts = ask.targets, last = ts.length - 1;
+  if (key === "escape") return { type: "cancel" };
+  if (key === "j" || key === "down") return { ...s, cur: Math.min(last, s.cur + 1) };
+  if (key === "k" || key === "up") return { ...s, cur: Math.max(0, s.cur - 1) };
+  if (key === "space") {
+    const id = ts[s.cur].id, on = new Set(s.chosen);
+    on.has(id) ? on.delete(id) : on.add(id);
+    return { ...s, chosen: ts.filter((t) => on.has(t.id)).map((t) => t.id) };
+  }
+  if (key === "enter") {
+    const picked = ts.filter((t) => s.chosen.includes(t.id));
+    return picked.length
+      ? { type: "send", key: "a", only: picked.map((t) => t.pr), text: `Merge ${picked.length} of ${ts.length}: ${picked.map((t) => `${t.repo}#${t.pr}`).join(", ")}` }
+      : { type: "send", key: "b", only: [], text: `Hold all ${ts.length}` };
+  }
+  return s;
+}
+
+// The one-line note box. A key returns { text } (still typing), { type: "send", text } (enter: sent alone),
+// { type: "keep", text } (tab: held for the next pick) or { type: "cancel" }.
+export function noteStep(text, key) {
+  if (key === "escape") return { type: "cancel" };
+  if (key === "enter" || key === "tab") return text.trim() ? { type: key === "enter" ? "send" : "keep", text: text.trim() } : { type: "cancel" };
+  if (key === "backspace") return { text: text.slice(0, -1) };
+  if (key === "space") return { text: `${text} ` };
+  return { text: key.length === 1 ? text + key : text };
+}
 
 // One comment for a multi-question ask: a line per question, once every question has a pick ({ q: text }); else null.
 export function composeAnswer(ask, picks) {
@@ -57,14 +126,18 @@ export function composeAnswer(ask, picks) {
 
 export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ? `${picks[q].split(":")[0]} ✓` : `${q} ?`)).join(" · ");
 
-// Whether a key belongs to the selected ask: option letters, x (you asks), v, a question digit, or any single key while an answer is armed
-// (it cancels). j, k and the arrows always navigate, so they never count.
+// Whether a key belongs to the selected ask: option letters, x (you asks), v, n (a note), a question digit, or any single key while an
+// answer is armed (it cancels). j, k and the arrows always navigate, so they never count.
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
+// { key } is the picked option (single-question asks: merge-green reads it), { note } rides with the pick, { only } is a batch's chosen PR numbers.
 const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);
-export const answerArgv = (ask, text) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen"];
+export const answerArgv = (ask, text, { key, note, only } = {}) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen",
+  ...(key ? ["--key", key] : []), ...(note ? ["--note", note] : []), ...(only?.length ? ["--only", only.join(",")] : [])];
+// A note alone: no text, no key, so it answers nothing.
+export const noteArgv = (ask, text) => ["ask", "answer", askId(ask), "--note", text, "--via", "screen"];
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
@@ -103,12 +176,14 @@ export function askView(ask, picks, armed) {
   const titles = questionTitles(ask.body);
   const qs = questionsOf(ask);
   return {
-    card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: firstLine(ask.question, 200),
-    body: [ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
+    card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: ask.title, noteSent: ask.noteSent,
+    // with a title of its own, the whole question is body; without one the first line is the title and the rest is body
+    body: [ask.titled ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
       .map((x) => x.trim()).filter(Boolean).join("\n"),
+    targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}` })),
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
-      key: o.key, label: o.label, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
+      key: o.key, label: o.label, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
       armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key,
     })) })),
     status: qs.length > 1 ? `${qs.filter((q) => picks?.[q]).length} of ${qs.length} picked` : "",
@@ -248,19 +323,49 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  const settings = parse(settingsJson);
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, askGroups: askGroups(asks), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
-// Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.
-// A terminal in STUCK and in its epic group is selectable in both.
-export const flatRows = (vm) => [
-  ...vm.asks.map((a) => ({ key: `ask:${a.id}`, section: "asks", address: null, id: a.id, row: a })),
-  ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, id: null, row: r }))),
-  ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, id: null, row: s })),
-  { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
-  ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, id: null, row: s })),
-  ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, id: null, row: o })),
-];
+// The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
+// the oldest ask first. `line` is the group's one-line summary. A batched merge ask counts one merge per PR.
+const kindRank = (a) => (a.kind === "merge" ? 0 : a.kind === "you" ? 2 : 1);
+export function askGroups(asks) {
+  const by = new Map();
+  for (const a of asks) by.set(a.epic ?? a.card, [...(by.get(a.epic ?? a.card) ?? []), a]);
+  return [...by].map(([key, list]) => {
+    const sorted = [...list].sort((a, b) => kindRank(a) - kindRank(b) || b.ageMs - a.ageMs);
+    const n = (r) => sorted.filter((a) => kindRank(a) === r).reduce((s, a) => s + (r === 0 ? Math.max(1, a.targets.length) : 1), 0);
+    const part = (c, w) => (c ? `${c} ${w}${c === 1 ? "" : "s"}` : "");
+    const oldestMs = Math.max(...sorted.map((a) => a.ageMs));
+    return { key, asks: sorted, oldestMs, line: [shortCard(key), ...[part(n(0), "merge"), part(n(1), "decision"), part(n(2), "task")].filter(Boolean), `oldest ${ageText(oldestMs)}`].join(" · ") };
+  }).sort((a, b) => b.oldestMs - a.oldestMs);
+}
+
+// The running sections as one line, for while something needs you.
+export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length}`, `Stuck ${vm.stuck.length}`, vm.runnerOn == null ? "" : `Runner ${vm.runnerOn ? "on" : "off"}`].filter(Boolean).join(" · ");
+
+// Every selectable row in display order: one row per epic with asks (the open epic lists its asks under it), the running summary,
+// then running (epics, then side jobs), the desk and stuck, then others. While asks wait, running, the desk and stuck show only when
+// `showRun` is set. A terminal in STUCK and in its epic group is selectable in both.
+export function flatRows(vm, { openEpic, showRun } = {}) {
+  const groups = vm.askGroups ?? [], open = groups.find((g) => g.key === openEpic) ?? groups[0], waiting = vm.asks.length > 0;
+  return [
+    ...groups.flatMap((g) => [{ key: `epic:${g.key}`, section: "epic", address: null, id: null, row: g },
+      ...(g === open ? g.asks.map((a) => ({ key: `ask:${a.id}`, section: "asks", address: null, id: a.id, row: a })) : [])]),
+    ...(waiting ? [{ key: "summary:running", section: "summary", address: null, id: null, row: { line: runSummary(vm) } }] : []),
+    ...(waiting && !showRun ? [] : [
+      ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, id: null, row: r }))),
+      ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, id: null, row: s })),
+      { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
+      ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, id: null, row: s })),
+    ]),
+    ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, id: null, row: o })),
+  ];
+}
+
+// The header's key hint for the selected row.
+export const footerHint = (section) => ({ asks: "↵ accept recommended · n note · v open", epic: "↵ open epic · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
 // Enter on a row: show its terminal in the right-hand pane, or start the desk when there is none. Asks are not shown.
 export function selectTarget(r, cwd) {
