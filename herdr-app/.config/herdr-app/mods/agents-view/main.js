@@ -69,13 +69,13 @@ export default class AgentsView extends View {
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
       const text = composeAnswer(a, picks);
       if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
-      r = { type: "post", text };
+      r = { type: "post", text }; // composed from several picks: no key
     }
     if (r.type === "post") {
       if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); } // screenshots never answer a real ask
       if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
       this.hidden.add(a.id);
-      perform({ type: "post", argv: answerArgv(a, r.text) }, { run, exec, pane: null }).then((x) => {
+      perform({ type: "post", argv: answerArgv(a, r.text, r.key) }, { run, exec, pane: null }).then((x) => {
         if (x?.code === 0) this.note = `answered ${shortCard(a.card)}`; else { this.hidden.delete(a.id); this.note = "answer failed"; }
         cx.notify();
       });

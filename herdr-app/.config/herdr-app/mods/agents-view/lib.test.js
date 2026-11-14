@@ -335,7 +335,7 @@ test("openAsks: an answered line closes the ask, and options, kind, plan and bod
 
 test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at once", () => {
   const [a] = openAsks([rich()], NOW);
-  assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off" });
+  assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off", key: "b" });
 });
 
 test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key does nothing", () => {
@@ -363,7 +363,7 @@ for (const kind of ["merge", "roll", "money"]) {
     const first = askKeyAction(a, "a", null, NOW);
     assert.equal(first.type, "arm");
     assert.equal(first.body, "included: PR 9");
-    assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 9_000), { type: "post", text: "1a: merge (Recommended)" });
+    assert.deepEqual(askKeyAction(a, "a", first.armed, NOW + 9_000), { type: "post", text: "1a: merge (Recommended)", key: "a" });
     assert.equal(askKeyAction(a, "a", first.armed, NOW + 11_000).type, "arm"); // too late: arms again
     assert.deepEqual(askKeyAction(a, "b", first.armed, NOW + 1_000).type, "arm"); // a different option arms that one
     assert.deepEqual(askKeyAction(a, "z", first.armed, NOW + 1_000), { type: "cancel" }); // any other key cancels
@@ -381,6 +381,16 @@ test("askKeyAction: x on a merge ask is its option key, a second-key action, nev
 
 test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
   assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: x"), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: x", "--via", "screen"]);
+});
+
+test("answerArgv: a picked option's key goes as --key, so the hook can tell a Merge from free text", () => {
+  assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: Merge", "a"), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: Merge", "--via", "screen", "--key", "a"]);
+  assert.ok(!answerArgv({ id: "a-20261114080000-1a2b3c" }, "x", undefined).includes("--key"));
+});
+
+test("askKeyAction: a pick in a many-question ask carries no key (the answer is composed from several picks)", () => {
+  const [a] = openAsks([rich()], NOW);
+  assert.equal("key" in askKeyAction({ ...a, options: [...a.options, { q: 2, key: "a", label: "now" }] }, "a", null, NOW), false);
 });
 
 test("answerArgv: a legacy row without an id answers as legacy-<comment id>", () => {
