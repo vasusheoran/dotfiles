@@ -11,17 +11,42 @@ export function parseJsonl(text) {
   return out;
 }
 
-// One row per open url: an ask line (first per url) stays open until a later resumed line with the same url. Oldest first.
+// One row per open url: an ask line (first per url) stays open until a later resumed or answered line with the same url. Oldest first.
 export function openAsks(lines, nowMs) {
   const open = new Map();
   for (const l of lines) {
     if (l.event === "ask" && !open.has(l.url)) open.set(l.url, l);
-    else if (l.event === "resumed") open.delete(l.url);
+    else if (l.event === "resumed" || l.event === "answered") open.delete(l.url);
   }
   return [...open.values()]
-    .map((l) => ({ card: l.card, epic: l.epic ?? null, url: l.url, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker" }))
+    .map((l) => ({
+      card: l.card, epic: l.epic ?? null, url: l.url, question: l.question, ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: l.from ?? "worker",
+      options: Array.isArray(l.options) ? l.options : [], kind: l.kind ?? "decide", plan: l.plan ?? null, body: l.body ?? "",
+    }))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
+
+export const DOUBLE_PRESS_MS = 10_000;
+const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
+
+// What a key does on an open ask. `armed` is the pending first press ({ url, key, at }) or null.
+// Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
+export function askKeyAction(ask, key, armed, nowMs) {
+  let text = null;
+  if (key === "x") text = "Done.";
+  else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
+  else { const o = ask.options.find((o) => o.key === key); if (o) text = `${o.q}${o.key}: ${o.label}`; }
+  if (text == null) return armed ? { type: "cancel" } : null;
+  if (!NEEDS_SECOND_KEY.has(ask.kind)) return { type: "post", text };
+  if (armed && armed.url === ask.url && armed.key === key && nowMs - armed.at <= DOUBLE_PRESS_MS) return { type: "post", text };
+  return { type: "arm", armed: { url: ask.url, key, at: nowMs }, body: ask.body };
+}
+
+// The `work` arguments that post an answer to an ask; the comment id is the url's last number.
+export const answerArgv = (ask, text) => ["ask", "answer", ask.card, "--question", String(ask.url).match(/(\d+)$/)?.[1] ?? "", "--text", text];
+
+// The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
+export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
 
 export function usageText(u) {
   const find = (kind) => u?.limits?.find?.((l) => l.kind === kind);
@@ -100,8 +125,17 @@ export function epicGroups(terminals) {
   }));
 }
 
+export const sideJobs = (terminals) => terminals
+  .filter((t) => t.live && t.labels.role === "side" && !t.labels.epic)
+  .map((t) => ({ name: label(t), address: t.address, card: firstCard(t.labels.card), model: t.labels.model ?? null, state: t.state ?? "starting" }));
+
+export function deskRow(terminals) {
+  const d = terminals.find((t) => t.live && t.labels.role === "desk");
+  return d ? { name: label(d), address: d.address, state: d.state ?? "starting" } : { name: "desk", address: null, state: "not started" };
+}
+
 export const otherSessions = (terminals) => terminals
-  .filter((t) => t.live && t.state && !t.labels.epic)
+  .filter((t) => t.live && t.state && !t.labels.epic && !["side", "desk"].includes(t.labels.role))
   .map((t) => ({ name: label(t), address: t.address, where: t.where, state: t.state }));
 
 export function ageText(ms) {
@@ -137,13 +171,36 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), others: otherSessions(ts) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts) };
 }
 
-// Every selectable row in display order. A terminal in STUCK and in its epic group is selectable in both.
+// Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.
+// A terminal in STUCK and in its epic group is selectable in both.
 export const flatRows = (vm) => [
   ...vm.asks.map((a) => ({ key: `ask:${a.url}`, section: "asks", address: null, url: a.url, row: a })),
-  ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, url: null, row: s })),
   ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, url: null, row: r }))),
+  ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, url: null, row: s })),
+  { key: "desk", section: "desk", address: vm.desk.address, url: null, row: vm.desk },
+  ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, url: null, row: s })),
   ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, url: null, row: o })),
 ];
+
+// Enter on a row: show its terminal in the right-hand pane, or start the desk when there is none. Asks are not shown.
+export function selectTarget(r, cwd) {
+  if (r.address) return { show: r.address };
+  if (r.section === "desk") return { start: ["run", "--bg", "--json", "--name", "desk", "--no-parent", "--label", "role=desk", "--cwd", cwd, "--", "claude"] };
+  return null;
+}
+
+// Runs one action through io = { run, exec, pane }. Nothing happens without a right-hand pane to show in.
+export async function perform(a, io) {
+  if (a.type === "post") return io.exec("work", a.argv);
+  if (a.type === "open") return io.exec("open", [a.target]);
+  if (!io.pane) return;
+  if (a.type === "show") return io.run("terminal.show", { terminal: a.terminal, pane: io.pane });
+  if (a.type === "start-desk") {
+    const r = await io.exec("hc", a.argv);
+    let address = null; try { address = JSON.parse(r.stdout).address; } catch { /* not started */ }
+    if (address) io.run("terminal.show", { terminal: address, pane: io.pane });
+  }
+}

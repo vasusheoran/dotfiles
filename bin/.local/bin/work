@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# work <script> [args]: run the productivity plugin's scripts/<script>.sh from wherever it is installed now.
+# The path is read at run time, so the command survives a plugin update.
+set -u
+script=${1:-}; [[ $script =~ ^[a-z0-9_-]+$ ]] || { echo "usage: work <script> [args]" >&2; exit 2; }
+shift
+root=$(jq -r '.plugins["productivity@vasusheoran-plugins"][0].installPath // empty' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
+[ -n "$root" ] || { echo "work: productivity plugin is not installed" >&2; exit 1; }
+[ -f "$root/scripts/$script.sh" ] || { echo "work: no such script: $script" >&2; exit 2; }
+exec bash "$root/scripts/$script.sh" "$@"
