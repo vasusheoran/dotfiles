@@ -236,7 +236,7 @@ export function runnerLine(text) {
   if (!s || typeof s !== "object" || Array.isArray(s)) return null;
   const n = s.worker_limit ?? 4, r = { verifier: true, codex: true, agy: false, ...s.reviewers };
   const on = Object.keys(r).filter((k) => r[k]);
-  return `Runner ${s.runner ? "on" : "off"} · ${n} worker${n === 1 ? "" : "s"} · reviewers: ${on.join(", ") || "none"}`;
+  return `Runner setting: ${s.runner ? "on" : "off"} · ${n} worker${n === 1 ? "" : "s"} · reviewers: ${on.join(", ") || "none"}`;
 }
 
 const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");

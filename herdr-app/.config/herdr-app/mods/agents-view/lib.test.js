@@ -654,15 +654,15 @@ test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
 
 test("runnerLine: runner state, worker limit and the reviewers that are on", () => {
   const line = (o) => runnerLine(JSON.stringify(o));
-  assert.equal(line({ runner: true, worker_limit: 3, reviewers: { verifier: true, codex: false, agy: false } }), "Runner on · 3 workers · reviewers: verifier");
-  assert.equal(line({ runner: false, worker_limit: 4, reviewers: { verifier: true, codex: true } }), "Runner off · 4 workers · reviewers: verifier, codex");
-  assert.equal(line({ runner: false, worker_limit: 1, reviewers: { verifier: false, codex: false, agy: true } }), "Runner off · 1 worker · reviewers: agy");
-  assert.equal(line({ reviewers: { verifier: false, codex: false, agy: false } }), "Runner off · 4 workers · reviewers: none");
+  assert.equal(line({ runner: true, worker_limit: 3, reviewers: { verifier: true, codex: false, agy: false } }), "Runner setting: on · 3 workers · reviewers: verifier");
+  assert.equal(line({ runner: false, worker_limit: 4, reviewers: { verifier: true, codex: true } }), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(line({ runner: false, worker_limit: 1, reviewers: { verifier: false, codex: false, agy: true } }), "Runner setting: off · 1 worker · reviewers: agy");
+  assert.equal(line({ reviewers: { verifier: false, codex: false, agy: false } }), "Runner setting: off · 4 workers · reviewers: none");
 });
 
 test("runnerLine: keys the file lacks read as the settings defaults; projects and epics are ignored", () => {
-  assert.equal(runnerLine("{}"), "Runner off · 4 workers · reviewers: verifier, codex");
-  assert.equal(runnerLine(JSON.stringify({ version: 1, projects: { "a/b": {} }, epics: ["a/b#1"], reviewers: { codex: false } })), "Runner off · 4 workers · reviewers: verifier");
+  assert.equal(runnerLine("{}"), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(runnerLine(JSON.stringify({ version: 1, projects: { "a/b": {} }, epics: ["a/b#1"], reviewers: { codex: false } })), "Runner setting: off · 4 workers · reviewers: verifier");
 });
 
 test("runnerLine: no file or a broken one shows no line", () => {
@@ -673,6 +673,6 @@ test("runnerLine: no file or a broken one shows no line", () => {
 
 test("viewModel: the runner line comes from the settings file", () => {
   const vm = viewModel({ terminals: [], nowMs: NOW, settingsJson: JSON.stringify({ runner: true, worker_limit: 2 }) });
-  assert.equal(vm.runnerLine, "Runner on · 2 workers · reviewers: verifier, codex");
+  assert.equal(vm.runnerLine, "Runner setting: on · 2 workers · reviewers: verifier, codex");
   assert.equal(viewModel({ terminals: [], nowMs: NOW }).runnerLine, null);
 });
