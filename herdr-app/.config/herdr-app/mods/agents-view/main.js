@@ -1,6 +1,6 @@
 // Agents view: leads, workers, questions waiting on the owner, and what is stuck. Reads terminals(), asks.jsonl,
 // events.jsonl, the runner's up-next.json and the usage file; no network. The logic is in lib.js (tested with node --test); this file reads, draws and handles keys.
-// A side panel (the `agents` block of layouts/main-agents.json, opened by the Agents button of the tabs-agents mod): Enter shows the
+// A side panel (the `agents-view` block of layouts/main-agents.json, opened by the Agents button of the tabs-agents mod): Enter shows the
 // selected terminal in the main pane (terminal.show) and a key on an ask posts the answer through `work ask answer`.
 // When ~/.config/herdr-app/agents-view-fixture/ exists it is read instead of the live run files (screenshots only).
 import { View, div } from "gpui-kit";
@@ -28,12 +28,15 @@ export default class AgentsView extends View {
   }
 
   async read(cx) {
-    const fixture = (await exec("test", ["-d", `${home()}/.config/herdr-app/agents-view-fixture`]).catch(() => null))?.code === 0;
-    this.fixture = fixture;
-    const f = runFiles(home(), fixture);
-    const [asks, events, usage, upNext] = await Promise.all([f.asks, f.events, f.usage, f.upNext].map((p) => readTextFile(p).catch(() => null)));
+    // the fixture folder wins when it holds any of the four files; one read of each, no subprocess
+    const read1 = (p) => readTextFile(p).catch(() => null);
+    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext].map(read1));
+    this.fixture = got.some((x) => x != null);
+    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext].map(read1)); }
+    const [asks, events, usage, upNext] = got;
     this.files = { asks, events, usage, upNext };
     if (this.armed && Date.now() - this.armed.at > 10_000) this.armed = null;
+    this.note = ""; // a note lasts one refresh, so the usage warning comes back
     this.deskIfGone();
     cx.notify();
   }
@@ -98,7 +101,7 @@ export default class AgentsView extends View {
   }
 
   open(r) {
-    if (!r || r.section === "asks") return;
+    if (!r || r.section === "asks" || this.fixture) return; // fixture rows are not real terminals
     const t = selectTarget(r, `${home()}/workspace/vasu`);
     if (t?.show) this.show(t.show);
     else if (t?.start) perform({ type: "start-desk", argv: t.start }, { run, exec, pane: this.pane() });
@@ -122,7 +125,7 @@ export default class AgentsView extends View {
     const a = r.row, sel = r.key === this.sel;
     const v = askView(a, this.picks.get(a.id) ?? {}, this.armed);
     const el = v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => { this.sel = r.key; this.q = 1; })
+      .on_click(() => { if (this.sel !== r.key) { this.sel = r.key; this.q = 1; } })
       .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, v.card)).child(sans(12, t.muted, v.kind)).child(div().flex_1()).child(mono(12, t.muted, v.age)))
       .child(sans(13, t.foreground, v.title).w_full().when(!sel, (e) => e.truncate()));
     if (!sel) return el;
@@ -157,11 +160,12 @@ export default class AgentsView extends View {
     const at = (section, i) => rows.filter((r) => r.section === section)[i];
     const tone = (s) => (s === "blocked" || s === "error" ? t.blocked : s === "working" ? t.working : s === "done" ? t.done : t.dim);
 
-    const running = vm.groups.length + vm.sides.length;
+    const runCount = vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length;
     const body = [
       this.section(t, "Needs you", vm.asks.length, vm.asksOld),
       ...(vm.asks.length ? vm.asks.map((a, i) => this.ask(t, at("asks", i))) : [this.empty(t, "No questions waiting")]),
-      this.section(t, "Running", vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length + 1, false),
+      this.section(t, "Running", runCount, false),
+      ...(runCount ? [] : [this.empty(t, "Nothing running")]),
       ...vm.groups.flatMap((g) => {
         const first = rows.findIndex((r) => r.section === "group" && r.address === g.rows[0].address);
         return [this.label(t, g.epic), ...g.rows.map((r, i) => this.line(t, rows[first + i], [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state)))];
