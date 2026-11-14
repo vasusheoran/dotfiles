@@ -37,7 +37,7 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null, pick = false;
-  if (key === "x") text = "Done.";
+  if (key === "x" && ask.kind === "you") text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
   else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
   if (text == null) return armed ? { type: "cancel" } : null;
@@ -57,10 +57,10 @@ export function composeAnswer(ask, picks) {
 
 export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ? `${picks[q].split(":")[0]} ✓` : `${q} ?`)).join(" · ");
 
-// Whether a key belongs to the selected ask: option letters, x, v, a question digit, or any single key while an answer is armed
+// Whether a key belongs to the selected ask: option letters, x (you asks), v, a question digit, or any single key while an answer is armed
 // (it cancels). j, k and the arrows always navigate, so they never count.
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || k === "x" || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);
@@ -71,9 +71,9 @@ export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.
 
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
-  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, stuck: `${d}/stuck.json` }; }
+  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, stuck: `${d}/stuck.json` }; }
   const d = `${home}/handoffs/run`;
-  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, stuck: `${d}/stuck.json` };
+  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, stuck: `${d}/stuck.json` };
 }
 
 export function firstLine(text, max) {
@@ -245,18 +245,27 @@ export function upNextLine(up, nowMs) {
   return what ? `Up next: ${num(up.epic)} → card ${num(up.card)} · ${what}` : null;
 }
 
+// The run settings as one line: runner on or off, worker limit, the reviewers that are on. Defaults match run-settings.sh.
+export function runnerLine(text) {
+  const s = parse(text);
+  if (!s || typeof s !== "object" || Array.isArray(s)) return null;
+  const n = s.worker_limit ?? 4, r = { verifier: true, codex: true, agy: false, ...s.reviewers };
+  const on = Object.keys(r).filter((k) => r[k]);
+  return `Runner setting: ${s.runner ? "on" : "off"} · ${n} worker${n === 1 ? "" : "s"} · reviewers: ${on.join(", ") || "none"}`;
+}
+
 const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
 const mergeStuck = (own, flagged) => [...own.filter((r) => !flagged.some((f) => f.name === r.name)), ...flagged];
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, stuckJson, nowMs, hiddenIds }) {
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, stuckJson, nowMs, hiddenIds }) {
   const ts = (terminals ?? []).map(normalize);
   const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenIds?.has(a.id));
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), asks, stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.

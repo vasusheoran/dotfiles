@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
-  runFiles, askView, questionTitles, firstLine, planRef,
+  runFiles, askView, questionTitles, firstLine, planRef, runnerLine,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -237,7 +237,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -373,13 +373,23 @@ test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at o
   assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off" });
 });
 
-test("askKeyAction: x posts Done., v opens the plan, an unknown key does nothing", () => {
-  const [a] = openAsks([rich({ plan: "https://p.test/x" })], NOW);
+test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key does nothing", () => {
+  const [a] = openAsks([rich({ kind: "you", options: [], plan: "https://p.test/x" })], NOW);
   assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
   assert.deepEqual(askKeyAction(a, "v", null, NOW), { type: "open", target: "https://p.test/x" });
   assert.equal(askKeyAction(a, "z", null, NOW), null);
   const [noPlan] = openAsks([rich()], NOW);
   assert.equal(askKeyAction(noPlan, "v", null, NOW), null);
+});
+
+test("askKeyAction: on a decide ask x is an option key when the ask has one, else nothing", () => {
+  const withX = [...opts, { q: 1, key: "x", label: "Merge it" }];
+  const [a] = openAsks([rich({ options: withX })], NOW);
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it" });
+  const [b] = openAsks([rich()], NOW);
+  assert.equal(askKeyAction(b, "x", null, NOW), null);
+  assert.equal(isAskKey(b, "x", null), false);
+  assert.equal(isAskKey(a, "x", null), true);
 });
 
 for (const kind of ["merge", "roll", "money"]) {
@@ -395,11 +405,13 @@ for (const kind of ["merge", "roll", "money"]) {
   });
 }
 
-test("askKeyAction: x on a merge ask is also a second-key action", () => {
-  const [a] = openAsks([rich({ kind: "merge" })], NOW);
+test("askKeyAction: x on a merge ask is its option key, a second-key action, never Done.", () => {
+  const [a] = openAsks([rich({ kind: "merge", options: [{ q: 1, key: "x", label: "Merge it" }, { q: 1, key: "b", label: "Hold" }] })], NOW);
   const first = askKeyAction(a, "x", null, NOW);
   assert.equal(first.type, "arm");
-  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "Done." });
+  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it" });
+  const [none] = openAsks([rich({ kind: "merge" })], NOW);
+  assert.equal(askKeyAction(none, "x", null, NOW), null);
 });
 
 test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
@@ -515,7 +527,7 @@ test("main-agents layout: agents-view is a child of the panel-body stack, the ta
 const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later" }];
 
 test("askKeyAction: in a 2-question ask the letter picks within the selected question", () => {
-  const [a] = openAsks([rich({ options: two })], NOW);
+  const [a] = openAsks([rich({ kind: "you", options: two })], NOW);
   assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "pick", q: 1, text: "1a: yes" });
   assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "pick", q: 2, text: "2a: now" });
   assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "pick", q: 2, text: "2b: later" });
@@ -531,7 +543,7 @@ test("askKeyAction: a second press arms per question", () => {
 });
 
 test("isAskKey: option letters, x, v and question digits; navigation keys never, even while armed", () => {
-  const [a] = openAsks([rich({ options: two })], NOW);
+  const [a] = openAsks([rich({ kind: "you", options: two })], NOW);
   for (const k of ["a", "b", "x", "v", "1", "2"]) assert.equal(isAskKey(a, k, null), true, k);
   for (const k of ["j", "k", "up", "down", "enter", "escape"]) assert.equal(isAskKey(a, k, { id: a.id, key: "a", at: NOW }), false, k);
   assert.equal(isAskKey(a, "3", null), false);
@@ -563,8 +575,8 @@ test("picksText: shows each question's pick or a question mark", () => {
 // ---- side panel (kuchbhi#1058) ----
 
 test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", stuck: "/h/handoffs/run/stuck.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", stuck: "/h/handoffs/run/stuck.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
@@ -685,4 +697,29 @@ test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
   assert.deepEqual(askKeyAction(f, "v", null, NOW), { type: "open", target: "/h/plan.html" });
   const [p] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
   assert.deepEqual(askKeyAction(p, "v", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
+});
+
+test("runnerLine: runner state, worker limit and the reviewers that are on", () => {
+  const line = (o) => runnerLine(JSON.stringify(o));
+  assert.equal(line({ runner: true, worker_limit: 3, reviewers: { verifier: true, codex: false, agy: false } }), "Runner setting: on · 3 workers · reviewers: verifier");
+  assert.equal(line({ runner: false, worker_limit: 4, reviewers: { verifier: true, codex: true } }), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(line({ runner: false, worker_limit: 1, reviewers: { verifier: false, codex: false, agy: true } }), "Runner setting: off · 1 worker · reviewers: agy");
+  assert.equal(line({ reviewers: { verifier: false, codex: false, agy: false } }), "Runner setting: off · 4 workers · reviewers: none");
+});
+
+test("runnerLine: keys the file lacks read as the settings defaults; projects and epics are ignored", () => {
+  assert.equal(runnerLine("{}"), "Runner setting: off · 4 workers · reviewers: verifier, codex");
+  assert.equal(runnerLine(JSON.stringify({ version: 1, projects: { "a/b": {} }, epics: ["a/b#1"], reviewers: { codex: false } })), "Runner setting: off · 4 workers · reviewers: verifier");
+});
+
+test("runnerLine: no file or a broken one shows no line", () => {
+  assert.equal(runnerLine(null), null);
+  assert.equal(runnerLine("{broken"), null);
+  assert.equal(runnerLine("[1]"), null);
+});
+
+test("viewModel: the runner line comes from the settings file", () => {
+  const vm = viewModel({ terminals: [], nowMs: NOW, settingsJson: JSON.stringify({ runner: true, worker_limit: 2 }) });
+  assert.equal(vm.runnerLine, "Runner setting: on · 2 workers · reviewers: verifier, codex");
+  assert.equal(viewModel({ terminals: [], nowMs: NOW }).runnerLine, null);
 });
