@@ -13,15 +13,16 @@ export function parseJsonl(text) {
 
 // One row per open ask, keyed by its id (a row from before ids has only its url). The open rule is asks.jq's (claude-plugins; both
 // tests share one fixture): an ask line (first per key) stays open until a later answered, applied or legacy resumed line with the
-// same key, and is superseded by a later ask from the same role on the same card. The rows of a batched merge ask (one per PR, sharing
+// same key, and is superseded by a later ask of the same kind from the same role on the same card (a merge ask: for the same PR). The rows of a batched merge ask (one per PR, sharing
 // `batch`) are one entry carrying `targets`. Oldest first.
 const askKey = (l) => l.id ?? l.url;
 const batchOf = (l) => l.batch ?? askKey(l);
 const roleOf = (l) => l.from ?? "worker";
+const sameTarget = (a, b) => String(a.target?.repo ?? "").toLowerCase() === String(b.target?.repo ?? "").toLowerCase() && a.target?.pr === b.target?.pr;
 // the question's first line without markup or numbering: the title of a row from before --title
 export const plainTitle = (q) => firstLine(q, 200).replace(/[*_`#]/g, "").replace(/^\s*\d+\.\s+/, "").replace(/^\s*In plain words:\s*/, "").trim();
 
-export function openAsks(lines, nowMs) {
+export function openAsks(lines, nowMs, closed = []) {
   const open = new Map(), seq = [], noted = new Set();
   for (const l of lines) {
     const k = askKey(l);
@@ -29,7 +30,8 @@ export function openAsks(lines, nowMs) {
     else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) { open.delete(k); noted.delete(k); }
     else if (k != null && l.event === "noted") noted.add(k);
   }
-  const live = [...open.values()].filter((l) => !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && batchOf(n) !== batchOf(l)));
+  const live = [...open.values()].filter((l) => !closed.includes(l.card)
+    && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))));
   const groups = new Map();
   for (const l of live) groups.set(batchOf(l), [...(groups.get(batchOf(l)) ?? []), l]);
   return [...groups.values()]
@@ -144,9 +146,9 @@ export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.
 
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
-  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json` }; }
+  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json` }; }
   const d = `${home}/handoffs/run`;
-  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json` };
+  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json` };
 }
 
 export function firstLine(text, max) {
@@ -178,7 +180,7 @@ export function askView(ask, picks, armed) {
   return {
     card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: ask.title, noteSent: ask.noteSent,
     // with a title of its own, the whole question is body; without one the first line is the title and the rest is body
-    body: [ask.titled ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
+    body: [ask.titled && ask.question.trim() !== ask.title ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
       .map((x) => x.trim()).filter(Boolean).join("\n"),
     targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}` })),
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
@@ -317,20 +319,22 @@ export function runnerLine(text) {
 const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, nowMs, hiddenIds }) {
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, nowMs, hiddenIds }) {
   const ts = (terminals ?? []).map(normalize);
-  const asks = openAsks(parseJsonl(asksText), nowMs).filter((a) => !hiddenIds?.has(a.id));
+  const cc = parse(closedJson);
+  const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
+  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id));
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, askGroups: askGroups(asks), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, askGroups: askGroups(asks, titles), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
 // the oldest ask first. `line` is the group's one-line summary. A batched merge ask counts one merge per PR.
 const kindRank = (a) => (a.kind === "merge" ? 0 : a.kind === "you" ? 2 : 1);
-export function askGroups(asks) {
+export function askGroups(asks, titles = {}) {
   const by = new Map();
   for (const a of asks) by.set(a.epic ?? a.card, [...(by.get(a.epic ?? a.card) ?? []), a]);
   return [...by].map(([key, list]) => {
@@ -338,11 +342,14 @@ export function askGroups(asks) {
     const n = (r) => sorted.filter((a) => kindRank(a) === r).reduce((s, a) => s + (r === 0 ? Math.max(1, a.targets.length) : 1), 0);
     const part = (c, w) => (c ? `${c} ${w}${c === 1 ? "" : "s"}` : "");
     const oldestMs = Math.max(...sorted.map((a) => a.ageMs));
-    return { key, asks: sorted, oldestMs, line: [shortCard(key), ...[part(n(0), "merge"), part(n(1), "decision"), part(n(2), "task")].filter(Boolean), `oldest ${ageText(oldestMs)}`].join(" · ") };
+    return { key, asks: sorted, oldestMs, line: [titles?.[key] || shortCard(key), ...[part(n(0), "merge"), part(n(1), "decision"), part(n(2), "task")].filter(Boolean), `oldest ${ageText(oldestMs)}`].join(" · ") };
   }).sort((a, b) => b.oldestMs - a.oldestMs);
 }
 
 // The running sections as one line, for while something needs you.
+// What an expanded ask shows under its title, in order: the options, the plan or PR link, then the body.
+export const askLayout = (v) => [v.questions.some((q) => q.options.length) && "options", v.plan && "plan", v.body && "body"].filter(Boolean);
+
 export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length}`, `Stuck ${vm.stuck.length}`, vm.runnerOn == null ? "" : `Runner ${vm.runnerOn ? "on" : "off"}`].filter(Boolean).join(" · ");
 
 // Every selectable row in display order: one row per epic with asks (the open epic lists its asks under it), the running summary,

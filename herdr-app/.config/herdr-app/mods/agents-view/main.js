@@ -21,7 +21,7 @@ export default class AgentsView extends View {
   init(_props, cx) {
     this.h = cx.focus_handle();
     this.h.focus();
-    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null };
+    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.openEpic = null; this.showRun = false; this.noteBox = null; this.checklist = null; this.kept = new Map(); this.sent = new Set();
     this.read(cx);
@@ -31,11 +31,11 @@ export default class AgentsView extends View {
   async read(cx) {
     // the fixture folder wins when it holds any of the four files; one read of each, no subprocess
     const read1 = (p) => readTextFile(p).catch(() => null);
-    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings].map(read1));
+    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed].map(read1));
     this.fixture = got.some((x) => x != null);
-    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings].map(read1)); }
-    const [asks, events, usage, upNext, settings] = got;
-    this.files = { asks, events, usage, upNext, settings };
+    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed].map(read1)); }
+    const [asks, events, usage, upNext, settings, closed] = got;
+    this.files = { asks, events, usage, upNext, settings, closed };
     if (this.armed && Date.now() - this.armed.at > 10_000) this.armed = null;
     this.note = ""; // a note lasts one refresh, so the usage warning comes back
     this.deskIfGone();
@@ -43,7 +43,7 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, nowMs: Date.now(), hiddenIds: this.hidden });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, nowMs: Date.now(), hiddenIds: this.hidden });
     return { vm, rows: flatRows(vm, { openEpic: this.openEpic, showRun: this.showRun }).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
@@ -183,12 +183,8 @@ export default class AgentsView extends View {
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
         .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
     if (!sel) return el;
-    return el.when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
-      .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
-        .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
-        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "v")))
-        .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
-      .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
+    // title, then the options, then the plan or PR link, then the body
+    return el      .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
           .bg(o.armed ? t.accent : t.raised).when(o.picked, (e) => e.border_1().border_color(t.accent))
@@ -203,6 +199,11 @@ export default class AgentsView extends View {
       .when(this.noteBox?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
         .child(h_flex().w_full().h(ROW).px(8).items_center().rounded(6).bg(t.raised).border_1().border_color(t.accent).child(sans(13, t.foreground, `${this.noteBox.text}▏`)))
         .child(sans(11, t.dim, "↵ send alone · tab keep for your pick · esc cancel"))))
+      .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
+        .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
+        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "v")))
+        .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
+      .when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
       .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
   }
 

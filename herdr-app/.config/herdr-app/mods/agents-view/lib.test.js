@@ -6,7 +6,7 @@ import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
   runFiles, askView, questionTitles, firstLine, planRef, runnerLine,
-  askGroups, recommended, acceptRecommended, checklistStep, noteStep, noteArgv, runSummary, footerHint,
+  askLayout, askGroups, recommended, acceptRecommended, checklistStep, noteStep, noteArgv, runSummary, footerHint,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -543,8 +543,8 @@ test("picksText: shows each question's pick or a question mark", () => {
 // ---- side panel (kuchbhi#1058) ----
 
 test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json" });
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", closed: "/h/handoffs/run/closed-cards.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", closed: "/h/.config/herdr-app/agents-view-fixture/closed-cards.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
@@ -695,7 +695,7 @@ test("viewModel: the runner line comes from the settings file", () => {
 // ---- #1074: open asks only, one line per epic, Enter accepts the recommendation, a batched merge ask, notes ----
 // The open-rule fixture below matches the one in claude-plugins tests/test_ask.sh: same rows, same open ids.
 const FIX = [
-  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "a-1", card: "o/r#10", epic: "o/r#1", from: "worker", question: "1. Approve this plan?", body: "b", options: [], kind: "plan" },
+  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "a-1", card: "o/r#10", epic: "o/r#1", from: "worker", question: "1. Approve this plan?", body: "b", options: [], kind: "decide" },
   { ts: "2030-01-01T02:00:00Z", event: "ask", id: "a-2", card: "o/r#10", epic: "o/r#1", from: "worker", question: "**In plain words:** Roll it?", body: "b", options: [], kind: "decide", title: "Roll the fix today?" },
   { ts: "2030-01-01T02:30:00Z", event: "ask", id: "a-3", card: "o/r#11", epic: "o/r#1", from: "worker", question: "Q3", body: "b", options: [], kind: "decide", title: "T3" },
   { ts: "2030-01-01T02:40:00Z", event: "answered", id: "a-3", card: "o/r#11", text: "x", by: "owner", via: "screen" },
@@ -880,4 +880,54 @@ test("footerHint: asks say how to accept, note and open; other rows say how to s
   assert.equal(footerHint("epic"), "↵ open epic · j k move");
   assert.equal(footerHint("summary"), "↵ show running · j k move");
   assert.equal(footerHint("group"), "j k move · ↵ show terminal");
+});
+
+// ---- #1074 round 2: closed cards, epic titles, expanded order, supersede by kind, Enter on a single merge ask ----
+const SUP = [
+  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "s-1", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M", target: { repo: "o/r", pr: 1, head: "h" } },
+  { ts: "2030-01-01T02:00:00Z", event: "ask", id: "s-2", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "decide", title: "D" },
+  { ts: "2030-01-01T03:00:00Z", event: "ask", id: "s-3", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M", target: { repo: "o/r", pr: 2, head: "h" } },
+  { ts: "2030-01-01T04:00:00Z", event: "ask", id: "s-4", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "decide", title: "D again" },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "s-5", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M new head", target: { repo: "o/r", pr: 1, head: "h2" } },
+];
+
+test("openAsks: a decide ask never hides a merge ask, a merge ask hides only an older merge ask for the same PR (same fixture as claude-plugins)", () => {
+  assert.deepEqual(openAsks(SUP, AFTER).map((a) => a.id), ["s-3", "s-4", "s-5"]);
+});
+
+test("openAsks: asks of closed cards are not open; an empty or missing list hides nothing", () => {
+  assert.deepEqual(openAsks(FIX, AFTER, ["o/r#13"]).map((a) => a.id), ["a-2", "a-6"]);
+  assert.deepEqual(openAsks(FIX, AFTER, []).map((a) => a.id), ["a-2", "a-5", "a-6"]);
+  assert.deepEqual(openAsks(FIX, AFTER).map((a) => a.id), ["a-2", "a-5", "a-6"]);
+});
+
+test("viewModel: closed-cards.json hides the asks of closed cards and gives the epic titles; a broken file changes nothing", () => {
+  const asksText = FIX.map((l) => JSON.stringify(l)).join("\n");
+  const vm = viewModel({ terminals: [], asksText, nowMs: AFTER, closedJson: JSON.stringify({ closed: ["o/r#13"], titles: { "o/r#1": "Epic 1: CI and agents" } }) });
+  assert.deepEqual(vm.asks.map((a) => a.id), ["a-2", "a-6"]);
+  assert.match(vm.askGroups[0].line, /^Epic 1: CI and agents · 2 merges · 1 decision · oldest /);
+  const bad = viewModel({ terminals: [], asksText, nowMs: AFTER, closedJson: "{broken" });
+  assert.equal(bad.asks.length, 3);
+  assert.match(bad.askGroups[0].line, /^r#1 · /);
+});
+
+test("askGroups: the header shows the epic's title when there is one, else the short ref", () => {
+  const asks = openAsks(FIX, AFTER);
+  assert.match(askGroups(asks, { "o/r#1": "Epic 1: CI" })[0].line, /^Epic 1: CI · /);
+  assert.match(askGroups(asks, {})[0].line, /^r#1 · /);
+  assert.match(askGroups(asks)[0].line, /^r#1 · /);
+});
+
+test("askLayout: title, then the options, then the plan or PR link, then the body", () => {
+  const a = openAsks([{ ...FIX[4], id: "a-r2", ts: iso(HOUR), plan: "/h/plan.html", body: "what changes", options: [{ q: 1, key: "a", label: "Go (Recommended)" }] }], NOW)[0];
+  assert.deepEqual(askLayout(askView(a, {}, null)), ["options", "plan", "body"]);
+  const bare = openAsks([{ ...FIX[4], id: "a-r3", ts: iso(HOUR), question: "T4", body: "", options: [] }], NOW)[0];
+  assert.deepEqual(askLayout(askView(bare, {}, null)), []);
+});
+
+test("acceptRecommended: a single merge ask from ask.sh (Merge is Recommended) arms, then the second Enter posts key a", () => {
+  const a = openAsks([{ ...FIX[7], options: [{ q: 1, key: "a", label: "Merge (Recommended)" }, { q: 1, key: "b", label: "Hold" }] }], AFTER)[0];
+  const first = acceptRecommended(a, null, NOW);
+  assert.equal(first.type, "arm");
+  assert.deepEqual(acceptRecommended(a, first.armed, NOW + 1000), { type: "post", text: "1a: Merge (Recommended)", key: "a" });
 });
