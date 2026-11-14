@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
+  runFiles, askView, questionTitles, firstLine, planRef,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -236,7 +237,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [] });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -463,20 +464,17 @@ test("perform: show calls terminal.show with the terminal and the right-hand pan
   assert.deepEqual(none, [], "no right-hand pane: nothing is called");
 });
 
-test("control-room layout: the agents-view mod at about 40% beside the active tab's terminal pane", async () => {
-  const { readFileSync } = await import("node:fs");
-  const l = JSON.parse(readFileSync(new URL("../../layouts/control-room.json", import.meta.url), "utf8"));
-  const row = JSON.stringify(l).includes('"type":"row"') ? l : null;
+test("main-agents layout: agents-view is a child of the panel-body stack, the tab bar is tabs-agents, control-room is gone", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const l = JSON.parse(readFileSync(new URL("../../layouts/main-agents.json", import.meta.url), "utf8"));
   const find = (n, f) => (f(n) ? [n] : (n.children ?? []).flatMap((c) => find(c, f)));
-  const [list] = find(l, (n) => n.content?.mod === "agents-view");
-  const [pane] = find(l, (n) => n.content?.tab === "active");
-  assert.ok(row && list && pane, "has the mod block and the active-tab block");
-  assert.ok(!find(l, (n) => n.content?.terminal).length, "no fixed terminal block: terminal.show fails while one is focused");
-  const parent = find(l, (n) => n.children?.includes(list))[0];
-  assert.equal(parent.type, "row");
-  assert.ok(parent.children.indexOf(list) < parent.children.indexOf(pane), "list on the left");
-  const w = (n) => n.size?.weight ?? 1;
-  assert.ok(Math.abs(w(list) / (w(list) + w(pane)) - 0.4) < 0.01, "about 40%");
+  const [stack] = find(l, (n) => n.id === "panel-body");
+  assert.deepEqual(stack.children.map((c) => c.id).slice(0, 2), ["files", "changes"]);
+  assert.ok(stack.children.some((c) => c.id === "agents-view" && c.content.mod === "agents-view"), "the panel block id matches the tab-bar button");
+  assert.equal(find(l, (n) => n.id === "tabs")[0].content.mod, "tabs-agents");
+  const ids = find(l, () => true).map((n) => n.id);
+  assert.equal(new Set(ids).size, ids.length, "block ids are unique (a clash drew the view in the sidebar)");
+  assert.equal(existsSync(new URL("../../layouts/control-room.json", import.meta.url)), false);
 });
 
 const two = [{ q: 1, key: "a", label: "yes" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later" }];
@@ -525,4 +523,131 @@ test("picksText: shows each question's pick or a question mark", () => {
   const [a] = openAsks([rich({ options: two })], NOW);
   assert.equal(picksText(a, { 1: "1a: yes" }), "1a ✓ · 2 ?");
   assert.equal(picksText(a, {}), "1 ? · 2 ?");
+});
+
+// ---- side panel (kuchbhi#1058) ----
+
+test("runFiles: live files by default, the fixture folder's four files when it is in use", () => {
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json" });
+});
+
+test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
+  assert.equal(firstLine("\n  Approve the plan?\nmore", 40), "Approve the plan?");
+  assert.equal(firstLine("abcdefghij", 6), "abcde…");
+  assert.equal(firstLine("abcdef", 6), "abcdef");
+  assert.equal(firstLine(null, 6), "");
+});
+
+test("questionTitles: the numbered question lines of an ask body", () => {
+  const body = "1. Which branch?\n   a) x\n2. Keep the log?\n   a) y";
+  assert.deepEqual(questionTitles(body), { 1: "Which branch?", 2: "Keep the log?" });
+  assert.deepEqual(questionTitles("included: PR 9"), {});
+});
+
+test("askView: the collapsed row is a card, kind and age over one question line, red never on the row", () => {
+  const [a] = openAsks([rich({ question: "Approve this plan?\nsecond line", kind: "plan", ts: iso(90 * MIN) })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.card, "app#12");
+  assert.equal(v.kind, "plan");
+  assert.equal(v.age, "1h");
+  assert.equal(v.title, "Approve this plan?");
+  assert.equal(v.old, true);
+});
+
+test("askView: an ask under an hour is not old", () => {
+  const [a] = openAsks([rich({ ts: iso(59 * MIN) })], NOW);
+  assert.equal(askView(a, {}, null).old, false);
+});
+
+test("askView: options of one question become buttons with their keys", () => {
+  const [a] = openAsks([rich()], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.questions.length, 1);
+  assert.deepEqual(v.questions[0].options.map((o) => o.key), opts.map((o) => o.key));
+  assert.ok(v.questions[0].options.every((o) => !o.picked && !o.armed));
+});
+
+test("askView: a multi-question ask has one block per question with titles and its picks", () => {
+  const [a] = openAsks([rich({ options: two, body: "1. Which?\n2. Keep?" })], NOW);
+  const v = askView(a, { 1: "1a: yes" }, null);
+  assert.deepEqual(v.questions.map((q) => [q.q, q.title]), [[1, "Which?"], [2, "Keep?"]]);
+  assert.deepEqual(v.questions[0].options.map((o) => o.picked), [true, false]);
+  assert.deepEqual(v.questions[1].options.map((o) => o.picked), [false, false]);
+  assert.equal(v.status, "1 of 2 picked");
+});
+
+test("askView: an armed merge button says to press again", () => {
+  const [a] = openAsks([rich({ kind: "merge" })], NOW);
+  const v = askView(a, {}, { id: a.id, key: opts[0].key, q: 1, at: NOW });
+  const o = v.questions[0].options[0];
+  assert.equal(o.armed, true);
+  assert.equal(v.questions[0].options[1].armed, false);
+});
+
+test("viewModel: Needs you is red only when an ask is older than an hour", () => {
+  const mk = (ago) => viewModel({ terminals: [], asksText: JSON.stringify(ask("acme/app#1", ago)), eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW });
+  assert.equal(mk(2 * HOUR).asksOld, true);
+  assert.equal(mk(59 * MIN).asksOld, false);
+  assert.equal(mk(2 * HOUR).others.length, 0);
+});
+
+test("viewModel: other sessions collapse to one count line", () => {
+  const vm = viewModel({ terminals: [{ address: "a", name: "x", status: "working" }, { address: "b", name: "y", status: "idle" }], asksText: "", eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW });
+  assert.equal(vm.othersLine, "+2 other sessions");
+  const one = viewModel({ terminals: [{ address: "a", name: "x", status: "working" }], asksText: "", eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW });
+  assert.equal(one.othersLine, "+1 other session");
+  assert.equal(viewModel({ terminals: [], asksText: "", eventsText: "", usageJson: null, upNextJson: null, nowMs: NOW }).othersLine, "");
+});
+
+// ---- plan and PR context in an ask (kuchbhi#1058, owner note) ----
+
+test("planRef: a file plan shows its file name and full path; v opens it", () => {
+  assert.deepEqual(planRef("/Users/me/canvas/1058/plan.html"), { kind: "plan", line: "Plan: plan.html", full: "/Users/me/canvas/1058/plan.html" });
+  assert.deepEqual(planRef("https://example.test/p/plan.html"), { kind: "plan", line: "Plan: https://example.test/p/plan.html", full: "https://example.test/p/plan.html" });
+});
+
+test("planRef: a PR URL shows owner/repo#n", () => {
+  assert.deepEqual(planRef("https://github.com/acme/app/pull/15"), { kind: "pr", line: "PR: acme/app#15", full: "https://github.com/acme/app/pull/15" });
+});
+
+test("planRef: no plan is null", () => {
+  assert.equal(planRef(null), null);
+  assert.equal(planRef(""), null);
+});
+
+test("askView: an ask with a file plan has a plan line, a plan marker and the full path", () => {
+  const [a] = openAsks([rich({ plan: "/h/canvas/plan.html" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "plan");
+  assert.equal(v.plan.line, "Plan: plan.html");
+  assert.equal(v.plan.full, "/h/canvas/plan.html");
+});
+
+test("askView: a merge ask with a PR URL has a PR line and a PR marker", () => {
+  const [a] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "PR");
+  assert.equal(v.plan.line, "PR: acme/app#15");
+});
+
+test("askView: an ask with no plan has no marker and no plan line", () => {
+  const [a] = openAsks([rich({ plan: null })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.marker, "");
+  assert.equal(v.plan, null);
+});
+
+test("askView: the expanded body is the rest of the question and the whole body, not only the first line", () => {
+  const [a] = openAsks([rich({ question: "Approve?\nincluded: PR 9\nchecks: green", body: "what changes: one file" })], NOW);
+  const v = askView(a, {}, null);
+  assert.equal(v.title, "Approve?");
+  assert.equal(v.body, "included: PR 9\nchecks: green\nwhat changes: one file");
+});
+
+test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
+  const [f] = openAsks([rich({ plan: "/h/plan.html" })], NOW);
+  assert.deepEqual(askKeyAction(f, "v", null, NOW), { type: "open", target: "/h/plan.html" });
+  const [p] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
+  assert.deepEqual(askKeyAction(p, "v", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
 });

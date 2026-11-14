@@ -69,6 +69,52 @@ export const answerArgv = (ask, text) => ["ask", "answer", askId(ask), "--text",
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
 
+// Where the view reads: the live run files, or the screenshot fixture folder when it exists.
+export function runFiles(home, fixture) {
+  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json` }; }
+  const d = `${home}/handoffs/run`;
+  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json` };
+}
+
+export function firstLine(text, max) {
+  const l = String(text ?? "").split("\n").map((x) => x.trim()).find(Boolean) ?? "";
+  return l.length > max ? `${l.slice(0, max - 1)}…` : l;
+}
+
+// The question text per number from an ask body ("1. Which branch?").
+export function questionTitles(body) {
+  const out = {};
+  for (const m of String(body ?? "").matchAll(/^\s*(\d+)\.\s+(.+)$/gm)) out[m[1]] = m[2].trim();
+  return out;
+}
+
+const OLD_ASK_MS = 3600_000;
+
+// The plan or PR an ask points at: a PR URL reads "PR: owner/repo#n", anything else "Plan: <file name or URL>".
+export function planRef(plan) {
+  if (!plan) return null;
+  const pr = String(plan).match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  if (pr) return { kind: "pr", line: `PR: ${pr[1]}#${pr[2]}`, full: plan };
+  return { kind: "plan", line: `Plan: ${/^https?:/.test(plan) ? plan : String(plan).split("/").pop()}`, full: plan };
+}
+
+// What the panel draws for one ask: a short row, and the blocks shown when it is selected.
+export function askView(ask, picks, armed) {
+  const titles = questionTitles(ask.body);
+  const qs = questionsOf(ask);
+  return {
+    card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: firstLine(ask.question, 200),
+    body: [ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
+      .map((x) => x.trim()).filter(Boolean).join("\n"),
+    plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
+    questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
+      key: o.key, label: o.label, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
+      armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key,
+    })) })),
+    status: qs.length > 1 ? `${qs.filter((q) => picks?.[q]).length} of ${qs.length} picked` : "",
+  };
+}
+
 export function usageText(u) {
   const find = (kind) => u?.limits?.find?.((l) => l.kind === kind);
   const all = find("weekly_all"), scoped = find("weekly_scoped");
@@ -184,6 +230,7 @@ export function upNextLine(up, nowMs) {
   return what ? `Up next: ${num(up.epic)} → card ${num(up.card)} · ${what}` : null;
 }
 
+const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
 export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, nowMs, hiddenIds }) {
@@ -192,7 +239,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), asks, stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // Every selectable row in display order: asks, running (epics, then side jobs), the desk, stuck, others.
