@@ -29,7 +29,7 @@ export function openAsks(lines, nowMs) {
     else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) { open.delete(k); noted.delete(k); }
     else if (k != null && l.event === "noted") noted.add(k);
   }
-  const live = [...open.values()].filter((l) => !seq.slice(seq.indexOf(l) + 1).some((n) => n.card === l.card && roleOf(n) === roleOf(l) && batchOf(n) !== batchOf(l)));
+  const live = [...open.values()].filter((l) => !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && batchOf(n) !== batchOf(l)));
   const groups = new Map();
   for (const l of live) groups.set(batchOf(l), [...(groups.get(batchOf(l)) ?? []), l]);
   return [...groups.values()]

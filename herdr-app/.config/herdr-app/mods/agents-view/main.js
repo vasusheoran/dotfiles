@@ -69,7 +69,7 @@ export default class AgentsView extends View {
 
   // what a key or Enter resolved to on an ask: post, arm, open the plan, open the batch checklist, or nothing
   act(a, r, cx) {
-    if (!r) return;
+    if (!r) { this.note = "nothing recommended: press an option letter"; return cx.notify(); }
     this.armed = r.type === "arm" ? r.armed : null;
     if (r.type === "checklist") { this.checklist = { id: a.id, cur: 0, chosen: [] }; return cx.notify(); }
     if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks
@@ -88,9 +88,9 @@ export default class AgentsView extends View {
   send(a, argv, cx) {
     if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); } // screenshots never answer a real ask
     if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
-    this.hidden.add(a.id); this.kept.delete(a.id); this.checklist = null;
+    this.hidden.add(a.id);
     perform({ type: "post", argv }, { run, exec, pane: null }).then((x) => {
-      if (x?.code === 0) this.note = `answered ${shortCard(a.card)}`; else { this.hidden.delete(a.id); this.note = "answer failed"; }
+      if (x?.code === 0) { this.note = `answered ${shortCard(a.card)}`; this.kept.delete(a.id); this.checklist = null; } else { this.hidden.delete(a.id); this.note = "answer failed"; }
       cx.notify();
     });
   }
@@ -143,7 +143,7 @@ export default class AgentsView extends View {
     if (!["escape", "enter", "down", "up", "j", "k"].includes(k)) return;
     cx.stop_propagation();
     if (k === "escape") return props()?.overlay ? closeOverlay(props()?.overlay) : undefined;
-    if (k === "enter") return this.open(rows[this.selIdx]);
+    if (k === "enter") { this.open(rows[this.selIdx]); return cx.notify(); }
     this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1)));
     if (rows[this.selIdx]) this.select(rows[this.selIdx]);
     cx.notify();
@@ -210,7 +210,7 @@ export default class AgentsView extends View {
   epic(t, r, open) {
     const sel = r.key === this.sel;
     return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => this.select(r))
+        .on_click((_e, cx) => { this.select(r); cx.notify(); })
       .child(mono(12, t.dim, open ? "▾" : "▸")).child(sans(13, t.foreground, r.row.line).flex_1().min_w(0).truncate());
   }
 
@@ -218,7 +218,7 @@ export default class AgentsView extends View {
   summary(t, r) {
     const sel = r.key === this.sel;
     return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => { this.select(r); this.showRun = !this.showRun; })
+      .on_click((_e, cx) => { this.select(r); this.showRun = !this.showRun; cx.notify(); })
       .child(mono(12, t.dim, this.showRun ? "▾" : "▸")).child(sans(12, t.muted, r.row.line).flex_1().min_w(0).truncate());
   }
 
