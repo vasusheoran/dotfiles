@@ -350,7 +350,7 @@ test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key
 test("askKeyAction: on a decide ask x is an option key when the ask has one, else nothing", () => {
   const withX = [...opts, { q: 1, key: "x", label: "Merge it" }];
   const [a] = openAsks([rich({ options: withX })], NOW);
-  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it" });
+  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "1x: Merge it", key: "x" });
   const [b] = openAsks([rich()], NOW);
   assert.equal(askKeyAction(b, "x", null, NOW), null);
   assert.equal(isAskKey(b, "x", null), false);
@@ -374,7 +374,7 @@ test("askKeyAction: x on a merge ask is its option key, a second-key action, nev
   const [a] = openAsks([rich({ kind: "merge", options: [{ q: 1, key: "x", label: "Merge it" }, { q: 1, key: "b", label: "Hold" }] })], NOW);
   const first = askKeyAction(a, "x", null, NOW);
   assert.equal(first.type, "arm");
-  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it" });
+  assert.deepEqual(askKeyAction(a, "x", first.armed, NOW + 1000), { type: "post", text: "1x: Merge it", key: "x" });
   const [none] = openAsks([rich({ kind: "merge" })], NOW);
   assert.equal(askKeyAction(none, "x", null, NOW), null);
 });
