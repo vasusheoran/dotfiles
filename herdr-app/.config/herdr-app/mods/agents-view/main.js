@@ -351,8 +351,8 @@ export default class AgentsView extends View {
       ...vm.groups.flatMap((g) => {
         return [this.label(t, g.epic), ...g.rows.flatMap((r) => draw(byKey.get(`group:${r.address}`), (x) => this.line(t, x, [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state))))];
       }),
-      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.map((s, i) => this.line(t, at("side", i), [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state)))] : []),
-      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked))] : []),
+      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.flatMap((s) => draw(byKey.get(`side:${s.address}`), (x) => this.line(t, x, [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state))))] : []),
+      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.flatMap((s) => draw(byKey.get(`stuck:${s.kind}:${s.name}`), (x) => this.line(t, x, [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked)))] : []),
       ...(vm.upNext ? [mono(12, t.muted, vm.upNext).w_full().flex_none().px(14).pt(12)] : []),
       ...(vm.runnerLine ? [mono(12, t.muted, vm.runnerLine).w_full().flex_none().px(14).pt(vm.upNext ? 4 : 12)] : []),
     ];
