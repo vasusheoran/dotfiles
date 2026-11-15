@@ -21,7 +21,7 @@ export default class AgentsView extends View {
   init(_props, cx) {
     this.h = cx.focus_handle();
     this.h.focus();
-    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null };
+    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.openEpic = null; this.showRun = false; this.noteBox = null; this.checklist = null; this.kept = new Map(); this.sent = new Set();
     this.read(cx);
@@ -31,11 +31,11 @@ export default class AgentsView extends View {
   async read(cx) {
     // the fixture folder wins when it holds any of the four files; one read of each, no subprocess
     const read1 = (p) => readTextFile(p).catch(() => null);
-    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed].map(read1));
+    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed, f.stuck].map(read1));
     this.fixture = got.some((x) => x != null);
-    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed].map(read1)); }
-    const [asks, events, usage, upNext, settings, closed] = got;
-    this.files = { asks, events, usage, upNext, settings, closed };
+    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed, f.stuck].map(read1)); }
+    const [asks, events, usage, upNext, settings, closed, stuck] = got;
+    this.files = { asks, events, usage, upNext, settings, closed, stuck };
     if (this.armed && Date.now() - this.armed.at > 10_000) this.armed = null;
     this.note = ""; // a note lasts one refresh, so the usage warning comes back
     this.deskIfGone();
@@ -43,7 +43,7 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, nowMs: Date.now(), hiddenIds: this.hidden });
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden });
     return { vm, rows: flatRows(vm, { openEpic: this.openEpic, showRun: this.showRun }).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
@@ -76,7 +76,7 @@ export default class AgentsView extends View {
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
       const text = composeAnswer(a, picks);
       if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
-      r = { type: "post", text };
+      r = { type: "post", text }; // composed from several picks: no key
     }
     if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
     else if (r.type === "open") perform(r, { run, exec, pane: null });
