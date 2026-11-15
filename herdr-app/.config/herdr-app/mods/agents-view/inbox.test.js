@@ -205,13 +205,13 @@ test("inputStep: in a message or other-idea box Tab neither sends nor keeps; Ent
 });
 
 test("paneFor: the right pane follows the selected row: desk thread, the batch's ask, an answered ask with its thread, or nothing", () => {
-  const vm = viewModel({ terminals: [], asksText: [row("a-1", HOUR), row("a-2", 2 * HOUR, { batch_key: "look:o/r#9", kind: "look", epic: "o/r#9", card: "o/r#90" }), { ts: iso(5 * MIN), event: "answered", id: "a-3", text: "Redis, only for sessions", key: "other", by: "owner", via: "screen" }, row("a-3", 3 * HOUR)].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: NOW });
-  const rows = flatRows(vm);
+  const vm = viewModel({ terminals: [], asksText: [row("a-1", HOUR), row("a-2", 2 * HOUR, { batch_key: "look:o/r#9", kind: "look", epic: "o/r#9", card: "o/r#90" }), row("a-3", 3 * HOUR), { ts: iso(5 * MIN), event: "answered", id: "a-3", text: "Redis, only for sessions", key: "other", by: "owner", via: "screen" }].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: NOW });
+  const rows = flatRows(vm, { sentOpen: true });
   const at = (sec) => rows.find((r) => r.section === sec);
   assert.deepEqual(paneFor(at("desk"), vm, {}), { kind: "desk", thread: "desk" });
   const b = paneFor(at("epic"), vm, {});
   assert.equal(b.kind, "ask"); assert.equal(b.thread, b.ask.id);
-  const a = paneFor(at("answered"), vm, {});
+  const a = paneFor(at("sent"), vm, {});
   assert.equal(a.kind, "answered"); assert.equal(a.thread, "a-3"); assert.equal(a.answered.id, "a-3");
   assert.deepEqual(paneFor(undefined, vm, {}), { kind: "empty" });
   assert.deepEqual(paneFor({ section: "summary" }, { batches: [] }, {}), { kind: "empty" });

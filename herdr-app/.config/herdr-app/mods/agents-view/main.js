@@ -1,13 +1,13 @@
-// Agents view: leads, workers, questions waiting on the owner, and what is stuck. Reads terminals(), asks.jsonl,
+// Inbox: leads, workers, questions waiting on the owner, and what is stuck. Reads terminals(), asks.jsonl,
 // events.jsonl, the runner's up-next.json and the usage file; no network. The logic is in lib.js (tested with node --test); this file reads, draws and handles keys.
-// A side panel (the `agents-view` block of layouts/main-agents.json, opened by the Agents button of the tabs-agents mod): Enter shows the
+// A side panel (the `agents-view` block of layouts/main-agents.json, opened by the Inbox button of the tabs-agents mod): Enter shows the
 // selected terminal in the main pane (terminal.show) and a key on an ask posts the answer through `work ask answer`.
 // When ~/.config/herdr-app/agents-view-fixture/ exists it is read instead of the live run files (screenshots only).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
-  answerLine, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
+  answerLine, hideKey, sentReceipt, openLinks, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
 const MONO = "JetBrains Mono";
@@ -30,7 +30,7 @@ export default class AgentsView extends View {
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
+    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.sentOpen = false; this.outbox = new Map(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
     this.askH = storedAskH(this.loadSize()); this.drag = null; this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
     this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
@@ -68,8 +68,8 @@ export default class AgentsView extends View {
   }
 
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden });
-    return { vm, rows: flatRows(vm, { showRun: this.showRun, filter: this.filter ?? "", unfolded: this.unfolded }).filter((r) => r.section !== "others") }; // other sessions show as one count line
+    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden, outbox: [...this.outbox.values()] });
+    return { vm, rows: flatRows(vm, { showRun: this.showRun, filter: this.filter ?? "", unfolded: this.unfolded, sentOpen: this.sentOpen }).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
   pane() { return rightPaneId(panes(), focused()?.tab); }
@@ -185,9 +185,14 @@ export default class AgentsView extends View {
   // answers go through `work ask answer`; one in flight per ask
   send(a, argv, cx, kind = "pick", label = "") {
     if (this.fixture) { this.say(a.id, "fail", "fixture data: nothing sent"); return cx.notify(); }
-    if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
-    this.hidden.add(a.id);
-    this.call(a.id, kind, label, argv, cx, (ok) => { if (ok) { this.kept.delete(a.id); this.checklist = null; } else this.hidden.delete(a.id); });
+    const hk = hideKey(a), val = (f) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : null);
+    if (this.hidden.has(hk)) return; // a post for this ask is in flight or done
+    this.hidden.add(hk);
+    this.outbox.set(a.id, { id: a.id, card: a.card, epic: a.epic, title: a.title, pick: val("--text") ?? "", note: val("--note"), key: val("--key"), answeredAt: new Date().toISOString(), ageMs: 0, sent: true, received: false, done: false, notPickedUp: false, lead: a.terminal ?? null, kind: a.kind });
+    this.call(a.id, kind, label, argv, cx, (ok) => {
+      if (ok) { this.kept.delete(a.id); this.checklist = null; }
+      else { this.hidden.delete(hk); this.outbox.delete(a.id); } // not sent: the ask is back in its epic with the failure on it
+    });
   }
 
   // v asks the agent behind the ask for a picture (on file first, then sent); r starts a replacement for a gone asker. Neither answers the ask.
@@ -263,6 +268,7 @@ export default class AgentsView extends View {
     if (app("f")) { cx.stop_propagation(); this.filter ??= ""; this.typing = true; return cx.notify(); }
     if ((k === "B" || k === "shift-b") && cur?.section === "epic") { cx.stop_propagation(); return this.board(cur, vm, cx); }
     if (k === "space" && cur?.section === "fold") { cx.stop_propagation(); this.unfolded = !this.unfolded; return cx.notify(); }
+    if ((k === "space" || k === "enter") && cur?.section === "sentfold") { cx.stop_propagation(); this.sentOpen = !this.sentOpen; return cx.notify(); }
     if (k === "escape" && this.filter != null) { cx.stop_propagation(); this.filter = null; this.touched = false; return cx.notify(); }
     if ((k === "[" || k === "]") && !own(k)) { cx.stop_propagation(); this.askH = resizeAskH(this.askH, k); this.saveSize(); return cx.notify(); }
     if (k === "t" && tab && !own("t")) { cx.stop_propagation(); return this.togglePane(cx); }
@@ -274,7 +280,7 @@ export default class AgentsView extends View {
     if (ok?.type === "open") { cx.stop_propagation(); return this.act(ask, ok, cx); }
     if (k === "/") { cx.stop_propagation(); const pane = paneFor(cur, vm, this.pos); const toDesk = ["desk", "empty", "fold"].includes(pane.kind); this.input = { mode: "message", thread: toDesk ? "desk" : pane.thread, to: toDesk ? null : leadFor(pane), text: "" }; return cx.notify(); }
     if (k === "pageup" || k === "pagedown") { cx.stop_propagation(); this.back = k === "pageup" ? this.back + 5 : Math.max(0, this.back - 5); return cx.notify(); }
-    if (cur?.section === "answered") { // an answer the asker has not picked up: the owner's key sends one reminder
+    if (cur?.section === "sent") { // an answer the asker has not picked up: the owner's key sends one reminder
       if (k === ".") { cx.stop_propagation(); return this.nudge(cur.row, cx); }
     }
     if ((cur?.section === "epic" || cur?.section === "batch") && (k === "left" || k === "right")) {
@@ -329,8 +335,9 @@ export default class AgentsView extends View {
 
   open(r, vm) {
     if (r?.section === "fold") { this.unfolded = !this.unfolded; return; }
+    if (r?.section === "sentfold") { this.sentOpen = !this.sentOpen; return; }
     if (r?.section === "summary") { this.showRun = !this.showRun; return; }
-    if (!r || r.section === "batch" || r.section === "epic" || r.section === "answered" || this.fixture) return; // fixture rows are not real terminals
+    if (!r || r.section === "batch" || r.section === "epic" || r.section === "sent" || this.fixture) return; // fixture rows are not real terminals
     const t = selectTarget(r, vm?.deskProject ?? null);
     if (t?.show) this.show(t.show);
     else if (t?.start) perform({ type: "start-desk", argv: t.start }, { run, exec, pane: this.pane() });
@@ -364,6 +371,7 @@ export default class AgentsView extends View {
         .when(!!posText, (e) => e.child(sans(11, t.dim, `${posText} ‹ ›`)))
         .when(v.noteSent || this.sent.has(a.id), (e) => e.child(sans(11, t.done, "note sent")))
         .when(!!v.visual, (e) => e.child(sans(11, v.visual.ready ? t.accent : t.working, v.visual.label)))
+        .when(!!a.reply, (e) => e.child(sans(11, t.working, "reply")))
         .child(div().flex_1()).child(mono(12, t.muted, v.age)))
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
         .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
@@ -372,6 +380,10 @@ export default class AgentsView extends View {
     const overview = epic ? [epic.group, epic.lead ? `lead ${epic.lead.name}` : "no lead running", `${epic.workers.length} worker${epic.workers.length === 1 ? "" : "s"}`, ...epic.prs.map((p) => `#${p.pr} ${p.state}`)].join(" · ") : "";
     // title, where it came from (Why / What / How), what is true today and after, the options with what each does next, the receipt, then the plan or PR link, then the body
     return el
+      .when(!!a.reply, (e) => e.child(sans(12, t.foreground, `Reply from the agent: ${a.reply.text}`).pt(4)))
+      .children(openLinks(a).map((o, i) => v_flex().id(`${r.key}:open${i}`).w_full().pt(i ? 2 : 6).gap(2).on_click(() => perform({ type: "open", target: o.target }, { run, exec, pane: null }))
+        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, o.label).underline()).when(i === 0, (x) => x.child(this.keycap(t, "p"))))
+        .child(mono(11, t.accent, o.target).underline().w_full().truncate())))
       .when(!!epic, (e) => e.child(h_flex().w_full().gap(6).items_baseline().pt(2).child(sans(11, t.dim, epic.group)).child(sans(11, t.dim, epic.lead ? "lead" : "no lead running")).when(!!epic.lead, (x) => x.child(this.agentLink(t, epic.lead)))
         .child(sans(11, t.dim, `${epic.workers.length} worker${epic.workers.length === 1 ? "" : "s"}${epic.prs.length ? " · " : ""}${epic.prs.map((p) => `#${p.pr} ${p.state}`).join(" · ")}`))))
       .child(v_flex().w_full().gap(2).pt(4)
@@ -416,23 +428,33 @@ export default class AgentsView extends View {
         .child(sans(12, t.muted, "Note"))
         .child(h_flex().w_full().h(ROW).px(8).items_center().rounded(6).bg(t.raised).border_1().border_color(t.accent).child(sans(13, t.foreground, `${this.input.text}▏`)))
         .child(sans(11, t.dim, "↵ no option picked: your note is the answer · tab keeps it for your pick · esc cancel"))))
-      .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
-        .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
-        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line).underline()).child(this.keycap(t, "p")))
-        .child(mono(11, t.accent, v.plan.full).underline().w_full().truncate())))
       .when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(this.rich(t, 12, t.muted, v.body, repo, `${r.key}:body`))))
       .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
   }
 
-  // an answered ask until it is applied: sent, received, done; ten minutes unapplied reads "not picked up" and the . key nudges
-  answered(t, r) {
-    const a = r.row, sel = r.key === this.sel, mark = (on) => (on ? "✓" : "–");
+  // a sent ask: its state (sent, received, done), "not picked up" after ten minutes and the . key nudges; what was sent shows in the pane below when it is selected
+  sentRow(t, r) {
+    const a = r.row, sel = r.key === this.sel, rc = sentReceipt(a);
     return v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
       .on_click(() => this.select(r))
       .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, shortCard(a.card))).child(sans(13, t.foreground, a.title).flex_1().min_w(0).truncate()).child(mono(12, t.muted, ageText(a.ageMs))))
-      .child(h_flex().w_full().gap(10).items_baseline().child(sans(12, t.muted, `sent ${mark(a.sent)} · received ${mark(a.received)} · done ${mark(a.done)}`))
-        .when(a.notPickedUp, (e) => e.child(sans(12, t.blocked, "not picked up")).when(sel, (e2) => e2.child(this.keycap(t, ".")))))
-      .when(sel, (e) => e.child(sans(12, t.dim, `You answered: ${String(a.pick).split("\n").join(" · ")}`)));
+      .child(h_flex().w_full().gap(10).items_baseline().child(sans(12, t.muted, rc.state))
+        .when(a.notPickedUp, (e) => e.child(sans(12, t.blocked, "not picked up")).when(sel, (e2) => e2.child(this.keycap(t, ".")))));
+  }
+
+  // the owner's receipt for one sent ask: what, to whom and when, then the state
+  receipt(t, a) {
+    const rc = sentReceipt(a);
+    return v_flex().w_full().gap(2).child(sans(12, t.muted, `You sent: ${rc.what}`)).child(sans(12, t.dim, `to ${rc.to} · ${rc.when}`)).child(sans(12, t.dim, rc.state))
+      .when(this.status.has(a.id), (e) => e.child(this.statusLine(t, this.status.get(a.id))));
+  }
+
+  // the Sent line: collapsed, one row at the bottom of the list
+  sentFold(t, r) {
+    const sel = r.key === this.sel;
+    return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
+      .on_click((_e, cx) => { this.select(r); this.sentOpen = !this.sentOpen; cx.notify(); })
+      .child(mono(12, t.dim, this.sentOpen ? "▾" : "▸")).child(sans(12, t.muted, r.row.label)).child(sans(11, t.dim, "space"));
   }
 
   // running, stuck and the runner as one line while asks wait; Enter shows or hides the lists
@@ -491,7 +513,7 @@ export default class AgentsView extends View {
   }
 
   // an epic with no open question: who runs it, what is happening, its PRs and where it came from
-  epicOverview(t, e, thread) {
+  epicOverview(t, e, thread, sent = null) {
     const od = e.origin?.summary;
     return v_flex().w_full().px(14).py(10).gap(4)
       .child(h_flex().w_full().gap(8).items_baseline().child(sans(14, t.foreground, e.title).flex_1().min_w(0)).child(mono(11, t.dim, `#${e.num}`)))
@@ -499,6 +521,7 @@ export default class AgentsView extends View {
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(11, t.dim, e.group)).child(sans(11, t.dim, e.lead ? "lead" : "no lead running")).when(!!e.lead, (x) => x.child(this.agentLink(t, e.lead)))
         .child(sans(11, t.dim, `${e.workers.length} worker${e.workers.length === 1 ? "" : "s"}${e.prs.length ? " · " : ""}${e.prs.map((p) => `#${p.pr} ${p.state}`).join(" · ")}`)))
       .when(!!od, (x) => x.child(this.rich(t, 12, t.dim, od, String(e.ref).split("#")[0], `ov:${e.key}`)))
+      .when(!!sent, (x) => x.child(this.receipt(t, sent)))
       .when(this.status.has(thread), (x) => x.child(this.statusLine(t, this.status.get(thread))));
   }
 
@@ -582,19 +605,20 @@ export default class AgentsView extends View {
     // below: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
     // an answered ask leaves the open list at once: its status stays on screen until the owner acts on something else
     const shown = pane.kind === "ask" ? pane.ask.id : pane.kind === "desk" ? "desk" : pane.kind === "answered" || pane.kind === "epic" ? pane.thread : null;
-    const away = this.recent && this.recent !== shown ? this.status.get(this.recent) : null;
+    const away = null; // a receipt belongs to its own ask: it shows there and in Sent, never on the next ask
     const rightEl = () => v_flex().w_full().flex_none().min_w(0).gap(4)
       .children([...(away ? [v_flex().w_full().px(14).child(this.statusLine(t, away))] : []), ...(pane.kind === "desk"
         ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, "Desk")).child(sans(12, t.dim, "General messages · / to write · ↵ shows the terminal")).when(this.status.has("desk"), (e) => e.child(this.statusLine(t, this.status.get("desk")))).child(threadOf("desk"))]
         : pane.kind === "ask"
           ? [this.ask(t, pane.ask, pane.batch.asks.length > 1 ? `ask ${pane.batch.asks.indexOf(pane.ask) + 1} of ${pane.batch.asks.length}` : "", vm, pane.epic ?? null), v_flex().w_full().px(14).child(threadOf(pane.thread))]
           : pane.kind === "epic"
-            ? [this.epicOverview(t, pane.epic, pane.thread), v_flex().w_full().px(14).child(threadOf(pane.thread))]
+            ? [this.epicOverview(t, pane.epic, pane.thread, vm.sent.find((x) => x.epic === pane.epic.ref) ?? null), v_flex().w_full().px(14).child(threadOf(pane.thread))]
             : pane.kind === "fold"
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, `${pane.fold.label}: space shows them`))]
+          : pane.kind === "sentfold"
+            ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, `${pane.fold.label}: space shows what you sent`))]
           : pane.kind === "answered"
-            ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, pane.answered.title)).child(sans(12, t.muted, `You answered: ${String(pane.answered.pick).split("\n").join(" · ")}`))
-              .child(sans(12, t.dim, `sent ${pane.answered.sent ? "✓" : "–"} · received ${pane.answered.received ? "✓" : "–"} · done ${pane.answered.done ? "✓" : "–"}`)).when(this.status.has(pane.thread), (e) => e.child(this.statusLine(t, this.status.get(pane.thread)))).child(threadOf(pane.thread))]
+            ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, pane.answered.title)).child(this.receipt(t, pane.answered)).child(threadOf(pane.thread))]
             : vm.asks.length
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))])]);
@@ -616,7 +640,7 @@ export default class AgentsView extends View {
     const body = [
       ...picker,
       ...asksBody,
-      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.flatMap((a) => draw(byKey.get(`answered:${a.id}`), (r) => this.answered(t, r)))] : []),
+      ...(vm.sent.length ? [...draw(byKey.get("sentfold"), (r) => this.sentFold(t, r)), ...(this.sentOpen ? vm.sent.flatMap((a) => draw(byKey.get(`sent:${a.id}`), (r) => this.sentRow(t, r))) : [])] : []),
       ...(waiting ? draw(byKey.get("summary:running"), (r) => this.summary(t, r)) : []),
       ...(!waiting || this.showRun ? runBody() : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),

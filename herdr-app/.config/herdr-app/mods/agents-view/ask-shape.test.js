@@ -81,10 +81,10 @@ test("nudgeArgv: work ask nudge <id>", () => {
 test("viewModel and flatRows: answered asks are rows after the open ones; the nudge key is for a not-picked-up one only", () => {
   const ans = { ts: iso(100), event: "answered", id: "a-1", card: "o/r#5", text: "Redis", key: "a" };
   const vm = viewModel({ terminals: [], asksText: [ask(), ans].map((l) => JSON.stringify(l)).join("\n"), nowMs: Date.parse(iso(120)) });
-  assert.equal(vm.answered.length, 1); assert.equal(vm.asks.length, 0);
-  const rows = flatRows(vm).filter((r) => r.section === "answered");
+  assert.equal(vm.sent.length, 1); assert.equal(vm.asks.length, 0);
+  const rows = flatRows(vm, { sentOpen: true }).filter((r) => r.section === "sent");
   assert.deepEqual(rows.map((r) => r.id), ["a-1"]);
-  assert.match(footerHint("answered"), /nudge/);
+  assert.match(footerHint("sent"), /nudge/);
 });
 
 test("openAsks: a batch with one PR landed stays one entry with both targets, the landed one marked", () => {

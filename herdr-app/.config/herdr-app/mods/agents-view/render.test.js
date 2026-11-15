@@ -38,7 +38,7 @@ const draw = ({ asksText, showRun, width, terminals = terms }) => {
   const v = new AgentsView();
   v.init({}, { focus_handle: () => ({ focus() {} }), timer: { every: (ms, f) => ((globalThis.__every ??= {})[ms] = f) }, spawn() {}, notify() {} });
   v.files = { asks: asksText, events: "", usage: null, upNext: null, settings: null, closed: null, stuck: terminals.length ? stuck : null };
-  v.showRun = showRun; v.width = width ?? 900;
+  v.showRun = showRun; v.sentOpen = true; v.width = width ?? 900;
   v.drawn = paint(v);
   return v;
 };
@@ -131,12 +131,12 @@ test("render: picture coming and open picture appear on the ask they belong to",
   has(a1, "picture coming"); lacks(a1, "open picture"); has(a2, "open picture"); lacks(a2, "picture coming");
 });
 
-test("render: an answered ask shows sent, received and done, and says not picked up once, with the asker's reply under it", () => {
+test("render: a sent ask shows sent, received and done, and says not picked up once; what was sent shows in its pane", () => {
   const ans = (id, ago) => ({ ts: iso(ago), event: "answered", id, card: `o/r#${id.replace(/\D/g, "")}`, text: "Redis", key: "other", by: "owner", via: "screen" });
-  const v = draw({ asksText: lines(ASK("a-1"), ASK("a-5", { card: "o/r#5" }), ans("a-5", 40), ASK("a-6", { card: "o/r#6" }), ans("a-6", 2), { ts: iso(1), event: "delivered", id: "a-6", terminal: "lead-r-1" }, msg("a-6", "r-1", 1, "agent", "applied, thanks")), showRun: true });
-  eachRow(v, "answered");
-  const d = select(v, "answered:a-6");
-  has(d, "sent ✓ · received – · done –"); has(d, "sent ✓ · received ✓ · done –"); has(d, "Answered, not applied yet"); has(d, "You answered: Redis"); has(d, "Agent: applied, thanks");
+  const v = draw({ asksText: lines(ASK("a-1"), ASK("a-5", { card: "o/r#5" }), ans("a-5", 40), ASK("a-6", { card: "o/r#6" }), ans("a-6", 2), { ts: iso(1), event: "delivered", id: "a-6", terminal: "lead-r-1" }), showRun: true });
+  eachRow(v, "sent");
+  const d = select(v, "sent:a-6");
+  has(d, "sent ✓ · received – · done –"); has(d, "sent ✓ · received ✓ · done –"); has(d, "Sent · 2"); has(d, "You sent: Redis"); lacks(d, "Answered, not applied yet");
   assert.equal(d.filter((s) => s === "not picked up").length, 1);
 });
 
@@ -195,7 +195,7 @@ const KEYS = [
   { name: "/, a message", asks: [ASK("a-1")], keys: ["/", "h", "i", "enter"], pressed: /^sending your message…$/, ok: /^message sent: delivered when the terminal is free$/, argv: ["ask", "message", "a-1"] },
   { name: "x, do it yourself", asks: [ASK("a-9", { kind: "you", batch_key: "hands:o/r#1", options: [], body: "Do it.\n" })], keys: ["x"], pressed: /^marking it done…$/, ok: /^marked done$/, argv: ["ask", "answer", "a-9"] },
   { name: "r, a replacement", asks: [ASK("a-8", { terminal: "card-gone" }), { ts: iso(9), event: "visual_requested", id: "a-8" }], keys: ["r"], pressed: /^starting a replacement…$/, ok: /^replacement started$/, argv: ["ask", "replace", "a-8"] },
-  { name: ". a nudge", asks: [ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)], answeredRow: "answered:a-5", keys: ["."], pressed: /^nudging the asker…$/, ok: /^reminder sent · next in 10m$/, argv: ["ask", "nudge", "a-5"] },
+  { name: ". a nudge", asks: [ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)], answeredRow: "sent:a-5", keys: ["."], pressed: /^nudging the asker…$/, ok: /^reminder sent · next in 10m$/, argv: ["ask", "nudge", "a-5"] },
 ];
 const start = (c) => { const v = draw({ asksText: lines(...c.asks), showRun: true }); select(v, c.answeredRow ?? keyOf(v, "batch")); return v; };
 const drive = (v, c) => { for (const k of c.keys) press(v, k); return v; };
@@ -228,18 +228,18 @@ for (const c of KEYS) {
 
 test("key .: an answer that is not overdue says so and runs nothing", async () => {
   execWith(async () => ({ code: 0, stdout: "", stderr: "" }));
-  const v = draw({ asksText: lines(ASK("a-6", { card: "o/r#6" }), answered("a-6", 2)), showRun: true }); select(v, "answered:a-6"); press(v, "."); await tick();
+  const v = draw({ asksText: lines(ASK("a-6", { card: "o/r#6" }), answered("a-6", 2)), showRun: true }); select(v, "sent:a-6"); press(v, "."); await tick();
   has(paint(v), /^that answer is not overdue yet: a reminder works once it has waited 10 minutes$/); assert.equal(calls.length, 0);
 });
 test("key .: the nudge refused by the script (too soon) says so in words", async () => {
   execWith(async () => ({ code: 2, stdout: "", stderr: "ask: a-5 was answered less than 10 minutes ago: nudge in 3 minute(s)" }));
-  const v = draw({ asksText: lines(ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)), showRun: true }); select(v, "answered:a-5"); press(v, "."); await tick();
+  const v = draw({ asksText: lines(ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)), showRun: true }); select(v, "sent:a-5"); press(v, "."); await tick();
   has(paint(v), /^too soon to nudge: a-5 was answered less than 10 minutes ago: nudge in 3 minute\(s\)$/);
 });
 test("key: the status shows under the answered row's states and on the desk thread", async () => {
   execWith(async () => ({ code: 0, stdout: "", stderr: "" }));
   const v = draw({ asksText: lines(ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)), showRun: true });
-  select(v, "answered:a-5"); press(v, "."); await tick(); const a = paint(v); has(a, /^reminder sent · next in 10m$/); has(a, /^sent ✓ · received – · done –$/);
+  select(v, "sent:a-5"); press(v, "."); await tick(); const a = paint(v); has(a, /^reminder sent · next in 10m$/); has(a, /^sent ✓ · received – · done –$/);
   select(v, "desk"); press(v, "/"); typed(v, "hello"); press(v, "enter"); await tick(); has(paint(v), /^message sent: /);
 });
 

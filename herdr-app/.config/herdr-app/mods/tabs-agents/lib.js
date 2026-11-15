@@ -1,7 +1,7 @@
 // The shared flag the Inbox (agents-view) reads to open its agent pane; the key in the Inbox and cmd-shift-t (tabs-agents.pane) both flip it.
 export const PANE_ON = "agents-view.pane";
 
-// The Agents button and cmd-shift-a: the Inbox lives in its own Herdr space (kuchbhi#1115). First time: make the space (steps, then `inboxFinish` puts the Inbox mod tab in it
+// The Inbox button and cmd-shift-a: the Inbox lives in its own Herdr space (kuchbhi#1115). First time: make the space (steps, then `inboxFinish` puts the Inbox mod tab in it
 // once it exists); after that: select it and focus the Inbox pane; pressed on it: go back to the space the owner came from.
 // Returns { steps: [[command, args]...], back, finish } where back is the space to return to next time and finish says the mod tab still has to be made.
 const MOD = "agents-view", NAME = "Inbox";
@@ -24,3 +24,6 @@ export function inboxFinish({ spaces, panes }) {
   if ((panes ?? []).some((p) => p.mod === MOD && sp.tabs.some((t) => t.id === p.tab))) return [];
   return [["tab.new", { space: sp.id, name: NAME, mod: MOD, props: { inbox: true } }], ...sp.tabs.map((t) => ["tab.close", { id: t.id }])];
 }
+
+// The button's label: "Inbox", and "Inbox N" while N asks wait. The count is the Inbox's own fold of asks.jsonl (inbox-lib.js is a verbatim copy of agents-view/lib.js: a mod cannot import another; a test fails when they differ) (answered asks do not count, a reply does).
+export { waitingCount, inboxLabel as toggleLabel, runFiles } from "./inbox-lib.js";

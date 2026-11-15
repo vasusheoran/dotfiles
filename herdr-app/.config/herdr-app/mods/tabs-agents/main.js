@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
-import { spaceToggle, inboxFinish, PANE_ON } from "./lib.js";
+import { spaces, panes, focused, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand, readTextFile, home } from "herdr";
+import { spaceToggle, inboxFinish, PANE_ON, toggleLabel, waitingCount, runFiles } from "./lib.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -12,7 +12,7 @@ function find(node, id) {
   return null;
 }
 
-// Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents button and the `toggle` command (cmd-shift-a in keys.json). Both open the Inbox as a main tab (the agents-view
+// Fork of the shipped tabs mod (kuchbhi#1058): adds the Inbox button (with the number of asks waiting) and the `toggle` command (cmd-shift-a in keys.json). Both open the Inbox as a main tab (the agents-view
 // mod with props.inbox), select it when it is open, and from it go back to the tab the owner came from. There is no agents column on the right any more.
 export default class Tabs extends View {
   init(_props, cx) {
@@ -23,9 +23,17 @@ export default class Tabs extends View {
         else if (cmd === "toggle") this.openAgents();
       }
     });
-    this.cx = cx; this.pressed = null; this.back = null;
+    this.cx = cx; this.pressed = null; this.back = null; this.waiting = 0;
+    this.count(cx); cx.timer.every(5000, (c) => this.count(c));
     this.scroll = ScrollHandle.new();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+  }
+
+  // the asks waiting on the owner, read from the same file the Inbox reads
+  async count(cx) {
+    const f = runFiles(home(), false), read = (p) => readTextFile(p).catch(() => null);
+    const n = waitingCount(await read(f.asks), await read(f.closed), Date.now());
+    if (n !== this.waiting) { this.waiting = n; cx.notify(); }
   }
 
   openAgents() {
@@ -136,7 +144,7 @@ export default class Tabs extends View {
       .child(h_flex().id("agents-tab").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .text_size(12).bg(onInbox ? t.selected : t.chrome).text_color(onInbox ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openAgents())
-        .child(svg("mods/tabs-agents/agents.svg").size(14)).child("Agents"))
+        .child(svg("mods/tabs-agents/agents.svg").size(14)).child(toggleLabel(this.waiting)))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

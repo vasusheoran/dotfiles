@@ -217,3 +217,46 @@ test("dragging the divider between the question box and the list resizes the box
   v.dragMove({ position: { x: 0, y: 5000 } }, tcx); assert.equal(v.askH, 720); v.dragEnd(); v.dragMove({ position: { x: 0, y: 0 } }, tcx); assert.equal(v.askH, 720, "no drag, no change"); assert.equal(mem["agents-view.askH"], "720");
   delete globalThis.localStorage;
 });
+
+// ---- owner round 2: the receipt on its own ask, Sent, a reply, the open line
+const SENT_TERM = "lead-r-1", OK = () => ({ code: 0, stdout: "", stderr: "" });
+const MSGE = (id, ago, from, text) => ({ ts: iso(ago), event: "message", mid: `m${ago}${from}`, thread: id, from, text });
+const ANSE = (id, ago, o = {}) => ({ ts: iso(ago), event: "answered", id, card: `o/r#${id.replace(/\D/g, "")}`, text: "1a: A (Recommended)", key: "a", by: "owner", via: "screen", ...o });
+test("the receipt sits on its own ask: what, whom, when; the next ask of the epic shows none; the epic count drops", async () => {
+  const v = drawE(lines(ASK("a-1", { terminal: SENT_TERM }), ASK("a-2", { terminal: SENT_TERM, ts: iso(10) })));
+  select(v, epicKey(v, 1)); has(paint(v), "Title a-1"); execWith(OK); press(v, "a"); await tick();
+  const d = paint(v); has(d, "Title a-2"); lacks(d, /^You sent/); has(d, "Sent · 1");
+  assert.equal(v.model().vm.asks.length, 1); assert.equal(v.model().rows.find((r) => r.section === "epic" && r.row.num === 1).row.asks.length, 1);
+  select(v, "sentfold"); press(v, "space"); const s = select(v, "sent:a-1");
+  has(s, "You sent: 1a: A (Recommended)"); has(s, /^to lead-r-1 · o\/r#1 · \d\d:\d\d$/); has(s, "sent ✓ · received – · done –");
+});
+test("an ask sent leaves its epic: with nothing left it is working, no question shown, and its receipt shows on that epic only", async () => {
+  const v = drawE(lines(ASK("a-1", { terminal: SENT_TERM }))); select(v, epicKey(v, 1)); execWith(OK); press(v, "a"); await tick();
+  const e = v.model().rows.find((r) => r.section === "epic" && r.row.num === 1).row; assert.equal(e.asks.length, 0); assert.notEqual(e.state, "needs");
+  let d = paint(v); lacks(d, "Title a-1"); has(d, "You sent: 1a: A (Recommended)"); has(d, /^to lead-r-1 · o\/r#1 · \d\d:\d\d$/);
+  d = select(v, epicKey(v, 2)); lacks(d, /^You sent/);
+});
+test("Sent opened: each ask with its state; one not picked up shows it once and . nudges it", async () => {
+  const E = { epic: "o/r#2", terminal: "lead-r-2" };
+  const v = drawE(lines(ASK("a-5", E), ANSE("a-5", 40), ASK("a-6", E), ANSE("a-6", 2), { ts: iso(1), event: "delivered", id: "a-6" }, ASK("a-7", E), ANSE("a-7", 20), { ts: iso(19), event: "delivered", id: "a-7" }, { ts: iso(18), event: "applied", id: "a-7" }));
+  v.sentOpen = true; let d = paint(v); has(d, "Sent · 3"); eachRow(v, "sent");
+  d = select(v, "sent:a-5"); has(d, "sent ✓ · received – · done –"); assert.equal(d.filter((s) => s === "not picked up").length, 1);
+  has(select(v, "sent:a-6"), "sent ✓ · received ✓ · done –"); has(select(v, "sent:a-7"), "sent ✓ · received ✓ · done ✓"); lacks(paint(v), "Answered, not applied yet");
+  execWith(OK); select(v, "sent:a-5"); press(v, "."); await tick(); assert.deepEqual(calls[0].slice(-3), ["ask", "nudge", "a-5"]);
+});
+test("a reply from the agent brings the ask back to its epic as needing the owner, marked reply, with the reply first; sent again it leaves again", async () => {
+  const v = drawE(lines(ASK("a-1", { terminal: SENT_TERM }), ANSE("a-1", 30), MSGE("a-1", 10, "agent", "can't do that because the build is red")));
+  assert.equal(v.model().rows.find((r) => r.section === "epic" && r.row.num === 1).row.state, "needs"); lacks(v.drawn, "Sent · 1");
+  const d = select(v, epicKey(v, 1)); has(d, "reply"); has(d, "Reply from the agent: can't do that because the build is red");
+  assert.ok(d.indexOf("Reply from the agent: can't do that because the build is red") < d.indexOf("Why"), "the reply comes first");
+  execWith(OK); press(v, "b"); await tick();
+  assert.equal(v.model().vm.asks.length, 0); const e = v.model().rows.find((r) => r.section === "epic" && r.row.num === 1).row; assert.notEqual(e.state, "needs"); has(paint(v), "Sent · 1");
+});
+test("the open line: a new ask's plan and an old ask's mockup, preview and stage show first; p opens the first; a design question has none", async () => {
+  const v = drawE(lines(ASK("a-1", { plan: "/Users/v/plans/1/plan.html", terminal: SENT_TERM }), ASK("a-2", { epic: "o/r#2", terminal: "lead-r-2", today: "mock /Users/v/canvas/9/m.html, preview https://x.kuchbhi.pages.dev/a, stage https://stage.kuchbhi.app/b" }),
+    ASK("a-3", { epic: "o/r#3", terminal: "lead-r-3", card: "o/r#33", title: "Hero line?" })), { ...twoEpics, areas: {} });
+  let d = select(v, epicKey(v, 1)); has(d, "open plan"); has(d, "/Users/v/plans/1/plan.html"); has(v.drawn, /^Needs a look/);
+  d = select(v, epicKey(v, 2)); has(d, "open mockup"); has(d, "open preview"); has(d, "open stage"); assert.ok(d.indexOf("open mockup") < d.indexOf("open preview") && d.indexOf("open preview") < d.indexOf("open stage"));
+  d = select(v, epicKey(v, 3)); lacks(d, /^open /);
+  execWith(OK); select(v, epicKey(v, 2)); press(v, "p"); await tick(); assert.ok(calls[0].includes("/Users/v/canvas/9/m.html"), `opened ${calls[0]}`);
+});
