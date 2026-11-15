@@ -500,17 +500,17 @@ const parse = (text) => { try { return JSON.parse(text); } catch { return null; 
 const mergeStuck = (own, flagged) => [...own.filter((r) => !flagged.some((f) => f.name === r.name)), ...flagged];
 
 export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, stuckJson, nowMs, hiddenIds }) {
-  const ts = (terminals ?? []).map(normalize);
+  const ts = (terminals ?? []).map(normalize), asksLines = parseJsonl(asksText); // parsed once: the run file is big and the view redraws often
   const cc = parse(closedJson);
   const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
   const here = new Set(ts.filter((t) => t.live).map((t) => t.name).filter(Boolean));
-  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => { const gone = !!a.terminal && !a.replaced && !here.has(a.terminal); return { ...a, askerGone: gone, replaceable: gone && a.visual !== "ready" }; }); // r works at once on a gone asker: ask.sh replace records the picture request itself
+  const asks = openAsks(asksLines, nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => { const gone = !!a.terminal && !a.replaced && !here.has(a.terminal); return { ...a, askerGone: gone, replaceable: gone && a.visual !== "ready" }; }); // r works at once on a gone asker: ask.sh replace records the picture request itself
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
   const stuck = mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups = epicGroups(ts);
-  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck, groups, epics: buildEpics({ asks, groups, stuck, closed, titles, areas: cc?.areas && typeof cc.areas === "object" ? cc.areas : {}, origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, statuses: leadStatuses(parseJsonl(asksText)), nowMs }), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(asksLines, nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(asksLines), stuck, groups, epics: buildEpics({ asks, groups, stuck, closed, titles, areas: cc?.areas && typeof cc.areas === "object" ? cc.areas : {}, origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, statuses: leadStatuses(asksLines), nowMs }), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with

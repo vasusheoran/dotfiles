@@ -23,7 +23,7 @@ export default class Tabs extends View {
         else if (cmd === "toggle") this.openAgents();
       }
     });
-    this.pressed = null; this.back = null;
+    this.cx = cx; this.pressed = null; this.back = null;
     this.scroll = ScrollHandle.new();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
   }
@@ -39,7 +39,7 @@ export default class Tabs extends View {
   finishInbox(tries) {
     const steps = inboxFinish({ spaces: spaces(), panes: panes() });
     if (steps) { for (const [name, args] of steps) run(name, args); return; }
-    if (tries < 20) setTimeout(() => this.finishInbox(tries + 1), 150);
+    if (tries < 20) this.cx.timer.after(150, () => this.finishInbox(tries + 1));
   }
 
   // The side panel is remembered per space: switching shows that space's choice
