@@ -7,7 +7,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
-  answerLine, hideKey, sentReceipt, openLinks, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
+  answerLine, hideKey, subKey, partLabel, askState, sentReceipt, openLinks, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
 const MONO = "JetBrains Mono";
@@ -23,6 +23,8 @@ const questionsOfAsk = (a) => [...new Set(a.options.map((o) => o.q))].sort((x, y
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
 const sans = (size, color, text) => div().font_family(SANS).text_size(size).text_color(color).child(text);
 
+const epicOf = (r) => (r?.section === "epic" ? r.row : r?.section === "sub" || r?.section === "subpart" ? r.row.epic : null);
+
 export default class AgentsView extends View {
   init(_props, cx) {
     // cmd-shift-t arrives through tabs-agents (a layout mod, always loaded), which flips this shared flag; t in the top pane flips it too
@@ -30,7 +32,7 @@ export default class AgentsView extends View {
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.sentOpen = false; this.outbox = new Map(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
+    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.explicit = this.loadExpanded(); this.openSet = new Set(); this.sentOpen = false; this.outbox = new Map(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
     this.askH = storedAskH(this.loadSize()); this.drag = null; this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
     this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
@@ -41,6 +43,19 @@ export default class AgentsView extends View {
   // the question box size, remembered across reloads; storage can be missing or blocked, and then the size lasts for the session
   loadSize() { try { return globalThis.localStorage?.getItem(ASK_H.key) ?? null; } catch { return null; } }
   saveSize() { try { globalThis.localStorage?.setItem(ASK_H.key, String(this.askH)); } catch { /* not remembered */ } }
+  // the expanded epics, remembered across reloads: an epic the owner opened or closed by hand keeps that; any other is open only while it holds the highlight
+  loadExpanded() { try { return new Map(Object.entries(JSON.parse(globalThis.localStorage?.getItem("agents-view.expanded") ?? "{}"))); } catch { return new Map(); } }
+  saveExpanded() { try { globalThis.localStorage?.setItem("agents-view.expanded", JSON.stringify(Object.fromEntries(this.explicit))); } catch { /* not remembered */ } }
+  selEpicKey(vm) {
+    const m = /^sub:([^:]+)/.exec(this.sel ?? "");
+    return m ? vm.epics.find((e) => e.asks.some((a) => a.id === m[1]))?.key ?? null : this.sel;
+  }
+  expandedSet(vm) {
+    const sel = this.selEpicKey(vm);
+    return new Set(vm.epics.filter((e) => e.asks.length && (this.explicit.has(e.key) ? this.explicit.get(e.key) : e.key === sel)).map((e) => e.key));
+  }
+  setOpen(key, on, cx) { this.explicit.set(key, on); this.saveExpanded(); cx.notify(); }
+  toggleEpic(key, cx) { const { vm } = this.model(); this.setOpen(key, !this.expandedSet(vm).has(key), cx); }
   dragStart(e) { this.drag = { y: e.position.y, h: this.askH }; }
   dragMove(e, cx) { if (!this.drag) return; this.askH = dragAskH(this.drag.h, this.drag.y, e.position.y); cx.notify(); }
   dragEnd() { if (this.drag) { this.drag = null; this.saveSize(); } }
@@ -69,7 +84,8 @@ export default class AgentsView extends View {
 
   model() {
     const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden, outbox: [...this.outbox.values()] });
-    return { vm, rows: flatRows(vm, { showRun: this.showRun, filter: this.filter ?? "", unfolded: this.unfolded, sentOpen: this.sentOpen }).filter((r) => r.section !== "others") }; // other sessions show as one count line
+    this.openSet = this.expandedSet(vm);
+    return { vm, rows: flatRows(vm, { showRun: this.showRun, filter: this.filter ?? "", unfolded: this.unfolded, sentOpen: this.sentOpen, expanded: this.openSet }).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
   pane() { return rightPaneId(panes(), focused()?.tab); }
@@ -122,7 +138,7 @@ export default class AgentsView extends View {
   // the running agent behind the highlighted row: its ask's terminal, or the desk
   agentFor(cur, ask, vm) {
     const all = liveAgents(vm);
-    if (cur?.section === "epic") return (cur.row.lead && all.find((a) => a.address === cur.row.lead.address)) ?? null; // an epic's agent is its lead
+    if (epicOf(cur)) return (epicOf(cur).lead && all.find((a) => a.address === epicOf(cur).lead.address)) ?? null; // an epic's agent is its lead
     return (ask ? all.find((a) => a.name === ask.terminal) : cur?.section === "desk" ? all.find((a) => a.role === "desk") : null) ?? null;
   }
 
@@ -138,7 +154,7 @@ export default class AgentsView extends View {
   askKey(a, k, cx) {
     this.note = "";
     if (k === "n" && !a.options.some((o) => o.key === "n")) { this.input = { mode: "note", id: a.id, q: this.q, text: (questionsOfAsk(a).length > 1 ? this.notes.get(a.id)?.[this.q] : this.kept.get(a.id)) ?? "" }; return cx.notify(); }
-    if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.qSet = true; this.armed = null; return cx.notify(); }
+    if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.qSet = true; this.armed = null; this.follow(a); return cx.notify(); }
     const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (r && ["post", "arm", "pick"].includes(r.type) && a.options.some((o) => o.key === k)) this.flashOn(a, k, cx);
     return this.act(a, r, cx);
@@ -157,7 +173,7 @@ export default class AgentsView extends View {
       if (was?.startsWith(`${r.q}note`)) this.notes.set(a.id, { ...this.notes.get(a.id), [r.q]: was.slice(was.indexOf(":") + 1).trim() }); // a note and now a pick: the note goes with the pick
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks); this.qSet = false;
       const total = questionsOfAsk(a).length, marked = questionsOfAsk(a).filter((q) => picks[q]).length, nx = partStep(a, r.q, "right");
-      if (nx.q) this.q = nx.q; // marked: on to the next part
+      if (nx.q) { this.q = nx.q; this.follow(a); } // marked: on to the next part
       this.say(a.id, "ok", marked === total ? `marked ${marked} of ${total} · ↵ sends the answer` : `marked ${marked} of ${total} · ctrl-↵ takes the recommended for the rest`); return cx.notify();
     }
     if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: questionsOfAsk(a).length > 1 ? partNotes(a, this.notes.get(a.id)) || undefined : this.kept.get(a.id) }), cx, r.text === "Done." && a.kind === "you" ? "done" : "pick", r.text === "Done." ? "" : r.key ?? "");
@@ -216,7 +232,7 @@ export default class AgentsView extends View {
     const picks = this.picks.get(a.id) ?? {}, qs = questionsOfAsk(a);
     if (picks[i.q] && !picks[i.q].startsWith(`${i.q}note`)) { this.notes.set(a.id, { ...this.notes.get(a.id), [i.q]: text }); this.say(a.id, "ok", `note kept for part ${i.q}: it goes with the answer`); return cx.notify(); }
     const next = { ...picks, [i.q]: `${i.q}note: ${text}` }; this.picks.set(a.id, next);
-    const nx = partStep(a, i.q, "right"); if (nx.q) this.q = nx.q;
+    const nx = partStep(a, i.q, "right"); if (nx.q) { this.q = nx.q; this.follow(a); }
     this.say(a.id, "ok", `marked ${qs.filter((q) => next[q]).length} of ${qs.length} · your note is the answer for part ${i.q}`); return cx.notify();
   }
 
@@ -242,16 +258,20 @@ export default class AgentsView extends View {
     cx.notify();
   }
 
+  // the question box moved to another part or ask: when the highlight is on a sub-row it goes there too
+  follow(a) { if (/^sub:/.test(this.sel ?? "")) this.sel = subKey(a, this.q); }
+
   // the epic that holds the selected row stays expanded
   select(r) {
     this.touched = true; this.sel = r.key; this.q = 1; this.qSet = false; this.back = 0;
+    if (r.section === "sub" || r.section === "subpart") { this.pos = { ...this.pos, [r.row.epic.key]: r.row.epic.asks.indexOf(r.row.ask) }; this.q = r.row.q ?? questionsOfAsk(r.row.ask)[0] ?? 1; }
   }
 
   // the ask shown for a batch row: the place in the batch is kept in this.pos
   // Enter opens a ready picture while its row has focus; tab hands focus to the options, and back
   onPicture(a) { return a.visual === "ready" && !this.picOff.has(a.id); }
 
-  askOf(r) { return r?.section === "epic" && r.row.asks.length ? askAt(this.pos, r.row) : null; }
+  askOf(r) { return r?.section === "sub" || r?.section === "subpart" ? r.row.ask : r?.section === "epic" && r.row.asks.length ? askAt(this.pos, r.row) : null; }
 
   key(e, cx) {
     const k = e.keystroke;
@@ -266,8 +286,9 @@ export default class AgentsView extends View {
     const own = (kk) => !!ask?.options.some((o) => o.key === kk), tab = this.tab(), agent = this.agentFor(cur, ask, vm);
     const app = (kk) => k === kk && !own(kk); // f is the panel's key unless the open ask has an option f; option letters always mean options, so the board is capital B
     if (app("f")) { cx.stop_propagation(); this.filter ??= ""; this.typing = true; return cx.notify(); }
-    if ((k === "B" || k === "shift-b") && cur?.section === "epic") { cx.stop_propagation(); return this.board(cur, vm, cx); }
+    if ((k === "B" || k === "shift-b") && epicOf(cur)) { cx.stop_propagation(); return this.board(cur, vm, cx); }
     if (k === "space" && cur?.section === "fold") { cx.stop_propagation(); this.unfolded = !this.unfolded; return cx.notify(); }
+    if (k === "space" && cur?.section === "epic" && cur.row.asks.length) { cx.stop_propagation(); return this.toggleEpic(cur.row.key, cx); }
     if ((k === "space" || k === "enter") && cur?.section === "sentfold") { cx.stop_propagation(); this.sentOpen = !this.sentOpen; return cx.notify(); }
     if (k === "escape" && this.filter != null) { cx.stop_propagation(); this.filter = null; this.touched = false; return cx.notify(); }
     if ((k === "[" || k === "]") && !own(k)) { cx.stop_propagation(); this.askH = resizeAskH(this.askH, k); this.saveSize(); return cx.notify(); }
@@ -283,11 +304,14 @@ export default class AgentsView extends View {
     if (cur?.section === "sent") { // an answer the asker has not picked up: the owner's key sends one reminder
       if (k === ".") { cx.stop_propagation(); return this.nudge(cur.row, cx); }
     }
-    if ((cur?.section === "epic" || cur?.section === "batch") && (k === "left" || k === "right")) {
+    if ((epicOf(cur) || cur?.section === "batch") && (k === "left" || k === "right")) {
       cx.stop_propagation(); this.armed = null;
+      const ep = epicOf(cur), batch = ep ?? cur.row, open = !!ep && this.openSet.has(ep.key);
+      if (cur.section === "epic" && ep.asks.length && (open ? k === "left" && (this.pos[ep.key] ?? 0) === 0 && this.q === (questionsOfAsk(ask)[0] ?? 1) : k === "right")) return this.setOpen(ep.key, !open, cx); // ← at the start closes an open epic, → opens a closed one; otherwise they step
       const st = ask ? partStep(ask, this.q, k) : { step: k };
       if (st.q) this.q = st.q;
-      else { this.pos = stepAsk(this.pos, cur.row, k); const nx = askAt(this.pos, cur.row), qs = questionsOfAsk(nx); this.q = k === "left" ? qs[qs.length - 1] ?? 1 : qs[0] ?? 1; }
+      else { this.pos = stepAsk(this.pos, batch, k); const nx = askAt(this.pos, batch), qs = questionsOfAsk(nx); this.q = k === "left" ? qs[qs.length - 1] ?? 1 : qs[0] ?? 1; }
+      if (ep?.asks.length && open) { this.sel = subKey(askAt(this.pos, ep), this.q); this.touched = true; } // the highlight goes where the box went
       return cx.notify();
     }
     if (k === "tab" && ask?.visual === "ready") { cx.stop_propagation(); this.picOff.has(ask.id) ? this.picOff.delete(ask.id) : this.picOff.add(ask.id); return cx.notify(); }
@@ -326,10 +350,10 @@ export default class AgentsView extends View {
 
   // b: the board where it is already open, at this epic; none open says so
   board(cur, vm, cx) {
-    const key = paneFor(cur, vm, this.pos).thread ?? `epic:${cur.row.ref}`, r = boardStep({ spaces: spaces(), panes: panes(), epic: cur.row.ref });
+    const ep = epicOf(cur), key = paneFor(cur, vm, this.pos).thread ?? `epic:${ep.ref}`, r = boardStep({ spaces: spaces(), panes: panes(), epic: ep.ref });
     if (r.share) setShared(BOARD_EPIC, r.share);
     for (const st of r.steps) run(...st);
-    this.say(key, r.receipt ? "fail" : "ok", r.receipt || `board: showing ${cur.row.title}`);
+    this.say(key, r.receipt ? "fail" : "ok", r.receipt || `board: showing ${ep.title}`);
     cx.notify();
   }
 
@@ -337,7 +361,7 @@ export default class AgentsView extends View {
     if (r?.section === "fold") { this.unfolded = !this.unfolded; return; }
     if (r?.section === "sentfold") { this.sentOpen = !this.sentOpen; return; }
     if (r?.section === "summary") { this.showRun = !this.showRun; return; }
-    if (!r || r.section === "batch" || r.section === "epic" || r.section === "sent" || this.fixture) return; // fixture rows are not real terminals
+    if (!r || r.section === "batch" || r.section === "epic" || r.section === "sub" || r.section === "subpart" || r.section === "sent" || this.fixture) return; // fixture rows are not real terminals
     const t = selectTarget(r, vm?.deskProject ?? null);
     if (t?.show) this.show(t.show);
     else if (t?.start) perform({ type: "start-desk", argv: t.start }, { run, exec, pane: this.pane() });
@@ -432,6 +456,15 @@ export default class AgentsView extends View {
       .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
   }
 
+  // an expanded epic's ask, or one part of a multi-part ask: the highlight moves through these and the question box shows the highlighted one
+  subRow(t, r) {
+    const sel = r.key === this.sel, { ask: a, q } = r.row, picks = this.picks.get(a.id) ?? {};
+    const el = h_flex().id(r.key).w_full().flex_none().gap(8).items_baseline().py(3).rounded(6).when(sel, (x) => x.bg(t.selected).border_l_2().border_color(t.accent))
+      .on_click((_e, cx) => { this.select(r); cx.notify(); });
+    return q ? el.pl(52).pr(14).child(sans(12, sel ? t.foreground : t.muted, partLabel(a, q, picks)).flex_1().min_w(0).truncate())
+      : el.pl(34).pr(14).child(sans(12, t.foreground, a.title).flex_1().min_w(0).truncate()).child(mono(11, t.muted, ageText(a.ageMs)).flex_none()).child(sans(11, a.reply ? t.working : t.dim, askState(a, picks)).flex_none());
+  }
+
   // a sent ask: its state (sent, received, done), "not picked up" after ten minutes and the . key nudges; what was sent shows in the pane below when it is selected
   sentRow(t, r) {
     const a = r.row, sel = r.key === this.sel, rc = sentReceipt(a);
@@ -491,7 +524,9 @@ export default class AgentsView extends View {
     const badge = (b) => mono(11, { merged: "#a371f7", waiting: "#d4a72c", passed: "#3fb950" }[b.state], `#${b.pr}`).flex_none();
     return v_flex().id(r.key).w_full().flex_none().px(14).py(4).gap(1).rounded(6).when(sel, (x) => x.bg(t.selected).border_l_2().border_color(t.accent))
       .on_click((_e, cx) => { this.select(r); cx.notify(); })
-      .child(h_flex().w_full().gap(8).items_center().child(div().size(7).flex_none().rounded(4).bg(dot))
+      .child(h_flex().w_full().gap(8).items_center()
+        .when(e.asks.length > 0, (x) => x.child(div().id(`${r.key}:chev`).flex_none().w(14).on_click((_e, cx) => { cx.stop_propagation(); this.select(r); this.toggleEpic(e.key, cx); }).child(mono(12, t.dim, this.openSet.has(e.key) ? "▾" : "▸"))))
+        .child(div().size(7).flex_none().rounded(4).bg(dot))
         .child(sans(13, e.state === "done" ? t.muted : t.foreground, e.title).flex_1().min_w(0).truncate()).child(mono(11, t.dim, `#${e.num}`).flex_none()).when(e.ageMs != null, (x) => x.child(mono(12, t.muted, ageText(e.ageMs)).flex_none())))
       .child(h_flex().w_full().gap(8).items_center().pl(15).child(sans(12, e.state === "needs" ? t.foreground : t.muted, e.line).flex_1().min_w(0).truncate()).children(e.prs.map(badge)));
   }
@@ -591,7 +626,7 @@ export default class AgentsView extends View {
     const leftEl = () => {
       // one item per group head, epic row and fold row; only LIST_ITEMS of them show, the selected one a third of the way down while the rest move past it
       const items = [
-        ...list.groups.flatMap((g) => [{ key: `head:${g.name}`, make: () => [this.groupHead(t, g)] }, ...g.epics.map((e) => ({ key: e.key, make: () => draw(byKey.get(e.key), (r) => this.epicRow(t, r)) }))]),
+        ...list.groups.flatMap((g) => [{ key: `head:${g.name}`, make: () => [this.groupHead(t, g)] }, ...g.epics.flatMap((e) => [{ key: e.key, make: () => draw(byKey.get(e.key), (r) => this.epicRow(t, r)) }, ...rows.filter((r) => (r.section === "sub" || r.section === "subpart") && r.row.epic.key === e.key).map((r) => ({ key: r.key, make: () => draw(r, (x) => this.subRow(t, x)) }))])]),
         ...(list.finished.count ? [{ key: "fold", make: () => draw(byKey.get("fold"), (r) => this.foldRow(t, r)) }, ...(this.unfolded ? list.finished.epics.map((e) => ({ key: e.key, make: () => draw(byKey.get(e.key), (r) => this.epicRow(t, r)) })) : [])] : []),
       ];
       const at = Math.max(0, items.findIndex((x) => x.key === this.sel)), start = listWindow(items.length, at, LIST_ITEMS), shown = items.slice(start, start + LIST_ITEMS);

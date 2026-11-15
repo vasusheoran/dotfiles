@@ -123,9 +123,9 @@ test("a list longer than the pane shows a window: the selection a third of the w
   const n = 20, titles = Object.fromEntries(Array.from({ length: n }, (_, i) => [`o/r#${i + 1}`, `Epic number ${String(i + 1).padStart(2, "0")}`]));
   const v = drawE(lines(...Array.from({ length: n }, (_, i) => ASK(`a-${i + 1}`, { epic: `o/r#${i + 1}`, card: `o/r#${i + 100}` }))), { closed: [], titles, areas: {} }, terms);
   const names = (d) => d.filter((s) => /^Epic number/.test(s)).filter((s, i, all) => all.indexOf(s) === i), titleOf = (k) => v.model().rows.find((r) => r.key === k).row.title;
-  let d = paint(v); assert.equal(d.filter((s) => /^epic:o\/r#/.test(s)).length, 8, "the window holds 9 items: a group head and 8 epics"); has(d, /▼ \d+ below/); lacks(d, /▲/);
+  let d = paint(v); assert.equal(d.filter((s) => /^epic:o\/r#\d+$/.test(s)).length, 7, "the window holds 9 items: a group head, 7 epics and the selected one's ask"); has(d, /▼ \d+ below/); lacks(d, /▲/);
   const keys = v.model().rows.filter((r) => r.section === "epic").map((r) => r.key);
-  d = select(v, keys[12]); has(d, /▲ \d+ above/); assert.equal(d.filter((s) => /^epic:o\/r#/.test(s)).indexOf(keys[12]), 3, "the selected row stays at the anchor, a third of the way down");
+  d = select(v, keys[12]); has(d, /▲ \d+ above/); assert.equal(d.filter((s) => /^epic:o\/r#\d+$/.test(s)).indexOf(keys[12]), 3, "the selected row stays at the anchor, a third of the way down");
   d = select(v, keys[19]); lacks(d, /▼/); has(d, titleOf(keys[19]));
 });
 test("the Inbox pane takes the keyboard once when its tab becomes active, never from the agent pane", () => {
@@ -259,4 +259,47 @@ test("the open line: a new ask's plan and an old ask's mockup, preview and stage
   d = select(v, epicKey(v, 2)); has(d, "open mockup"); has(d, "open preview"); has(d, "open stage"); assert.ok(d.indexOf("open mockup") < d.indexOf("open preview") && d.indexOf("open preview") < d.indexOf("open stage"));
   d = select(v, epicKey(v, 3)); lacks(d, /^open /);
   execWith(OK); select(v, epicKey(v, 2)); press(v, "p"); await tick(); assert.ok(calls[0].includes("/Users/v/canvas/9/m.html"), `opened ${calls[0]}`);
+});
+
+// ---- owner round 3: the list shows the structure; the highlight and the question box agree
+const FAM = () => lines(ASK("a-1", { epic: "o/r#1", ts: iso(30) }), PART("a-1", 2, "Show prices?"), PART("a-1", 3, "Hindi now?"), ASK("a-2", { epic: "o/r#1", card: "o/r#22", ts: iso(10) }), ASK("a-3", { epic: "o/r#2", card: "o/r#3" }));
+test("collapsed is the default except for the selected epic: the others show no asks or parts", () => {
+  const v = drawE(FAM()); let d = select(v, epicKey(v, 2)); lacks(d, "Title a-2"); lacks(d, "2 Show prices? · open");
+  d = select(v, epicKey(v, 1)); has(d, "Title a-2"); has(d, "1 Q · open"); has(d, "2 Show prices? · open"); has(d, "3 Hindi now? · open");
+  d = select(v, epicKey(v, 2)); lacks(d, "2 Show prices? · open"); has(d, "Title a-3");
+});
+test("← on the expanded epic collapses it, → or space expands it again, a click on the chevron toggles", () => {
+  const v = drawE(FAM()); select(v, epicKey(v, 1)); has(paint(v), "2 Show prices? · open");
+  press(v, "left"); lacks(paint(v), "2 Show prices? · open"); lacks(paint(v), "Title a-2");
+  press(v, "right"); has(paint(v), "2 Show prices? · open"); assert.equal(v.sel, epicKey(v, 1), "expanding keeps the highlight on the epic");
+  press(v, "space"); lacks(paint(v), "2 Show prices? · open"); press(v, "space"); has(paint(v), "2 Show prices? · open");
+  v.toggleEpic(epicKey(v, 1), tcx); lacks(paint(v), "2 Show prices? · open"); v.toggleEpic(epicKey(v, 1), tcx); has(paint(v), "2 Show prices? · open");
+});
+test("↑ ↓ move the highlight through the sub-rows and the box shows exactly the highlighted one", () => {
+  const v = drawE(FAM()); select(v, epicKey(v, 1)); const at = () => ({ sel: v.sel, d: paint(v) });
+  press(v, "down"); assert.equal(v.sel, "sub:a-1"); has(paint(v), "Title a-1");
+  press(v, "down"); assert.equal(v.sel, "sub:a-1:1"); has(paint(v), "question 1 of 3 ‹ ›");
+  press(v, "down"); assert.equal(v.sel, "sub:a-1:2"); has(paint(v), "question 2 of 3 ‹ ›"); has(paint(v), "2 · Show prices?");
+  press(v, "down"); press(v, "down"); assert.equal(v.sel, "sub:a-2"); has(paint(v), "Title a-2"); lacks(paint(v), /^question \d of 3/); has(paint(v), "ask 2 of 2 ‹ ›");
+  press(v, "up"); assert.equal(v.sel, "sub:a-1:3"); has(paint(v), "question 3 of 3 ‹ ›");
+  void at;
+});
+test("← → step the parts and the asks, and the highlight follows so it always matches the box", () => {
+  const v = drawE(FAM()); select(v, epicKey(v, 1));
+  press(v, "right"); assert.equal(v.sel, "sub:a-1:2"); has(paint(v), "question 2 of 3 ‹ ›");
+  press(v, "right"); assert.equal(v.sel, "sub:a-1:3"); has(paint(v), "question 3 of 3 ‹ ›");
+  press(v, "right"); assert.equal(v.sel, "sub:a-2"); has(paint(v), "ask 2 of 2 ‹ ›");
+  press(v, "left"); assert.equal(v.sel, "sub:a-1:3"); has(paint(v), "question 3 of 3 ‹ ›");
+  press(v, "left"); press(v, "left"); assert.equal(v.sel, "sub:a-1:1"); has(paint(v), "question 1 of 3 ‹ ›");
+});
+test("a mark shows on its part row and the ask row, and the highlight moves on with it", () => {
+  const v = drawE(FAM()); select(v, epicKey(v, 1)); press(v, "down"); press(v, "down"); assert.equal(v.sel, "sub:a-1:1");
+  press(v, "b"); assert.equal(v.sel, "sub:a-1:2"); const d = paint(v); has(d, "1 Q · marked b"); has(d, "marked 1 of 3"); has(d, "question 2 of 3 ‹ ›");
+});
+test("the expanded epics are remembered across reloads", () => {
+  const mem = {}; globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, x) => { mem[k] = String(x); } };
+  const v = drawE(FAM()); select(v, epicKey(v, 1)); press(v, "left"); assert.ok(mem["agents-view.expanded"], "saved");
+  const w = drawE(FAM()); select(w, epicKey(w, 1)); lacks(paint(w), "2 Show prices? · open"); press(w, "right"); has(paint(w), "2 Show prices? · open");
+  const x = drawE(FAM()); select(x, epicKey(x, 2)); has(paint(x), "Title a-3");
+  delete globalThis.localStorage;
 });

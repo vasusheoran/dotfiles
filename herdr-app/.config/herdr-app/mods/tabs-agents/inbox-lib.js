@@ -307,6 +307,7 @@ export const isNarrow = (width) => typeof width === "number" && width < 640;
 export function paneFor(row, vm, pos) {
   if (row?.section === "desk") return { kind: "desk", thread: "desk" };
   if (row?.section === "epic") { const e = row.row; if (!e.asks.length) return { kind: "epic", epic: e, thread: `epic:${e.ref}` }; const ask = askAt(pos, e); return { kind: "ask", ask, batch: e, epic: e, thread: ask.id }; }
+  if (row?.section === "sub" || row?.section === "subpart") { const { epic, ask, q } = row.row; return { kind: "ask", ask, batch: epic, epic, thread: ask.id, ...(q ? { q } : {}) }; }
   if (row?.section === "fold") return { kind: "fold", fold: row.row, thread: null };
   if (row?.section === "batch") { const ask = askAt(pos, row.row); return { kind: "ask", ask, batch: row.row, thread: ask.id }; }
   if (row?.section === "sent") return { kind: "answered", answered: row.row, thread: row.row.id };
@@ -571,13 +572,13 @@ export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.r
 // Every selectable row in display order: the desk first (never counted), one row per batch in lane order, answered asks, the running summary,
 // then running (epics, then side jobs), stuck, then others. While asks wait, running and stuck show only when `showRun` is set.
 // A terminal in STUCK and in its epic group is selectable in both.
-export function flatRows(vm, { showRun, filter = "", unfolded = false, sentOpen = false } = {}) {
+export function flatRows(vm, { showRun, filter = "", unfolded = false, sentOpen = false, expanded = new Set() } = {}) {
   const list = epicList(vm.epics ?? [], { filter, unfolded });
   const waiting = vm.asks.length > 0;
   const sent = vm.sent?.length ? [{ key: "sentfold", section: "sentfold", address: null, id: null, row: { label: `Sent · ${vm.sent.length}`, count: vm.sent.length, open: sentOpen } }, ...(sentOpen ? vm.sent.map((a) => ({ key: `sent:${a.id}`, section: "sent", address: null, id: a.id, row: a })) : [])] : [];
   return [
     { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
-    ...list.rows.map((r) => (r.kind === "fold" ? { key: "fold", section: "fold", address: null, id: null, row: r } : { key: r.epic.key, section: "epic", address: null, id: null, row: r.epic })),
+    ...list.rows.flatMap((r) => (r.kind === "fold" ? [{ key: "fold", section: "fold", address: null, id: null, row: r }] : [{ key: r.epic.key, section: "epic", address: null, id: null, row: r.epic }, ...(expanded.has(r.epic.key) ? subRows(r.epic) : [])])),
     ...sent,
     ...(waiting ? [{ key: "summary:running", section: "summary", address: null, id: null, row: { line: runSummary(vm) } }] : []),
     ...(waiting && !showRun ? [] : [
@@ -589,8 +590,13 @@ export function flatRows(vm, { showRun, filter = "", unfolded = false, sentOpen 
   ];
 }
 
+// An expanded epic: one sub-row per ask, and under a multi-part ask one per part. Keys: sub:<ask> and sub:<ask>:<part>.
+export const subKey = (ask, q) => (questionsOf(ask).length > 1 && q ? `sub:${ask.id}:${q}` : `sub:${ask.id}`);
+const subRows = (epic) => epic.asks.flatMap((a) => [{ key: `sub:${a.id}`, section: "sub", address: null, id: a.id, row: { epic, ask: a, q: null } },
+  ...(questionsOf(a).length > 1 ? questionsOf(a).map((q) => ({ key: `sub:${a.id}:${q}`, section: "subpart", address: null, id: a.id, row: { epic, ask: a, q } })) : [])]);
+
 // The header's key hint for the selected row.
-export const footerHint = (section) => ({ epic: "↑ ↓ epic · ↵ send recommended · 1-9 then a letter changes one · n note · ← → ask · f filter · B board · t lead's terminal · / message the lead", fold: "space shows or hides the finished · ↑ ↓ move", batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", sent: ". nudge an answer not picked up · ↑ ↓ move", sentfold: "space shows or hides what you sent · ↑ ↓ move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
+export const footerHint = (section) => ({ sub: "↑ ↓ ask or part · ← → step · 1-9 then a letter changes one · n note · ↵ send", subpart: "↑ ↓ ask or part · ← → step · a letter marks it · n note · ↵ send", epic: "↑ ↓ rows · ← → step asks and parts · space opens or closes the epic · ↵ send recommended · 1-9 then a letter changes one · n note · f filter · B board · t lead's terminal · / message the lead", fold: "space shows or hides the finished · ↑ ↓ move", batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", sent: ". nudge an answer not picked up · ↑ ↓ move", sentfold: "space shows or hides what you sent · ↑ ↓ move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
 // Enter on a row: show its terminal in the right-hand pane. The desk, when it is not running, starts only on this owner key,
 // through spawn.sh, for the project the settings name (desk_project). Batches are not shown.
@@ -884,3 +890,10 @@ export function waitingCount(asksText, closedJson, nowMs) {
   return openAsks(parseJsonl(asksText), nowMs, Array.isArray(cc?.closed) ? cc.closed : []).length;
 }
 export const inboxLabel = (n) => (n > 0 ? `Inbox ${n}` : "Inbox");
+
+// A part's row text: its number and title, then whether it is marked (the letter, or `note`) or open. An ask's state: reply, how many parts are marked, or open.
+export const partLabel = (ask, q, picks = {}) => `${q} ${questionTitles(ask.body)[q] || `question ${q}`} · ${picks[q] ? `marked ${picks[q].split(":")[0].slice(String(q).length)}` : "open"}`;
+export const askState = (ask, picks = {}) => {
+  const qs = questionsOf(ask), n = qs.filter((q) => picks[q]).length;
+  return ask.reply ? "reply" : qs.length > 1 && n ? `marked ${n} of ${qs.length}` : "open";
+};

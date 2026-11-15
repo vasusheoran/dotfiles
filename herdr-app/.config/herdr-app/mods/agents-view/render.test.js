@@ -293,7 +293,7 @@ test("tab: the first split gives the keyboard back to the Inbox pane (opening th
 test("tab: moving to another ask keeps the pane (no close, no split, no resize): the address is written and the attach in it is detached", async () => {
   tabEnv(true, { split: false }); execWith(async () => ({ code: 0, stdout: "", stderr: "" })); const asksText = lines(W("a-1", { batch_key: "k1" }), W("a-2", { epic: "o/r#2", card: "o/r#4", batch_key: "k2" }));
   const v = draw({ asksText, showRun: false, terminals: [...terms, term({ address: "t7", name: "lead-r-2", labels: ["role=lead", "epic=o/r#2"] })] }); await (async () => { flush(); await tick(); await tick(); })(); upAll(v);
-  press(v, "down"); paint(v); flush(); await tick(); await tick();
+  press(v, "down"); press(v, "down"); paint(v); flush(); await tick(); await tick();
   assert.deepEqual(runs(), [], "the pane is not touched");
   assert.deepEqual(written(), ["printf %s 't7' > " + FILE]); assert.deepEqual(detached(), [["t9", "ctrl+\\"]]);
   has(paint(v), "lead-r-2 · working");
@@ -439,7 +439,7 @@ test("toggle: cmd-shift-t (tabs-agents flips the shared flag) opens and closes i
   tabEnv(true, { open: false, split: false }); execWith(async () => ({ code: 0, stdout: "", stderr: "" })); const v = draw({ asksText: lines(W("a-1", { batch_key: "k1" }), W("a-2", { epic: "o/r#2", card: "o/r#4", batch_key: "k2" })), showRun: false, terminals: [...terms, term({ address: "t7", name: "lead-r-2", labels: ["role=lead", "epic=o/r#2"] })] }); flush();
   globalThis.__shared["agents-view.pane"] = true; paint(v); flush(); await tick(); await tick(); assert.deepEqual(ran("pane.split"), [SPLIT]);
   globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p3", tab: "tab-i", terminal: "t9" }]; paint(v); flush(); runs().length = 0; calls.length = 0;
-  press(v, "down"); paint(v); flush(); await tick(); await tick();
+  press(v, "down"); press(v, "down"); paint(v); flush(); await tick(); await tick();
   assert.deepEqual(runs(), [], "no close, no split, no pane.focus"); assert.deepEqual(written(), ["printf %s 't7' > " + FILE]); assert.deepEqual(detached(), [["t9", "ctrl+\\"]]);
   globalThis.__shared["agents-view.pane"] = false; paint(v); flush(); assert.deepEqual(runs(), [["pane.close", { pane: "p3" }]]);
 });
