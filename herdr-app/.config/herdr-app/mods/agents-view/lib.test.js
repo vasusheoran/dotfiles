@@ -375,13 +375,13 @@ test("askKeyAction: an option key on a decide ask posts '<q><key>: <label>' at o
   assert.deepEqual(askKeyAction(a, "b", null, NOW), { type: "post", text: "1b: hold off", key: "b" });
 });
 
-test("askKeyAction: x posts Done. on a you ask, v opens the plan, an unknown key does nothing", () => {
+test("askKeyAction: x posts Done. on a you ask, p opens the plan (v is the picture since kuchbhi#1117), an unknown key does nothing", () => {
   const [a] = openAsks([rich({ kind: "you", options: [], plan: "https://p.test/x" })], NOW);
   assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
-  assert.deepEqual(askKeyAction(a, "v", null, NOW), { type: "open", target: "https://p.test/x" });
+  assert.deepEqual(askKeyAction(a, "p", null, NOW), { type: "open", target: "https://p.test/x" });
   assert.equal(askKeyAction(a, "z", null, NOW), null);
   const [noPlan] = openAsks([rich()], NOW);
-  assert.equal(askKeyAction(noPlan, "v", null, NOW), null);
+  assert.equal(askKeyAction(noPlan, "p", null, NOW), null);
 });
 
 test("askKeyAction: on a decide ask x is an option key when the ask has one, else nothing", () => {
@@ -705,11 +705,11 @@ test("askView: the expanded body is the rest of the question and the whole body,
   assert.equal(v.body, "included: PR 9\nchecks: green\nwhat changes: one file");
 });
 
-test("askKeyAction: v opens the plan of a file ask and of a PR ask", () => {
+test("askKeyAction: p opens the plan of a file ask and of a PR ask (v is the picture, kuchbhi#1117)", () => {
   const [f] = openAsks([rich({ plan: "/h/plan.html" })], NOW);
-  assert.deepEqual(askKeyAction(f, "v", null, NOW), { type: "open", target: "/h/plan.html" });
+  assert.deepEqual(askKeyAction(f, "p", null, NOW), { type: "open", target: "/h/plan.html" });
   const [p] = openAsks([rich({ kind: "merge", plan: "https://github.com/acme/app/pull/15" })], NOW);
-  assert.deepEqual(askKeyAction(p, "v", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
+  assert.deepEqual(askKeyAction(p, "p", null, NOW), { type: "open", target: "https://github.com/acme/app/pull/15" });
 });
 
 test("runnerLine: runner state, worker limit and the reviewers that are on", () => {
