@@ -265,35 +265,36 @@ export default class AgentsView extends View {
     if (!this.touched) this.sel = rows.find((r) => r.section === "asks")?.key ?? keys[0] ?? null; // until the owner moves, the panel rests on the first ask of the open epic
     if (!keys.includes(this.sel)) this.sel = keys[Math.min(this.selIdx, keys.length - 1)] ?? null;
     this.selIdx = Math.max(0, keys.indexOf(this.sel));
-    const at = (section, i) => rows.filter((r) => r.section === section)[i];
     const tone = (s) => (s === "blocked" || s === "error" ? t.blocked : s === "working" ? t.working : s === "done" ? t.done : t.dim);
 
     const byKey = new Map(rows.map((r) => [r.key, r]));
     const waiting = vm.asks.length > 0, runCount = vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length;
+    // flatRows leaves rows out (the closed epics' asks, the lists while hidden): a row that is not in `rows` is not drawn
+    const draw = (r, f) => (r ? [f(r)] : []);
     const asksBody = vm.askGroups.flatMap((g) => {
       const open = g.asks.length > 0 && byKey.has(`ask:${g.asks[0].id}`);
-      return [this.epic(t, byKey.get(`epic:${g.key}`), open), ...(open ? g.asks.map((a) => this.ask(t, byKey.get(`ask:${a.id}`))) : [])];
+      return [...draw(byKey.get(`epic:${g.key}`), (r) => this.epic(t, r, open)), ...(open ? g.asks.flatMap((a) => draw(byKey.get(`ask:${a.id}`), (r) => this.ask(t, r))) : [])];
     });
-    const runBody = [
+    // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
+    const runBody = () => [
       this.section(t, "Running", runCount, false),
       ...(runCount ? [] : [this.empty(t, "Nothing running")]),
       ...vm.groups.flatMap((g) => {
-        const first = rows.findIndex((r) => r.section === "group" && r.address === g.rows[0].address);
-        return [this.label(t, g.epic), ...g.rows.map((r, i) => this.line(t, rows[first + i], [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state)))];
+        return [this.label(t, g.epic), ...g.rows.flatMap((r) => draw(byKey.get(`group:${r.address}`), (x) => this.line(t, x, [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state))))];
       }),
-      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.map((s, i) => this.line(t, at("side", i), [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state)))] : []),
+      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.flatMap((s) => draw(byKey.get(`side:${s.address}`), (x) => this.line(t, x, [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state))))] : []),
       this.label(t, "General"),
-      this.line(t, at("desk", 0), [vm.desk.name, "", vm.desk.state], tone(vm.desk.state)),
-      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked))] : []),
+      ...draw(byKey.get("desk"), (x) => this.line(t, x, [vm.desk.name, "", vm.desk.state], tone(vm.desk.state))),
+      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.flatMap((s) => draw(byKey.get(`stuck:${s.kind}:${s.name}`), (x) => this.line(t, x, [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked)))] : []),
       ...(vm.upNext ? [mono(12, t.muted, vm.upNext).w_full().flex_none().px(14).pt(12)] : []),
       ...(vm.runnerLine ? [mono(12, t.muted, vm.runnerLine).w_full().flex_none().px(14).pt(vm.upNext ? 4 : 12)] : []),
     ];
     const body = [
       this.section(t, "Needs you", vm.asks.length, vm.asksOld),
       ...(waiting ? asksBody : [this.empty(t, "No questions waiting")]),
-      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.map((a) => this.answered(t, byKey.get(`answered:${a.id}`)))] : []),
-      ...(waiting ? [this.summary(t, byKey.get("summary:running"))] : []),
-      ...(!waiting || this.showRun ? runBody : []),
+      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.flatMap((a) => draw(byKey.get(`answered:${a.id}`), (r) => this.answered(t, r)))] : []),
+      ...(waiting ? draw(byKey.get("summary:running"), (r) => this.summary(t, r)) : []),
+      ...(!waiting || this.showRun ? runBody() : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
     ];
 
