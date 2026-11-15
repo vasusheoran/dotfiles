@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   openAsks, viewModel, flatRows, inboxBatches, laneSummary, LANE_LABELS, stepAsk, askAt, isNarrow, askKeyAction, isAskKey, answerArgv,
   otherArgv, threadsOf, messageState, threadView, messageArgv, messageTarget, askView, footerHint,
+  inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -135,7 +136,7 @@ test("threadView: the last messages with a count of the earlier ones", () => {
   const v = threadView(many, 6);
   assert.equal(v.hidden, 8);
   assert.deepEqual(v.shown.map((m) => m.mid), ["m-8", "m-9", "m-10", "m-11", "m-12", "m-13"]);
-  assert.deepEqual(threadView(many.slice(0, 2), 6), { hidden: 0, shown: many.slice(0, 2) });
+  assert.deepEqual(threadView(many.slice(0, 2), 6), { hidden: 0, newer: 0, shown: many.slice(0, 2) });
 });
 
 test("messageArgv and messageTarget: an open ask's message goes to that ask's thread, none open goes to the desk", () => {
@@ -187,4 +188,77 @@ test("askView: the then line rides on each option, and an old ask shows only wha
   assert.deepEqual(v.evidence.map(([k]) => k), ["Today", "After", "Checked", "Why you"]);
   const old = asksOf({ ts: iso(HOUR), event: "ask", id: "a-9", card: "o/r#9", from: "lead", kind: "plan", question: "Old Q", options: [] })[0];
   assert.deepEqual(askView(old, {}, null).evidence, []);
+});
+
+// ---- round 1 review
+test("inputStep: in a message or other-idea box Tab neither sends nor keeps; Enter sends; only the note box keeps", () => {
+  const msg = { mode: "message", thread: "desk", text: "half typed" };
+  assert.deepEqual(inputStep(msg, "tab"), { input: msg });
+  assert.deepEqual(inputStep(msg, "enter"), { type: "send", text: "half typed" });
+  assert.deepEqual(inputStep(msg, "x"), { input: { ...msg, text: "half typedx" } });
+  assert.deepEqual(inputStep(msg, "escape"), { type: "cancel" });
+  const other = { mode: "other", id: "a-1", text: "idea" };
+  assert.deepEqual(inputStep(other, "tab"), { input: other });
+  const note = { mode: "note", id: "a-1", text: "n" };
+  assert.deepEqual(inputStep(note, "tab"), { type: "keep", text: "n" });
+  assert.deepEqual(inputStep({ ...msg, text: "" }, "enter"), { type: "cancel" });
+});
+
+test("paneFor: the right pane follows the selected row: desk thread, the batch's ask, an answered ask with its thread, or nothing", () => {
+  const vm = viewModel({ terminals: [], asksText: [row("a-1", HOUR), row("a-2", 2 * HOUR, { batch_key: "look:o/r#9", kind: "look", epic: "o/r#9", card: "o/r#90" }), { ts: iso(5 * MIN), event: "answered", id: "a-3", text: "Redis, only for sessions", key: "other", by: "owner", via: "screen" }, row("a-3", 3 * HOUR)].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: NOW });
+  const rows = flatRows(vm);
+  const at = (sec) => rows.find((r) => r.section === sec);
+  assert.deepEqual(paneFor(at("desk"), vm, {}), { kind: "desk", thread: "desk" });
+  const b = paneFor(at("batch"), vm, {});
+  assert.equal(b.kind, "ask"); assert.equal(b.thread, b.ask.id);
+  const a = paneFor(at("answered"), vm, {});
+  assert.equal(a.kind, "answered"); assert.equal(a.thread, "a-3"); assert.equal(a.answered.id, "a-3");
+  assert.deepEqual(paneFor(undefined, vm, {}), { kind: "empty" });
+  assert.deepEqual(paneFor({ section: "summary" }, { batches: [] }, {}), { kind: "empty" });
+});
+
+test("defaultKey: the first batch; with no batches, not the desk when anything else is there", () => {
+  const withBatch = [{ key: "desk", section: "desk" }, { key: "batch:x", section: "batch" }];
+  assert.equal(defaultKey(withBatch), "batch:x");
+  assert.equal(defaultKey([{ key: "desk", section: "desk" }, { key: "group:t1", section: "group" }]), "group:t1");
+  assert.equal(defaultKey([{ key: "desk", section: "desk" }]), "desk");
+  assert.equal(defaultKey([]), null);
+});
+
+test("narrowLanes: only the current batch's lane, the other lanes with asks as one line", () => {
+  const lanes = [{ lane: "key", label: "ONE KEY", count: 3, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 3, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 2, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }];
+  assert.deepEqual(narrowLanes(lanes, "look"), { current: lanes[1], others: "ONE KEY 3 · YOUR HANDS 2" });
+  assert.deepEqual(narrowLanes(lanes, null), { current: null, others: "ONE KEY 3 · NEEDS A LOOK 3 · YOUR HANDS 2" });
+});
+
+test("threadView: PgUp scrolls back through older messages", () => {
+  const many = Array.from({ length: 14 }, (_, i) => ({ mid: `m-${i}` }));
+  const v = threadView(many, 6, 6);
+  assert.deepEqual(v.shown.map((m) => m.mid), ["m-2", "m-3", "m-4", "m-5", "m-6", "m-7"]);
+  assert.equal(v.hidden, 2); assert.equal(v.newer, 6);
+  assert.equal(threadView(many, 6, 99).hidden, 0); // never past the oldest
+  assert.equal(threadView(many, 6).newer, 0);
+});
+
+test("speaker: You, Desk for an agent in the desk thread, Agent elsewhere", () => {
+  assert.equal(speaker({ from: "owner" }, "desk"), "You");
+  assert.equal(speaker({ from: "agent" }, "desk"), "Desk");
+  assert.equal(speaker({ from: "agent" }, "a-1"), "Agent");
+});
+
+test("deskNew: desk replies after your last desk message", () => {
+  const t = threadsOf([
+    { ts: iso(50 * MIN), event: "message", mid: "m-1", thread: "desk", from: "owner", text: "a" },
+    { ts: iso(40 * MIN), event: "message", mid: "m-2", thread: "desk", from: "agent", text: "b" },
+    { ts: iso(30 * MIN), event: "message", mid: "m-3", thread: "desk", from: "agent", text: "c" },
+  ]);
+  assert.equal(deskNew(t), 2);
+  assert.equal(deskNew({}), 0);
+});
+
+test("headerLine: asks in batches, running and stuck counts; the desk is not counted", () => {
+  const vm = viewModel({ terminals: [{ address: "tD", name: "desk-r", status: "idle", labels: ["role=desk"] }, { address: "tW", name: "card-r-12", status: "working", labels: ["role=worker", "epic=o/r#1", "card=o/r#12"] }, { address: "tL", name: "lead-r-1", status: "working", labels: ["role=lead", "epic=o/r#1"] }],
+    asksText: [row("a-1", HOUR), row("a-2", HOUR, { kind: "you", batch_key: "hands:o/r#3", epic: "o/r#3", card: "o/r#30" })].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: NOW });
+  assert.deepEqual(headerLine(vm), { inbox: "2 asks in 2 batches", run: "2 running · 0 stuck" });
+  assert.equal(headerLine(viewModel({ terminals: [], nowMs: NOW })).inbox, "0 asks");
 });

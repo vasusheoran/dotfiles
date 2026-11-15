@@ -7,7 +7,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv,
-  stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState } from "./lib.js";
+  stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -24,7 +24,7 @@ export default class AgentsView extends View {
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
-    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.pos = {}; this.width = null;
+    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.pos = {}; this.width = null; this.back = 0;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -123,8 +123,8 @@ export default class AgentsView extends View {
   // while the text input or the batch checklist is open, every key goes to it
   modal(a, k, cx) {
     if (this.input) {
-      const i = this.input, r = noteStep(i.text, k);
-      if (r.type === "send" || (r.type === "keep" && i.mode !== "note")) {
+      const i = this.input, r = inputStep(i, k);
+      if (r.type === "send") {
         this.input = null;
         if (i.mode === "note") this.sendNote(a, r.text, cx);
         else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx);
@@ -132,7 +132,7 @@ export default class AgentsView extends View {
       }
       else if (r.type === "keep") { this.kept.set(a.id, r.text); this.input = null; this.note = "note kept for your pick"; }
       else if (r.type === "cancel") this.input = null;
-      else this.input = { ...i, text: r.text };
+      else this.input = r.input;
     } else {
       const r = checklistStep(a, this.checklist, k);
       if (r.type === "cancel") this.checklist = null;
@@ -144,7 +144,7 @@ export default class AgentsView extends View {
 
   // the epic that holds the selected row stays expanded
   select(r) {
-    this.touched = true; this.sel = r.key; this.q = 1;
+    this.touched = true; this.sel = r.key; this.q = 1; this.back = 0;
   }
 
   // the ask shown for a batch row: the place in the batch is kept in this.pos
@@ -158,7 +158,8 @@ export default class AgentsView extends View {
     if (this.input?.mode === "message") { cx.stop_propagation(); return this.modal(null, k, cx); }
     if (open && ask && open.id === ask.id) { cx.stop_propagation(); return this.modal(ask, k, cx); }
     this.input = null; this.checklist = null;
-    if (k === "/") { cx.stop_propagation(); this.input = { mode: "message", thread: messageTarget(ask), text: "" }; return cx.notify(); }
+    if (k === "/") { cx.stop_propagation(); const pane = paneFor(cur, vm, this.pos); this.input = { mode: "message", thread: pane.kind === "desk" || pane.kind === "empty" ? "desk" : pane.thread, text: "" }; return cx.notify(); }
+    if (k === "pageup" || k === "pagedown") { cx.stop_propagation(); this.back = k === "pageup" ? this.back + 5 : Math.max(0, this.back - 5); return cx.notify(); }
     if (cur?.section === "answered") { // an answer the asker has not picked up: the owner's key sends one reminder
       if (k === ".") { cx.stop_propagation(); return this.nudge(cur.row, cx); }
     }
@@ -279,23 +280,23 @@ export default class AgentsView extends View {
       .child(mono(12, t.muted, String(b.count)));
   }
 
-  // a thread: the last messages, each with sent / received
-  thread(t, msgs) {
-    const v = threadView(msgs, 6);
+  // a thread: the last messages (PgUp for older), each with sent / received
+  thread(t, msgs, id) {
     if (!msgs.length) return div();
+    const v = threadView(msgs, 6, this.back);
     return v_flex().w_full().gap(2).pt(8).border_t(1).border_color(t.border)
-      .child(sans(11, t.dim, `Thread · ${msgs.length} message${msgs.length === 1 ? "" : "s"}${v.hidden ? ` · ${v.hidden} earlier` : ""}`))
+      .child(sans(11, t.dim, `Thread · ${msgs.length} message${msgs.length === 1 ? "" : "s"}${v.hidden ? ` · ${v.hidden} earlier (PgUp)` : ""}${v.newer ? ` · ${v.newer} newer (PgDn)` : ""}`))
       .children(v.shown.map((m) => h_flex().w_full().gap(6).items_baseline()
-        .child(sans(12, m.from === "owner" ? t.accent : t.foreground, `${m.from === "owner" ? "You" : "Agent"}: ${m.text}`).flex_1().min_w(0))
+        .child(sans(12, m.from === "owner" ? t.accent : t.foreground, `${speaker(m, id)}: ${m.text}`).flex_1().min_w(0))
         .child(sans(10, t.dim, messageState(m)).flex_none())));
   }
 
   // the text input at the bottom: a message goes to the agent behind the open ask, else to the desk
-  chatBar(t, curRow, ask) {
+  chatBar(t, pane) {
     const typing = this.input?.mode === "message";
-    const to = typing ? (this.input.thread === "desk" ? "desk" : "agent behind this ask") : curRow?.section === "batch" && ask ? "agent behind this ask" : "desk";
+    const toDesk = typing ? this.input.thread === "desk" : pane.kind === "desk" || pane.kind === "empty";
     return h_flex().w_full().flex_none().px(14).py(6).gap(8).items_center().border_t(1).border_color(t.border)
-      .child(sans(11, t.dim, `To: ${to}`).flex_none())
+      .child(sans(11, t.dim, `To: ${toDesk ? "desk" : "agent behind this ask"}`).flex_none())
       .child(h_flex().flex_1().min_w(0).h(ROW).px(8).items_center().rounded(6).bg(t.raised).when(typing, (e) => e.border_1().border_color(t.accent))
         .child(sans(13, typing ? t.foreground : t.dim, typing ? `${this.input.text}▏` : "/ to write a message").truncate()));
   }
@@ -304,7 +305,7 @@ export default class AgentsView extends View {
     const t = theme();
     const { vm, rows } = this.model();
     const keys = rows.map((r) => r.key);
-    if (!this.touched) this.sel = rows.find((r) => r.section === "batch")?.key ?? keys[0] ?? null; // until the owner moves, the panel rests on the first batch
+    if (!this.touched) this.sel = defaultKey(rows); // until the owner moves: the first batch, never the desk when there is anything else
     if (!keys.includes(this.sel)) this.sel = keys[Math.min(this.selIdx, keys.length - 1)] ?? null;
     this.selIdx = Math.max(0, keys.indexOf(this.sel));
     const at = (section, i) => rows.filter((r) => r.section === section)[i];
@@ -313,23 +314,30 @@ export default class AgentsView extends View {
     const byKey = new Map(rows.map((r) => [r.key, r]));
     const waiting = vm.asks.length > 0, runCount = vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length;
     const narrow = isNarrow(this.width ?? 0);
-    const curRow = rows[this.selIdx], batchRow = curRow?.section === "batch" ? curRow : rows.find((r) => r.section === "batch");
-    const shownAsk = this.askOf(batchRow);
-    const threadOf = (id) => this.thread(t, vm.threads[id] ?? []);
-    // left: the desk (first, never counted), then the four lanes with their batches
+    const curRow = rows[this.selIdx], pane = paneFor(curRow, vm, this.pos);
+    const threadOf = (id) => this.thread(t, vm.threads[id] ?? [], id);
+    const nl = narrow ? narrowLanes(vm.lanes, pane.kind === "ask" ? pane.batch.lane : null) : null;
+    const newDesk = deskNew(vm.threads);
+    // left: the desk (first, never counted), then the four lanes with their batches; narrow: the current batch's lane and one line for the rest
+    const laneRows = (l, only) => [
+      h_flex().w_full().flex_none().px(14).pt(10).pb(2).gap(8).items_baseline().child(div().text_size(11).text_color(t.dim).child(l.label)).child(mono(11, l.count ? t.muted : t.dim, String(l.count))),
+      ...l.batches.filter((b) => !only || (pane.kind === "ask" && b.key === pane.batch.key)).map((b) => this.batch(t, byKey.get(`batch:${b.key}`))),
+    ];
     const left = v_flex().w_full().flex_none().gap(2)
-      .child(this.line(t, byKey.get("desk"), [vm.desk.name, "", vm.desk.state], tone(vm.desk.state)))
-      .children(vm.lanes.flatMap((l) => [
-        h_flex().w_full().flex_none().px(14).pt(10).pb(2).gap(8).items_baseline().child(div().text_size(11).text_color(t.dim).child(l.label)).child(mono(11, l.count ? t.muted : t.dim, String(l.count))),
-        ...l.batches.map((b) => this.batch(t, byKey.get(`batch:${b.key}`))),
-      ]));
-    // right: one ask at a time with its thread; the desk's thread when the desk is selected; nothing-waiting text when the inbox is empty
+      .child(this.line(t, byKey.get("desk"), [vm.desk.name, newDesk ? `${newDesk} new` : "", vm.desk.state], tone(vm.desk.state)))
+      .children(narrow ? [...(nl.current ? laneRows(nl.current, true) : []), ...(nl.others ? [sans(11, t.dim, nl.others).w_full().flex_none().px(14).pt(8)] : [])] : vm.lanes.flatMap((l) => laneRows(l, false)));
+    // right: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
     const right = v_flex().w_full().flex_1().min_w(0).gap(4)
-      .child(...(curRow?.section === "desk"
+      .child(...(pane.kind === "desk"
         ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, "Desk")).child(sans(12, t.dim, "General messages · / to write · ↵ shows the terminal")).child(threadOf("desk"))]
-        : shownAsk
-          ? [this.ask(t, shownAsk, `ask ${batchRow.row.asks.indexOf(shownAsk) + 1} of ${batchRow.row.asks.length}`), v_flex().w_full().px(14).child(threadOf(shownAsk.id))]
-          : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type / to message the desk."))]));
+        : pane.kind === "ask"
+          ? [this.ask(t, pane.ask, `ask ${pane.batch.asks.indexOf(pane.ask) + 1} of ${pane.batch.asks.length}`), v_flex().w_full().px(14).child(threadOf(pane.thread))]
+          : pane.kind === "answered"
+            ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, pane.answered.title)).child(sans(12, t.muted, `You answered: ${String(pane.answered.pick).split("\n").join(" · ")}`))
+              .child(sans(12, t.dim, `sent ${pane.answered.sent ? "✓" : "–"} · received ${pane.answered.received ? "✓" : "–"} · done ${pane.answered.done ? "✓" : "–"}`)).child(threadOf(pane.thread))]
+            : vm.batches.length
+              ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
+              : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))]));
     const asksBody = [h_flex().w_full().flex_none().when(narrow, (e) => e.flex_col()).child(v_flex().flex_none().when(narrow, (e) => e.w_full()).when(!narrow, (e) => e.w(260)).child(left)).child(right)];
     const runBody = [
       this.section(t, "Running", runCount, false),
@@ -357,9 +365,10 @@ export default class AgentsView extends View {
       .on_key_down((e, cx) => this.key(e, cx))
       .on_size_change((size, cx2) => { if (isNarrow(size.width) !== isNarrow(this.width ?? 0)) { this.width = size.width; cx2.notify(); } else this.width = size.width; })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(sans(13, t.foreground, "Agents").font_semibold()).child(div().flex_1()).child(sans(12, t.dim, footerHint(rows[this.selIdx]?.section))))
+        .child(sans(13, t.foreground, "Inbox").font_semibold()).child(sans(12, t.muted, headerLine(vm).inbox)).child(div().flex_1()).child(sans(12, t.dim, headerLine(vm).run)))
+      .child(div().w_full().flex_none().px(14).py(4).border_b(1).border_color(t.border).child(sans(11, t.dim, footerHint(rows[this.selIdx]?.section))))
       .child(v_flex().id("av-body").w_full().flex_1().min_h(props()?.overlay ? POPUP_BODY_H : 0).overflow_y_scrollbar().children(body))
-      .child(this.chatBar(t, curRow, shownAsk))
+      .child(this.chatBar(t, pane))
       .child(div().w_full().flex_none().px(14).py(8).child(this.note ? sans(12, t.foreground, this.note) : mono(11, vm.usageWarn ? t.working : t.dim, vm.usage)));
   }
 }

@@ -196,8 +196,27 @@ export function threadsOf(lines) {
   return out;
 }
 export const messageState = (m) => (m.from !== "owner" ? "received" : m.received ? "sent · received" : "sent · waiting: terminal busy or gone");
-// The last `max` messages and how many earlier ones are not shown.
-export const threadView = (msgs, max = 6) => ({ hidden: Math.max(0, msgs.length - max), shown: msgs.slice(-max) });
+// `max` messages ending `back` messages before the newest (PgUp scrolls back), and how many are older and newer than the window.
+export function threadView(msgs, max = 6, back = 0) {
+  const end = msgs.length - Math.min(Math.max(0, back), Math.max(0, msgs.length - max)), start = Math.max(0, end - max);
+  return { hidden: start, newer: msgs.length - end, shown: msgs.slice(start, end) };
+}
+// Who a line is from: you, the desk (an agent in the desk thread), or the agent behind an ask.
+export const speaker = (m, thread) => (m.from === "owner" ? "You" : thread === "desk" ? "Desk" : "Agent");
+// Desk replies after your last message to the desk.
+export function deskNew(threads) {
+  const msgs = threads?.desk ?? [];
+  return msgs.slice(msgs.findLastIndex((m) => m.from === "owner") + 1).filter((m) => m.from !== "owner").length;
+}
+// A key in the text input: note, other idea or message. Only the note box keeps (Tab); Tab in the others does nothing, so nothing half typed is sent.
+export function inputStep(input, key) {
+  if (key === "tab" && input.mode !== "note") return { input };
+  const r = noteStep(input.text, key);
+  if (r.type === "cancel") return { type: "cancel" };
+  if (r.type === "send" || r.type === "keep") return { type: r.type, text: r.text };
+  return { input: { ...input, text: r.text } };
+}
+
 export const messageArgv = (thread, text) => ["ask", "message", thread, "--text", text, "--by", "owner"];
 // With an ask open the message goes to the agent behind it (the ask's thread); with none open, to the desk.
 export const messageTarget = (ask) => (ask ? askId(ask) : "desk");
@@ -231,6 +250,26 @@ export const stepAsk = (pos, batch, dir) => ({ ...pos, [batch.key]: clampAt((pos
 export const askAt = (pos, batch) => batch.asks[clampAt(pos[batch.key] ?? 0, batch.asks.length)];
 // Below this width the batch list sits above the ask.
 export const isNarrow = (width) => typeof width === "number" && width < 640;
+
+// What the right-hand side shows for the selected row: the desk thread, the batch's current ask with its thread, an answered ask with its
+// thread (where the asker's reply to an other idea shows), or nothing.
+export function paneFor(row, vm, pos) {
+  if (row?.section === "desk") return { kind: "desk", thread: "desk" };
+  if (row?.section === "batch") { const ask = askAt(pos, row.row); return { kind: "ask", ask, batch: row.row, thread: ask.id }; }
+  if (row?.section === "answered") return { kind: "answered", answered: row.row, thread: row.row.id };
+  return { kind: "empty" };
+}
+// Until the owner moves: the first batch; with none, the first row that is not the desk; else the desk.
+export const defaultKey = (rows) => (rows.find((r) => r.section === "batch") ?? rows.find((r) => r.section !== "desk") ?? rows[0])?.key ?? null;
+// A narrow panel shows the current batch's lane and one line for the other lanes that hold asks.
+export function narrowLanes(lanes, currentLane) {
+  return { current: lanes.find((l) => l.lane === currentLane) ?? null, others: lanes.filter((l) => l.lane !== currentLane && l.count > 0).map((l) => `${l.label} ${l.count}`).join(" · ") };
+}
+// The header's counts: asks in batches (the desk is not counted), running and stuck.
+export function headerLine(vm) {
+  const n = vm.lanes.reduce((c, l) => c + l.count, 0), m = vm.batches.length, running = vm.groups.reduce((c, g) => c + g.rows.length, 0) + vm.sides.length;
+  return { inbox: n ? `${n} ask${n === 1 ? "" : "s"} in ${m} batch${m === 1 ? "" : "es"}` : "0 asks", run: `${running} running · ${vm.stuck.length} stuck` };
+}
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
