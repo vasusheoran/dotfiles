@@ -620,7 +620,7 @@ export function liveAgents(vm) {
   return [...(vm.desk?.address ? [row(vm.desk.name, vm.desk.address, vm.desk.state, "desk")] : []),
     ...vm.groups.flatMap((g) => g.rows.map((r) => row(r.name, r.address, r.state, r.role))), ...vm.sides.map((s) => row(s.name, s.address, s.state, "side"))];
 }
-// The lower pane is a real `hc attach` to the agent (typeable), opened with t or ctrl-b t and closed the same way; it sizes the agent's terminal to the pane
+// The lower pane is a real `hc attach` to the agent (typeable), opened with t or cmd-shift-t and closed the same way; it sizes the agent's terminal to the pane
 // while it is open. There is no pane until t. The pane runs a small loop that attaches to the address in a file; moving to another agent writes the new
 // address and detaches (ctrl+\) the attach in it, so the loop attaches the new one in the SAME pane: it is split once and keeps its size.
 // terminal.show only jumps to an agent that has a pane of its own, so it is not used.
@@ -632,7 +632,7 @@ export const loopArgv = (file) => ["sh", "-c", `f=${file}; while a=$(cat "$f" 2>
 // keeps the last terminal (the desk when there was none), dimmed with the reason. steps: ["write", {file, text}] the address, ["detach", {terminal}] the attach
 // in the kept pane, ["pane.split", ...] the one split, ["pane.close", ...]; none while that agent is already attached. `shown` is the key of what is there now.
 export function bottomPlan({ pane, vm, pinned, last, shown, bottom, bottomTerminal = null, own, on = false }) {
-  if (!on) return { mode: "off", dim: true, address: null, name: null, key: "off", steps: bottom && shown !== "off" ? [["pane.close", { pane: bottom }]] : [], head: "agent pane closed", hint: "t opens it · ctrl-b t from anywhere" };
+  if (!on) return { mode: "off", dim: true, address: null, name: null, key: "off", steps: bottom && shown !== "off" ? [["pane.close", { pane: bottom }]] : [], head: "agent pane closed", hint: "t opens it · cmd-shift-t from anywhere" };
   const agents = liveAgents(vm), by = (addr) => agents.find((a) => a.address === addr) ?? null, byName = (n) => agents.find((a) => a.name === n) ?? null;
   const keyOf = (a) => `${a.address}:attach`;
   const show = (a) => {
@@ -644,13 +644,13 @@ export function bottomPlan({ pane, vm, pinned, last, shown, bottom, bottomTermin
   };
   const showing = (a, extra) => ({ address: a.address, name: a.name, key: keyOf(a), ...extra, steps: show(a) });
   const pin = pinned ? by(pinned) : null;
-  if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "ctrl-b t closes · esc follow the highlight · s switch" });
+  if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "cmd-shift-t closes · esc follow the highlight · s switch" });
   const unpin = !!pinned;
-  const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"}`, hint: "ctrl-b t closes · g open its tab" });
+  const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"}`, hint: "cmd-shift-t closes · g open its tab" });
   const keep = (mode, why) => {
     const k = (last && by(last.address)) ?? agents.find((a) => a.role === "desk") ?? null;
     return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, key: k ? keyOf(k) : null, steps: k ? show(k) : [],
-      head: why(k?.name ?? "nothing"), hint: "ctrl-b t closes · s switch" };
+      head: why(k?.name ?? "nothing"), hint: "cmd-shift-t closes · s switch" };
   };
   if (pane?.kind === "desk") { const d = agents.find((a) => a.role === "desk"); if (d) return follow(d); }
   if (pane?.epic) { // an epic's agent is its lead, not the worker whose ask it is
@@ -809,3 +809,10 @@ export function linkTarget(seg, repo) {
 
 // The Inbox pane takes the keyboard once when its tab becomes active (any route), unless the owner is already in its agent pane. Returns { focus: pane | null, was }.
 export const focusStep = ({ inTab, was, focusedPane, own, bottom }) => ({ focus: inTab && !was && own && focusedPane !== own && !(bottom && focusedPane === bottom) ? own : null, was: !!inTab });
+
+// The question box (the top area) is resizable: [ and ] step it, a drag of the divider follows the pointer, and the size is remembered (localStorage, `agents-view.askH`).
+export const ASK_H = { def: 360, min: 120, max: 720, step: 40, key: "agents-view.askH" };
+export const clampAskH = (h) => (Number.isFinite(Number(h)) && h !== null && h !== "" ? Math.max(ASK_H.min, Math.min(ASK_H.max, Math.round(Number(h)))) : ASK_H.def);
+export const resizeAskH = (h, key) => (key === "]" ? clampAskH(h + ASK_H.step) : key === "[" ? clampAskH(h - ASK_H.step) : h);
+export const dragAskH = (h0, y0, y) => clampAskH(h0 + (y - y0));
+export const storedAskH = (raw) => clampAskH(raw);

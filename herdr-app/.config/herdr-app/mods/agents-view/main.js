@@ -7,14 +7,13 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
-  answerLine, boardStep, listWindow, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
+  answerLine, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const REFRESH_MS = 5000;
 const POPUP_BODY_H = 560;
-const ASK_MAX_H = 360;
 const ROW = 28;
 const LIST_ITEMS = 9; // the epic list shows this many rows (group heads count); the selected one sits a third of the way down
 
@@ -26,20 +25,27 @@ const sans = (size, color, text) => div().font_family(SANS).text_size(size).text
 
 export default class AgentsView extends View {
   init(_props, cx) {
-    // ctrl-b t arrives through tabs-agents (a layout mod, always loaded), which flips this shared flag; t in the top pane flips it too
+    // cmd-shift-t arrives through tabs-agents (a layout mod, always loaded), which flips this shared flag; t in the top pane flips it too
     this.seenOn = this.paneOn; this.wasOn = this.paneOn; this.focusNew = false; this.bottomWas = null; cx.timer.every(500, (c) => { if (this.paneOn !== this.seenOn) { this.seenOn = this.paneOn; c.notify(); } this.focusWatch(); });
     this.h = cx.focus_handle();
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
-    this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
+    this.askH = storedAskH(this.loadSize()); this.drag = null; this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
     this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
 
-  // the Inbox space became active by any route (shift-up/down, ctrl-b a, a click): its pane takes the keyboard once, never from the agent pane
+  // the question box size, remembered across reloads; storage can be missing or blocked, and then the size lasts for the session
+  loadSize() { try { return globalThis.localStorage?.getItem(ASK_H.key) ?? null; } catch { return null; } }
+  saveSize() { try { globalThis.localStorage?.setItem(ASK_H.key, String(this.askH)); } catch { /* not remembered */ } }
+  dragStart(e) { this.drag = { y: e.position.y, h: this.askH }; }
+  dragMove(e, cx) { if (!this.drag) return; this.askH = dragAskH(this.drag.h, this.drag.y, e.position.y); cx.notify(); }
+  dragEnd() { if (this.drag) { this.drag = null; this.saveSize(); } }
+
+  // the Inbox space became active by any route (shift-up/down, cmd-shift-a, a click): its pane takes the keyboard once, never from the agent pane
   focusWatch() {
     const tab = this.tab(), f = focused();
     const r = focusStep({ inTab: !!tab && f?.tab === tab.tab, was: !!this.wasIn, focusedPane: f?.pane ?? null, own: tab?.pane ?? null, bottom: tab ? rightPane(panes(), tab.tab)?.pane ?? null : null });
@@ -89,7 +95,7 @@ export default class AgentsView extends View {
       this.missingSince ??= Date.now();
       if (Date.now() - this.missingSince > 3000) { this.sawBottom = false; this.bottomShown = null; this.missingSince = null; }
     }
-    if (this.paneOn && !this.wasOn) this.focusNew = true; // opened with t or ctrl-b t: the keyboard goes to the new pane (moving to another ask does not take it)
+    if (this.paneOn && !this.wasOn) this.focusNew = true; // opened with t or cmd-shift-t: the keyboard goes to the new pane (moving to another ask does not take it)
     if (!this.paneOn) this.focusNew = false;
     this.wasOn = this.paneOn;
     if (this.focusNew && bottom && bottom !== this.bottomWas) { this.focusNew = false; cx.timer.after(0, () => run("pane.focus", { pane: bottom })); }
@@ -120,7 +126,7 @@ export default class AgentsView extends View {
     return (ask ? all.find((a) => a.name === ask.terminal) : cur?.section === "desk" ? all.find((a) => a.role === "desk") : null) ?? null;
   }
 
-  // t in the top pane, or ctrl-b t from anywhere (keys.json tabs-agents.pane): the agent pane below on (a real hc attach) or off
+  // t in the top pane, or cmd-shift-t from anywhere (keys.json tabs-agents.pane): the agent pane below on (a real hc attach) or off
   get paneOn() { return shared(PANE_ON) === true; }
   togglePane(cx) { setShared(PANE_ON, !this.paneOn); cx.notify(); }
 
@@ -258,6 +264,7 @@ export default class AgentsView extends View {
     if ((k === "B" || k === "shift-b") && cur?.section === "epic") { cx.stop_propagation(); return this.board(cur, vm, cx); }
     if (k === "space" && cur?.section === "fold") { cx.stop_propagation(); this.unfolded = !this.unfolded; return cx.notify(); }
     if (k === "escape" && this.filter != null) { cx.stop_propagation(); this.filter = null; this.touched = false; return cx.notify(); }
+    if ((k === "[" || k === "]") && !own(k)) { cx.stop_propagation(); this.askH = resizeAskH(this.askH, k); this.saveSize(); return cx.notify(); }
     if (k === "t" && tab && !own("t")) { cx.stop_propagation(); return this.togglePane(cx); }
     if (k === "escape" && this.pinned) { cx.stop_propagation(); this.pinned = null; return cx.notify(); }
     if (k === "s" && tab && !own("s")) { cx.stop_propagation(); this.picker = { cur: 0 }; return cx.notify(); }
@@ -593,7 +600,7 @@ export default class AgentsView extends View {
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))])]);
     // stacked at every width: the batch list on top, the open ask below it at full width; the message box is the bar under the scrolling body
     // the open ask scrolls inside its own box, so a long one never moves the message box or the lanes, and the pane keeps its size
-    const asksBody = [div().id("ask-scroll").w_full().flex_none().when(!!tab, (e) => e.h(ASK_MAX_H)).when(!tab, (e) => e.max_h(ASK_MAX_H)).overflow_y_scrollbar().child(rightEl()), this.chatBar(t, pane, vm), leftEl()];
+    const asksBody = [div().id("ask-scroll").w_full().flex_none().when(!!tab, (e) => e.h(this.askH)).when(!tab, (e) => e.max_h(this.askH)).overflow_y_scrollbar().child(rightEl()), div().id("ask-divider").w_full().h(6).flex_none().cursor_row_resize().bg(t.border).on_mouse_down("left", (e) => this.dragStart(e)), this.chatBar(t, pane, vm), leftEl()];
     // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
     const runBody = () => [
       this.section(t, "Running", runCount, false),
@@ -617,7 +624,7 @@ export default class AgentsView extends View {
 
     return v_flex().id("agents-view").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .track_focus(this.h).on_mouse_down("left", () => this.h.focus())
-      .on_key_down((e, cx) => this.key(e, cx))
+      .on_key_down((e, cx) => this.key(e, cx)).on_mouse_move((e, cx2) => this.dragMove(e, cx2)).on_mouse_up("left", () => this.dragEnd())
       .on_size_change((size, cx2) => { if (isNarrow(size.width) !== isNarrow(this.width ?? 0)) { this.width = size.width; cx2.notify(); } else this.width = size.width; })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(sans(13, t.foreground, "Inbox").font_semibold()).child(sans(12, t.muted, headerLine(vm).inbox)).when(!tab, (e) => e.child(sans(11, t.dim, "· i opens the tab"))).child(div().flex_1()).child(sans(12, t.dim, headerLine(vm).run)))

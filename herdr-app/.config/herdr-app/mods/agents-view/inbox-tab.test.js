@@ -42,7 +42,7 @@ test("follow: the highlighted ask's own terminal is shown, with its status and t
   assert.equal(p.mode, "follow"); assert.equal(p.address, "t1");
   assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "right", argv: loopArgv(FILE) }]], "a pane we did not make is replaced once");
   assert.equal(p.key, "t1:attach");
-  assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "ctrl-b t closes · g open its tab"); assert.equal(p.dim, false);
+  assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "cmd-shift-t closes · g open its tab"); assert.equal(p.dim, false);
 });
 test("follow: no second terminal.show while the same agent is shown", () => {
   const vm = vmOf([ask("a-3")]);
@@ -79,7 +79,7 @@ test("pinned: the picked agent stays while the highlight moves, with the pinned 
   const vm = vmOf([ask("a-3")]);
   const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1:attach", bottom: "p2", own: "p1", on: true });
   assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[0], ["write", { file: FILE, text: "t2" }]);
-  assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "ctrl-b t closes · esc follow the highlight · s switch");
+  assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "cmd-shift-t closes · esc follow the highlight · s switch");
 });
 test("pinned: a pinned agent that has gone away is dropped and the pane follows again", () => {
   const vm = vmOf([ask("a-3")]);
@@ -226,7 +226,7 @@ test("toggle: turning it off closes the pane once", () => {
 });
 test("headers: the agent and its status, with the key that closes the pane", () => {
   const vm = vmOf([ask("a-3")]), p = bottomPlan(base(vm, { shown: null }));
-  assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "ctrl-b t closes · g open its tab");
+  assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "cmd-shift-t closes · g open its tab");
 });
 
 // ---- a card is in one batch only

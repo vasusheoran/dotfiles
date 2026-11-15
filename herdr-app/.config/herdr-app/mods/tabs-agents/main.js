@@ -12,14 +12,14 @@ function find(node, id) {
   return null;
 }
 
-// Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents button and the `toggle` command (ctrl-b a in keys.json). Both open the Inbox as a main tab (the agents-view
+// Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents button and the `toggle` command (cmd-shift-a in keys.json). Both open the Inbox as a main tab (the agents-view
 // mod with props.inbox), select it when it is open, and from it go back to the tab the owner came from. There is no agents column on the right any more.
 export default class Tabs extends View {
   init(_props, cx) {
     cx.spawn(async () => {
       for (;;) {
         const cmd = await nextCommand();
-        if (cmd === "pane") setShared(PANE_ON, shared(PANE_ON) !== true); // ctrl-b t: the Inbox opens or closes its agent pane, whichever pane has the focus
+        if (cmd === "pane") setShared(PANE_ON, shared(PANE_ON) !== true); // cmd-shift-t: the Inbox opens or closes its agent pane, whichever pane has the focus
         else if (cmd === "toggle") this.openAgents();
       }
     });

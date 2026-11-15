@@ -1,7 +1,7 @@
 // Owner feedback round 1 on the Inbox by epic (kuchbhi#1115): the list window, one question at a time, links, focus, marks then submit. Synthetic data.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listWindow, partStep, linkSegments, linkTarget, focusStep, answerLine, submitAnswer, partNotes, askKeyAction, bottomPlan, openAsks, parseJsonl } from "./lib.js";
+import { listWindow, partStep, linkSegments, linkTarget, focusStep, answerLine, submitAnswer, ASK_H, clampAskH, resizeAskH, dragAskH, storedAskH, partNotes, askKeyAction, bottomPlan, openAsks, parseJsonl } from "./lib.js";
 
 test("listWindow: the selected row sits a third of the way down while the list scrolls past it", () => {
   const w = (n, sel) => listWindow(n, sel, 9);
@@ -72,4 +72,15 @@ test("no o key: it does nothing on an ask", () => {
 test("partNotes: one note per part, in order, labelled by the part; none when empty", () => {
   assert.equal(partNotes(A(), { 3: "ask Hindi later", 1: "ok" }), "1: ok · 3: ask Hindi later");
   assert.equal(partNotes(A(), {}), ""); assert.equal(partNotes(A(), { 2: "  " }), "");
+});
+
+test("the question box size: default, clamped, [ shrinks and ] grows by a step, a drag follows the pointer", () => {
+  assert.equal(ASK_H.def, 360);
+  assert.equal(clampAskH(10), ASK_H.min); assert.equal(clampAskH(5000), ASK_H.max); assert.equal(clampAskH(333.7), 334); assert.equal(clampAskH("x"), ASK_H.def);
+  assert.equal(resizeAskH(360, "]"), 360 + ASK_H.step); assert.equal(resizeAskH(360, "["), 360 - ASK_H.step);
+  assert.equal(resizeAskH(ASK_H.min, "["), ASK_H.min); assert.equal(resizeAskH(ASK_H.max, "]"), ASK_H.max); assert.equal(resizeAskH(360, "x"), 360);
+  assert.equal(dragAskH(360, 500, 560), 420); assert.equal(dragAskH(360, 500, 100), ASK_H.min);
+});
+test("storedAskH: the remembered size comes back clamped; nothing or garbage is the default", () => {
+  assert.equal(storedAskH("480"), 480); assert.equal(storedAskH(null), ASK_H.def); assert.equal(storedAskH("abc"), ASK_H.def); assert.equal(storedAskH("99999"), ASK_H.max);
 });

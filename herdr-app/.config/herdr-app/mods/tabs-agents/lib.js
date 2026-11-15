@@ -1,7 +1,7 @@
-// The shared flag the Inbox (agents-view) reads to open its agent pane; the key in the Inbox and ctrl-b t (tabs-agents.pane) both flip it.
+// The shared flag the Inbox (agents-view) reads to open its agent pane; the key in the Inbox and cmd-shift-t (tabs-agents.pane) both flip it.
 export const PANE_ON = "agents-view.pane";
 
-// The Agents button and ctrl-b a: the Inbox lives in its own Herdr space (kuchbhi#1115). First time: make the space (steps, then `inboxFinish` puts the Inbox mod tab in it
+// The Agents button and cmd-shift-a: the Inbox lives in its own Herdr space (kuchbhi#1115). First time: make the space (steps, then `inboxFinish` puts the Inbox mod tab in it
 // once it exists); after that: select it and focus the Inbox pane; pressed on it: go back to the space the owner came from.
 // Returns { steps: [[command, args]...], back, finish } where back is the space to return to next time and finish says the mod tab still has to be made.
 const MOD = "agents-view", NAME = "Inbox";

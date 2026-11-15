@@ -202,3 +202,18 @@ test("a single-question ask: n with no pick sends the note as the answer (key ot
   press(v, "n"); typed(v, "Valkey"); press(v, "enter"); await tick();
   assert.equal(calls[0][calls[0].indexOf("--key") + 1], "other"); assert.equal(calls[0][calls[0].indexOf("--text") + 1], "Valkey");
 });
+
+test("[ and ] shrink and grow the question box and the size is remembered across reloads", () => {
+  const mem = {}; globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => { mem[k] = String(v); } };
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); select(v, epicKey(v, 1)); assert.equal(v.askH, 360);
+  press(v, "]"); assert.equal(v.askH, 400); assert.equal(mem["agents-view.askH"], "400"); press(v, "["); press(v, "["); assert.equal(v.askH, 320); assert.equal(mem["agents-view.askH"], "320");
+  const w = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); assert.equal(w.askH, 320, "a reload reads it back");
+  delete globalThis.localStorage; const x = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); press(x, "]"); assert.equal(x.askH, 400, "no storage: it still works");
+});
+test("dragging the divider between the question box and the list resizes the box and keeps the size", () => {
+  const mem = {}; globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => { mem[k] = String(v); } };
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); has(v.drawn, "ask-divider");
+  v.dragStart({ position: { x: 0, y: 500 } }); v.dragMove({ position: { x: 0, y: 580 } }, tcx); assert.equal(v.askH, 440);
+  v.dragMove({ position: { x: 0, y: 5000 } }, tcx); assert.equal(v.askH, 720); v.dragEnd(); v.dragMove({ position: { x: 0, y: 0 } }, tcx); assert.equal(v.askH, 720, "no drag, no change"); assert.equal(mem["agents-view.askH"], "720");
+  delete globalThis.localStorage;
+});

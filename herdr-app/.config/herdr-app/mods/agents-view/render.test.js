@@ -263,7 +263,7 @@ test("tab: the top pane reads header, the open ask with its options and thread, 
   const thread = [msg("a-2", "s-1", 5, "owner", "does it need a release?"), msg("a-2", "s-2", 4, "agent", "yes, a build")];
   const v = draw({ asksText: lines(W("a-2", { kind: "look", batch_key: "look:o/r#1" }), ...thread), showRun: false });
   const d = select(v, keyOf(v, "batch"));
-  order(d, "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: lead-r-1 · the epic's lead", /^↑ ↓ epic/, "lead-r-1 · working", "ctrl-b t closes · g open its tab");
+  order(d, "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: lead-r-1 · the epic's lead", /^↑ ↓ epic/, "lead-r-1 · working", "cmd-shift-t closes · g open its tab");
   has(d, "1 epic needs you"); has(d, "Inbox");
 });
 test("tab: the message box names the desk when the desk is highlighted", () => {
@@ -272,7 +272,7 @@ test("tab: the message box names the desk when the desk is highlighted", () => {
 });
 test("panel (not the tab): the same order, no pane below, and the key to open the tab is named", () => {
   tabEnv(false); const v = draw({ asksText: lines(...lanes), showRun: false }); const d = select(v, keyOf(v, "batch", 1));
-  has(d, "· i opens the tab"); lacks(d, "ctrl-b t closes · g open its tab"); lacks(d, /· working$/); flush(); assert.deepEqual(runs(), []);
+  has(d, "· i opens the tab"); lacks(d, "cmd-shift-t closes · g open its tab"); lacks(d, /· working$/); flush(); assert.deepEqual(runs(), []);
 });
 const FILE = "/tmp/herdr-agents-view-p1.addr";
 const LOOP = ["sh", "-c", `f=${FILE}; while a=$(cat "$f" 2>/dev/null); [ -n "$a" ]; do hc attach "$a" || sleep 1; done`];
@@ -309,7 +309,7 @@ test("tab: the lower pane gone for good (closed by hand, or its program ended) i
 });
 test("tab: this copy is the Inbox because its props say so: still true while another tab has the focus, and false for the side panel", () => {
   tabEnv(); globalThis.__focused = { space: "s1", tab: "tab-other" };
-  const v = draw({ asksText: lines(W("a-1")), showRun: false }); has(v.drawn, "lead-r-1 · working"); has(v.drawn, "ctrl-b t closes · g open its tab");
+  const v = draw({ asksText: lines(W("a-1")), showRun: false }); has(v.drawn, "lead-r-1 · working"); has(v.drawn, "cmd-shift-t closes · g open its tab");
   tabEnv(); globalThis.__props = {}; const p = draw({ asksText: lines(W("a-1")), showRun: false }); lacks(p.drawn, "lead-r-1 · working"); flush(); assert.deepEqual(runs(), []);
 });
 test("tab: s opens the agent picker; a pick shows that agent and pins it, the highlight moving does not change it; esc follows again", async () => {
@@ -318,7 +318,7 @@ test("tab: s opens the agent picker; a pick shows that agent and pins it, the hi
   press(v, "s"); let d = paint(v); order(d, "Switch to", "desk-r", "lead-r-1", "card-r-3");
   press(v, "down"); press(v, "down"); press(v, "enter"); d = paint(v); flush(); await tick(); await tick();
   assert.deepEqual(written(), ["printf %s 't1' > " + FILE]); assert.deepEqual(runs(), [], "the pane is kept");
-  has(d, "card-r-3 · working · pinned"); has(d, "ctrl-b t closes · esc follow the highlight · s switch"); lacks(d, "Switch to");
+  has(d, "card-r-3 · working · pinned"); has(d, "cmd-shift-t closes · esc follow the highlight · s switch"); lacks(d, "Switch to");
   calls.length = 0; press(v, "down"); press(v, "up"); paint(v); flush(); await tick(); assert.deepEqual(calls, [], "pinned: moving the highlight shows nothing else");
   press(v, "escape"); d = paint(v); flush(); await tick(); await tick();
   assert.equal(v.pinned, null); has(d, "lead-r-1 · working"); assert.deepEqual(written(), ["printf %s 't2' > " + FILE]);
@@ -406,7 +406,7 @@ test("receipt: a picture asked for and a picture ready each read in the receipt"
 test("phone: one column: header, the ask, the box, the lanes on one line, the bottom bar; no split, no pane below", () => {
   tabEnv(false); const v = draw({ asksText: lines(W("a-1")), showRun: false, width: 390 }); const d = select(v, keyOf(v, "batch"));
   order(d, "A (Recommended)", "To: lead-r-1 · the epic's lead", "Picture", "Note", "Open"); has(d, "Inbox");
-  flush(); assert.deepEqual(runs(), []); lacks(d, "ctrl-b t closes · g open its tab");
+  flush(); assert.deepEqual(runs(), []); lacks(d, "cmd-shift-t closes · g open its tab");
 });
 test("phone: the bar buttons run the keys: Open peeks the terminal", () => {
   tabEnv(false); const v = draw({ asksText: lines(W("a-1")), showRun: false, width: 390 }); select(v, keyOf(v, "batch"));
@@ -428,14 +428,14 @@ test("tab: renders before the new pane appears do not split a second one", async
 test("toggle: no pane until t; t writes the address, splits one pane and gives it the keyboard; t again closes it", async () => {
   tabEnv(true, { open: false, split: false }); execWith(async () => ({ code: 0, stdout: "", stderr: "" })); const v = draw({ asksText: lines(W("a-1")), showRun: false }); flush(); paint(v); flush(); await tick();
   assert.deepEqual(runs(), [], "nothing is split before t"); assert.deepEqual(calls, []); has(v.drawn, "agent pane closed");
-  press(v, "t"); let d = paint(v); flush(); await tick(); await tick(); assert.deepEqual(ran("pane.split"), [SPLIT]); has(d, "lead-r-1 · working"); has(d, "ctrl-b t closes · g open its tab");
+  press(v, "t"); let d = paint(v); flush(); await tick(); await tick(); assert.deepEqual(ran("pane.split"), [SPLIT]); has(d, "lead-r-1 · working"); has(d, "cmd-shift-t closes · g open its tab");
   assert.ok(!ran("pane.focus").some((r) => r[1].pane === "p1"), "opened by the toggle: the keyboard is not given back to the Inbox pane");
   runs().length = 0; globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p3", tab: "tab-i", terminal: "t9" }]; paint(v); flush();
   assert.deepEqual(runs(), [["pane.focus", { pane: "p3" }]], "the new pane has the keyboard");
   runs().length = 0; press(v, "t"); paint(v); flush(); assert.deepEqual(runs(), [["pane.close", { pane: "p3" }]]);
   runs().length = 0; globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }]; paint(v); flush(); assert.deepEqual(runs(), [], "stays closed");
 });
-test("toggle: ctrl-b t (tabs-agents flips the shared flag) opens and closes it from any focus; moving to another ask swaps what is attached and takes no keyboard", async () => {
+test("toggle: cmd-shift-t (tabs-agents flips the shared flag) opens and closes it from any focus; moving to another ask swaps what is attached and takes no keyboard", async () => {
   tabEnv(true, { open: false, split: false }); execWith(async () => ({ code: 0, stdout: "", stderr: "" })); const v = draw({ asksText: lines(W("a-1", { batch_key: "k1" }), W("a-2", { epic: "o/r#2", card: "o/r#4", batch_key: "k2" })), showRun: false, terminals: [...terms, term({ address: "t7", name: "lead-r-2", labels: ["role=lead", "epic=o/r#2"] })] }); flush();
   globalThis.__shared["agents-view.pane"] = true; paint(v); flush(); await tick(); await tick(); assert.deepEqual(ran("pane.split"), [SPLIT]);
   globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p3", tab: "tab-i", terminal: "t9" }]; paint(v); flush(); runs().length = 0; calls.length = 0;
