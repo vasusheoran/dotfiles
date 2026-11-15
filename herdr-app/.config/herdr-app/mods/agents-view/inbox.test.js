@@ -46,10 +46,10 @@ test("inboxBatches: an ask from before batch keys still shows, in the batch of i
 test("laneSummary: always the four lanes with counts, empty ones too", () => {
   const l = laneSummary(inboxBatches(MIXED()));
   assert.deepEqual(l.map((x) => x.lane), ["key", "look", "hands", "groom"]);
-  assert.deepEqual(l.map((x) => x.label), ["ONE KEY", "NEEDS A LOOK", "YOUR HANDS", "NOT READY"]);
+  assert.deepEqual(l.map((x) => x.label), ["One key", "Needs a look", "Your hands", "Not ready"]);
   assert.deepEqual(l.map((x) => x.count), [1, 3, 1, 1]);
   assert.deepEqual(laneSummary([]).map((x) => x.count), [0, 0, 0, 0]);
-  assert.equal(LANE_LABELS.groom, "NOT READY");
+  assert.equal(LANE_LABELS.groom, "Not ready");
 });
 
 test("laneSummary: a batched merge ask counts one per PR", () => {
@@ -226,9 +226,9 @@ test("defaultKey: the first batch; with no batches, not the desk when anything e
 });
 
 test("narrowLanes: only the current batch's lane, the other lanes with asks as one line", () => {
-  const lanes = [{ lane: "key", label: "ONE KEY", count: 3, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 3, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 2, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }];
-  assert.deepEqual(narrowLanes(lanes, "look"), { current: lanes[1], others: "ONE KEY 3 · YOUR HANDS 2" });
-  assert.deepEqual(narrowLanes(lanes, null), { current: null, others: "ONE KEY 3 · NEEDS A LOOK 3 · YOUR HANDS 2" });
+  const lanes = [{ lane: "key", label: "One key", count: 3, batches: [] }, { lane: "look", label: "Needs a look", count: 3, batches: [] }, { lane: "hands", label: "Your hands", count: 2, batches: [] }, { lane: "groom", label: "Not ready", count: 0, batches: [] }];
+  assert.deepEqual(narrowLanes(lanes, "look"), { current: lanes[1], others: "One key 3 · Your hands 2" });
+  assert.deepEqual(narrowLanes(lanes, null), { current: null, others: "One key 3 · Needs a look 3 · Your hands 2" });
 });
 
 test("threadView: PgUp scrolls back through older messages", () => {

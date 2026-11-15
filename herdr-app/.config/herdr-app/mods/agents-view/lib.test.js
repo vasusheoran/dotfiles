@@ -238,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { origin: {}, titles: {}, usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "ONE KEY", count: 0, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 0, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 0, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { origin: {}, titles: {}, usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "One key", count: 0, batches: [] }, { lane: "look", label: "Needs a look", count: 0, batches: [] }, { lane: "hands", label: "Your hands", count: 0, batches: [] }, { lane: "groom", label: "Not ready", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -1037,11 +1037,11 @@ test("askView: the groom batch shows its cards with their choices", () => {
   assert.deepEqual(askView(openAsks([ask("acme/app#12", HOUR)], NOW)[0], {}, null).cards, []);
 });
 
-test("viewModel: a groom batch shows in the NOT READY lane, counted by its cards, with the epic and count as its name", () => {
+test("viewModel: a groom batch shows in the Not ready lane, counted by its cards, with the epic and count as its name", () => {
   const asksText = [groomAsk(), groomed("acme/app#21", ["a"]), groomed("acme/app#22", ["b"]), groomed("acme/app#23", ["c"]), groomed("acme/app#23", [], { ready: true })].map((l) => JSON.stringify(l)).join("\n");
   const vm = viewModel({ terminals: [], asksText, nowMs: NOW });
   const lane = vm.lanes.find((l) => l.lane === "groom");
-  assert.equal(lane.label, "NOT READY");
+  assert.equal(lane.label, "Not ready");
   assert.equal(lane.count, 2);
   assert.equal(lane.batches[0].name, "app#10 · 2 to groom");
   assert.equal(vm.lanes.filter((l) => l.lane !== "groom").every((l) => l.count === 0), true);

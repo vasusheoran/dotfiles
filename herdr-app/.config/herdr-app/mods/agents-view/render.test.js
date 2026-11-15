@@ -62,7 +62,7 @@ const msg = (id, mid, ago, from, text) => ({ ts: iso(ago), event: "message", mid
 
 test("render: asks waiting with the lists hidden draws the inbox and one summary line, no running rows", () => {
   const v = draw({ asksText: asks, showRun: false }); eachRow(v, "hidden");
-  for (const s of ["NEEDS A LOOK", "Pick one", "Running 2 · Stuck 1", "2 asks in 2 batches", "2 running · 1 stuck", "desk-r"]) has(v.drawn, s);
+  for (const s of ["Needs a look", "Pick one", "Running 2 · Stuck 1", "2 asks in 2 batches", "2 running · 1 stuck", "desk-r"]) has(v.drawn, s);
   for (const s of ["Running", "Stuck", "lead-r-1", "card-r-3", "Nothing needs you."]) lacks(v.drawn, s);
 });
 test("render: asks waiting with the lists shown also draws the running and stuck rows", () => {
@@ -81,8 +81,8 @@ test("render: empty, nothing running and no asks", () => {
 
 for (const [name, showRun] of [["lists hidden", false], ["lists shown", true]]) test(`render: the four lanes with their counts and each batch's pane, ${name}`, () => {
   const v = draw({ asksText: lines(...lanes), showRun }); eachRow(v, "lanes");
-  for (const s of ["ONE KEY", "NEEDS A LOOK", "YOUR HANDS", "NOT READY", "4 asks in 4 batches"]) has(v.drawn, s);
-  assert.deepEqual(v.model().vm.lanes.map((l) => [l.label, l.count]), [["ONE KEY", 1], ["NEEDS A LOOK", 1], ["YOUR HANDS", 1], ["NOT READY", 1]]);
+  for (const s of ["One key", "Needs a look", "Your hands", "Not ready", "4 asks in 4 batches"]) has(v.drawn, s);
+  assert.deepEqual(v.model().vm.lanes.map((l) => [l.label, l.count]), [["One key", 1], ["Needs a look", 1], ["Your hands", 1], ["Not ready", 1]]);
   has(select(v, keyOf(v, "batch", 0)), "Land the fix");
   has(select(v, keyOf(v, "batch", 1)), "Title a-2");
   has(select(v, keyOf(v, "batch", 2)), "Title a-3");
@@ -117,12 +117,12 @@ test("render: the desk thread shows the desk's reply", () => {
 test("render: the narrow view is the phone: the four lanes on one line and the current batch under it", () => {
   const v = draw({ asksText: lines(...lanes), showRun: false, width: 300 }); eachRow(v, "narrow");
   const d = select(v, keyOf(v, "batch", 1));
-  has(d, "ONE KEY 1 · LOOK 1 · HANDS 1 · NOT READY 1"); has(d, "Title a-2"); lacks(d, "NEEDS A LOOK"); lacks(d, "NOT READY");
+  has(d, "One key 1 · Look 1 · Hands 1 · Not ready 1"); has(d, "Title a-2"); lacks(d, "Needs a look"); lacks(d, "Not ready");
 });
 
 test("render: a groom batch lists its cards that are not ready, with their open choices", () => {
   const v = draw({ asksText: lines(lanes[3], lanes[4], { ts: iso(10), event: "groomed", id: "a-4", member: "o/r#22", ready: false, choices: ["Which queue?"] }), showRun: false }); eachRow(v, "groom");
-  const d = select(v, keyOf(v, "batch")); has(d, "NOT READY"); has(d, "2 cards not ready"); has(d, "Which store? · Keep the API?"); has(d, "Which queue?");
+  const d = select(v, keyOf(v, "batch")); has(d, "Not ready"); has(d, "2 cards not ready"); has(d, "Which store? · Keep the API?"); has(d, "Which queue?");
 });
 
 test("render: picture coming and open picture appear on the ask they belong to", () => {
@@ -169,14 +169,14 @@ test("render: one order at every width and in the panel: the open ask with its t
   tabEnv(false);
   const v = draw({ asksText: lines(...lanes, ...thread), showRun: false, width: 900 });
   const d = select(v, keyOf(v, "batch", 1)), at = (x) => d.findIndex((s) => (x instanceof RegExp ? x.test(s) : s === x));
-  const [lane, batch, ask, opt, thr, box] = ["NEEDS A LOOK", "Title a-2", "ask 1 of 1 ‹ ›", "A (Recommended)", /^Thread · 2 messages/, "To: agent behind this ask"].map(at);
+  const [lane, batch, ask, opt, thr, box] = ["Needs a look", "Title a-2", "ask 1 of 1 ‹ ›", "A (Recommended)", /^Thread · 2 messages/, "To: agent behind this ask"].map(at);
   const batchAt = d.lastIndexOf("Title a-2");
   for (const [name, i] of [["lane", lane], ["batch", batchAt], ["ask", ask], ["options", opt], ["thread", thr], ["box", box]]) assert.ok(i >= 0, `${name} drawn`);
   assert.ok(ask < opt && opt < thr && thr < box && box < lane && lane < batchAt, `order: ${[ask, opt, thr, box, lane, batchAt]}`);
   lacks(d, "@w:260"); // no fixed-width side column
-  for (const l of ["ONE KEY", "YOUR HANDS", "NOT READY"]) assert.ok(at(l) > box, `${l} listed under the box`);
+  for (const l of ["One key", "Your hands", "Not ready"]) assert.ok(at(l) > box, `${l} listed under the box`);
   const p = draw({ asksText: lines(...lanes, ...thread), showRun: false, width: 300 }), e = select(p, keyOf(p, "batch", 1));
-  order(e, "ask 1 of 1 ‹ ›", "A (Recommended)", /^Thread · 2 messages/, "To: agent behind this ask", "ONE KEY 1 · LOOK 1 · HANDS 1 · NOT READY 1", "Picture");
+  order(e, "ask 1 of 1 ‹ ›", "A (Recommended)", /^Thread · 2 messages/, "To: agent behind this ask", "One key 1 · Look 1 · Hands 1 · Not ready 1", "Picture");
 });
 
 // ---- every key says at once that it was taken (kuchbhi#1115): pressed, then confirmed or failed, in the open ask, with the call's exit code and stderr kept
@@ -266,7 +266,7 @@ test("tab: the top pane reads header, the open ask with its options and thread, 
   const thread = [msg("a-2", "s-1", 5, "owner", "does it need a release?"), msg("a-2", "s-2", 4, "agent", "yes, a build")];
   const v = draw({ asksText: lines(W("a-2", { kind: "look", batch_key: "look:o/r#1" }), ...thread), showRun: false });
   const d = select(v, keyOf(v, "batch"));
-  order(d, "ask 1 of 1 ‹ ›", "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: card-r-3 · agent behind this ask", "NEEDS A LOOK", /^↑ ↓ batch/, "card-r-3 · working", "type here to talk to it · s switch · g open its tab");
+  order(d, "ask 1 of 1 ‹ ›", "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: card-r-3 · agent behind this ask", "Needs a look", /^↑ ↓ batch/, "card-r-3 · working", "type here to talk to it · s switch · g open its tab");
   has(d, "1 ask in 1 batch"); has(d, "Inbox");
 });
 test("tab: the message box names the desk when the desk is highlighted", () => {
@@ -275,7 +275,7 @@ test("tab: the message box names the desk when the desk is highlighted", () => {
 });
 test("panel (not the tab): the same order, no pane below, and the key to open the tab is named", () => {
   tabEnv(false); const v = draw({ asksText: lines(...lanes), showRun: false }); const d = select(v, keyOf(v, "batch", 1));
-  order(d, "ask 1 of 1 ‹ ›", "NEEDS A LOOK"); has(d, "· i opens the tab"); lacks(d, "type here to talk to it · s switch · g open its tab"); lacks(d, /· working$/); flush(); assert.deepEqual(runs(), []);
+  order(d, "ask 1 of 1 ‹ ›", "Needs a look"); has(d, "· i opens the tab"); lacks(d, "type here to talk to it · s switch · g open its tab"); lacks(d, /· working$/); flush(); assert.deepEqual(runs(), []);
 });
 const ATT = (a) => ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", a] }];
 test("tab: the first attach splits a pane below the mod and runs hc attach in it, once", () => {
@@ -398,7 +398,7 @@ test("receipt: a picture asked for and a picture ready each read in the receipt"
 // ---- 6. phone
 test("phone: one column: header, the ask, the box, the lanes on one line, the bottom bar; no split, no pane below", () => {
   tabEnv(false); const v = draw({ asksText: lines(W("a-1")), showRun: false, width: 390 }); const d = select(v, keyOf(v, "batch"));
-  order(d, "ask 1 of 1 ‹ ›", "A (Recommended)", "To: card-r-3 · agent behind this ask", "ONE KEY 0 · LOOK 1 · HANDS 0 · NOT READY 0", "Picture", "Own idea", "Go to agent"); has(d, "Inbox");
+  order(d, "ask 1 of 1 ‹ ›", "A (Recommended)", "To: card-r-3 · agent behind this ask", "One key 0 · Look 1 · Hands 0 · Not ready 0", "Picture", "Own idea", "Go to agent"); has(d, "Inbox");
   flush(); assert.deepEqual(runs(), []); lacks(d, "type here to talk to it · s switch · g open its tab");
 });
 test("phone: the bar buttons run the keys: Go to agent peeks the terminal", () => {
@@ -411,7 +411,7 @@ test("phone: Go to agent is not offered when no agent is behind the ask", () => 
 });
 test("phone: an empty inbox says nothing needs you and where to type; the box names the desk", () => {
   tabEnv(false); const v = draw({ asksText: "", showRun: false, width: 390 }); const d = paint(v);
-  order(d, "Nothing needs you.", "Type below to message the desk.", "To: desk-r", "ONE KEY 0 · LOOK 0 · HANDS 0 · NOT READY 0");
+  order(d, "Nothing needs you.", "Type below to message the desk.", "To: desk-r", "One key 0 · Look 0 · Hands 0 · Not ready 0");
 });
 test("tab: renders before the new pane appears do not split a second one", () => {
   tabEnv(true, { split: false }); const v = draw({ asksText: lines(W("a-1")), showRun: false }); paint(v); paint(v); flush(); paint(v); flush();

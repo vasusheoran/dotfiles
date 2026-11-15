@@ -240,7 +240,7 @@ export const messageArgv = (thread, text) => ["ask", "message", thread, "--text"
 export const messageTarget = (ask) => (ask ? askId(ask) : "desk");
 
 // ---- batches in four lanes (kuchbhi#1116)
-export const LANE_LABELS = { key: "ONE KEY", look: "NEEDS A LOOK", hands: "YOUR HANDS", groom: "NOT READY" };
+export const LANE_LABELS = { key: "One key", look: "Needs a look", hands: "Your hands", groom: "Not ready" };
 const LANE_ORDER = ["key", "look", "hands", "groom"];
 const askCount = (a) => Math.max(1, a.targets?.length ?? 0, a.lane === "groom" ? a.cards?.length ?? 0 : 0); // a groom batch counts its cards
 // One batch per batch key (an ask from before batch keys is batched by lane and epic), asks oldest first, batches in lane order.
@@ -631,7 +631,7 @@ export function pickerStep(p, key, n) {
 }
 // The owner's way into the agent: agent.focus on the Mac, terminal.peek (full screen with a back button) on the phone.
 export const goStep = (terminal, phone) => [phone ? "terminal.peek" : "agent.focus", { terminal }];
-const SHORT_LANE = { key: "ONE KEY", look: "LOOK", hands: "HANDS", groom: "NOT READY" };
+const SHORT_LANE = { key: "One key", look: "Look", hands: "Hands", groom: "Not ready" };
 export const lanesLine = (lanes) => lanes.map((l) => `${SHORT_LANE[l.lane]} ${l.count}`).join(" · ");
 export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, ...(agent ? [{ key: "g", label: "Go to agent" }] : [])];
 

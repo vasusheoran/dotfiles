@@ -177,8 +177,8 @@ test("goStep: agent.focus on the Mac, terminal.peek on the phone", () => {
 });
 test("lanesLine: the four lanes on one line, zeros included", () => {
   const lanes = [{ lane: "key", count: 3 }, { lane: "look", count: 2 }, { lane: "hands", count: 1 }, { lane: "groom", count: 7 }];
-  assert.equal(lanesLine(lanes), "ONE KEY 3 · LOOK 2 · HANDS 1 · NOT READY 7");
-  assert.equal(lanesLine(lanes.map((l) => ({ ...l, count: 0 }))), "ONE KEY 0 · LOOK 0 · HANDS 0 · NOT READY 0");
+  assert.equal(lanesLine(lanes), "One key 3 · Look 2 · Hands 1 · Not ready 7");
+  assert.equal(lanesLine(lanes.map((l) => ({ ...l, count: 0 }))), "One key 0 · Look 0 · Hands 0 · Not ready 0");
 });
 test("phoneBar: Picture, Own idea, Go to agent; Go to agent only with an agent behind the ask", () => {
   assert.deepEqual(phoneBar(true).map((b) => [b.key, b.label]), [["v", "Picture"], ["o", "Own idea"], ["g", "Go to agent"]]);
