@@ -49,6 +49,9 @@ export function answeredAsks(lines, nowMs) {
   return out.sort((a, b) => Date.parse(a.answeredAt) - Date.parse(b.answeredAt));
 }
 
+// a batch row holds one line: a long title is cut with an ellipsis
+export const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
 export function openAsks(lines, nowMs, closed = []) {
   const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map(), groomed = new Map();
   for (const l of lines) {
@@ -249,7 +252,7 @@ export function inboxBatches(asks) {
   }
   return [...by.values()].map((b) => {
     const count = b.asks.reduce((n, a) => n + askCount(a), 0), epic = b.asks[0].epic ?? b.asks[0].card;
-    return { ...b, count, epic, name: b.asks.length === 1 && b.lane !== "groom" ? b.asks[0].title : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
+    return { ...b, count, epic, name: b.asks.length === 1 && b.lane !== "groom" ? clip(b.asks[0].title, 60) : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
       coming: b.asks.filter((a) => a.visual === "coming").length,
       asks: [...b.asks].sort((x, y) => (y.visual === "ready") - (x.visual === "ready") || Date.parse(x.ts) - Date.parse(y.ts)) }; // a ready picture goes to the top
   }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
