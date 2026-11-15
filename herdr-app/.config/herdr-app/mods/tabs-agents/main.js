@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { agentsToggle } from "./lib.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -11,21 +12,25 @@ function find(node, id) {
   return null;
 }
 
-// Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents panel button and the `toggle` command (ctrl-b a in keys.json).
-// Toggle shows or hides the panel with the Agents panel selected, like clicking its button.
+// Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents button and the `toggle` command (ctrl-b a in keys.json). Both open the Inbox as a main tab (the agents-view
+// mod with props.inbox), select it when it is open, and from it go back to the tab the owner came from. There is no agents column on the right any more.
 export default class Tabs extends View {
   init(_props, cx) {
     cx.spawn(async () => {
       for (;;) {
         if (await nextCommand() !== "toggle") continue;
-        const panel = find(layout(), "panel"), body = find(layout(), "panel-body");
-        if (panel && !panel.hidden && body?.active === "agents-view") run("layout.hide", { id: "panel" });
-        else { run("layout.select", { stack: "panel-body", child: "agents-view" }); run("layout.show", { id: "panel" }); }
+        this.openAgents();
       }
     });
-    this.pressed = null;
+    this.pressed = null; this.back = null;
     this.scroll = ScrollHandle.new();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+  }
+
+  openAgents() {
+    const r = agentsToggle({ panes: panes(), focused: focused(), back: this.back });
+    this.back = r.back;
+    for (const [name, args] of r.steps) run(name, args);
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -97,7 +102,8 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "agents-view"];
+    const onInbox = panes().some((p) => p.mod === "agents-view" && p.tab === focused()?.tab);
+    const enabled = shared("workspace.panels") ?? ["files", "changes"];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
@@ -118,7 +124,10 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .child(panelButton("agents-view", "Agents", "mods/tabs-agents/agents.svg"))
+      .child(h_flex().id("agents-tab").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
+        .text_size(12).bg(onInbox ? t.selected : t.chrome).text_color(onInbox ? t.foreground : t.muted)
+        .hover(s => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openAgents())
+        .child(svg("mods/tabs-agents/agents.svg").size(14)).child("Agents"))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

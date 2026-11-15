@@ -167,13 +167,6 @@
                       "content": {
                         "mod": "token-cost"
                       }
-                    },
-                    {
-                      "id": "agents-view",
-                      "type": "block",
-                      "content": {
-                        "mod": "agents-view"
-                      }
                     }
                   ]
                 }
