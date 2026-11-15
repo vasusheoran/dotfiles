@@ -100,11 +100,11 @@ test("Enter opens a ready picture while the picture row has focus; with focus on
   assert.deepEqual(enterAction(b, null, NOW, true), { type: "post", text: "1a: Redis (Recommended)", key: "a" }, "no picture, nothing to open");
 });
 
-test("r is offered only for a gone asker whose picture was asked for and is not ready; a failed replace gives the claim back", () => {
+test("r is offered for a gone asker whose picture is not ready, asked for or not (ask.sh replace records the request); a failed replace gives the claim back", () => {
   const none = vm([ask()], [rawT("other")]).asks[0], coming = vm([ask(), REQ], [rawT("other")]).asks[0], ready = vm([ask(), REQ, READY], [rawT("other")]).asks[0];
-  assert.deepEqual([none, coming, ready].map((a) => a.replaceable), [false, true, false]);
-  assert.equal(askKeyAction(none, "r", null, NOW), null, "no request yet: the replacement could not record a picture");
-  assert.equal(isAskKey(none, "r", null), false);
+  assert.deepEqual([none, coming, ready].map((a) => a.replaceable), [true, true, false]);
+  assert.deepEqual(askKeyAction(none, "r", null, NOW), { type: "replace" }, "no request yet: the replacement records it");
+  assert.equal(isAskKey(none, "r", null), true);
   assert.equal(askView(none, {}, null).gone, true, "the panel still says the asker is gone");
   assert.equal(askView(coming, {}, null).replaceable, true);
   assert.equal(vm([ask(), REQ, ev("replaced"), ev("replace_failed")], [rawT("other")]).asks[0].replaceable, true);

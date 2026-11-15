@@ -81,7 +81,7 @@ export function openAsks(lines, nowMs, closed = []) {
         kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: l.body ?? "", targets,
         today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
         visual: urls.has(askKey(l)) ? "ready" : asked.has(askKey(l)) ? "coming" : "none", visualUrl: urls.get(askKey(l)) ?? null,
-        terminal: l.terminal ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
+        terminal: l.terminal ?? null, target: l.target ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
         // a groom batch: its cards that are still not ready, with their open choices (kuchbhi#1119)
         cards: Object.values(groomed.get(askKey(l)) ?? {}).filter((g) => !g.ready).map((g) => ({ card: g.member, choices: g.choices ?? [] })),
       };
@@ -98,7 +98,7 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null, pick = false, okey = null;
   if (key === "x" && ask.kind === "you" && !ask.options.length) text = "Done."; // x is reserved for you asks; elsewhere it is an option key
-  else if (key === "v") return ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : { type: "visual" }; // a picture answers nothing: no second key
+  else if (key === "v") return ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : ask.askerGone ? { type: "gone" } : { type: "visual" }; // a picture answers nothing: no second key
   else if (key === "p" && ask.plan && !ask.options.some((o) => o.key === "p")) return { type: "open", target: ask.plan };
   else if (key === "r" && ask.replaceable && !ask.options.some((o) => o.key === "r")) return { type: "replace" };
   else if (key === "b" && ask.targets?.length > 1) return { type: "checklist" }; // a batched merge ask: b picks which PRs
@@ -180,8 +180,9 @@ export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ?
 
 // Whether a key belongs to the selected ask: option letters, x (you asks), v, n (a note), a question digit, or any single key while an
 // answer is armed (it cancels). j, k and the arrows always navigate, so they never count.
+const prOf = (ask) => ask.target?.pr ? ask.target : ask.targets?.find((t) => !t.landed && t.pr) ?? null;
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || (k === "p" && !!ask.plan) || (k === "r" && !!ask.replaceable) || (k === "o" && ask.kind !== "merge") || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || k === "c" || (k === "d" && !!prOf(ask)) || (k === "p" && !!ask.plan) || (k === "r" && !!ask.replaceable) || (k === "o" && ask.kind !== "merge") || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 // { key } is the picked option (single-question asks: merge-green reads it), { note } rides with the pick, { only } is a batch's chosen PR numbers.
@@ -324,7 +325,7 @@ export function planRef(plan) {
 }
 
 // What the panel draws for one ask: a short row, and the blocks shown when it is selected.
-export function askView(ask, picks, armed) {
+export function askView(ask, picks, armed, flash = null) {
   const titles = questionTitles(ask.body);
   const qs = questionsOf(ask);
   return {
@@ -339,7 +340,7 @@ export function askView(ask, picks, armed) {
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
       key: o.key, label: o.label, then: o.then ?? null, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
-      armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key,
+      armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key, flash: !!flash && flash.id === ask.id && flash.key === o.key,
     })) })),
     status: qs.length > 1 ? `${qs.filter((q) => picks?.[q]).length} of ${qs.length} picked` : "",
   };
@@ -494,12 +495,12 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const cc = parse(closedJson);
   const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
   const here = new Set(ts.filter((t) => t.live).map((t) => t.name).filter(Boolean));
-  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => { const gone = !!a.terminal && !a.replaced && !here.has(a.terminal); return { ...a, askerGone: gone, replaceable: gone && a.visual === "coming" }; }); // a replacement can only record a picture somebody asked for
+  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => { const gone = !!a.terminal && !a.replaced && !here.has(a.terminal); return { ...a, askerGone: gone, replaceable: gone && a.visual !== "ready" }; }); // r works at once on a gone asker: ask.sh replace records the picture request itself
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
@@ -558,7 +559,7 @@ export function selectTarget(r, deskProject) {
 // The one-line status of a key press, shown in the open ask (or the answered row, or the desk) in the same redraw as the key: what was pressed,
 // then what the call did. A failure says so in plain words with what to do; nothing is silent. kind: pick | other | done | visual | replace | message | nudge | note.
 const PRESSED = { pick: "sending your pick", other: "sending your idea", done: "marking it done", visual: "asking the agent for a picture", replace: "starting a replacement", message: "sending your message", nudge: "nudging the asker", note: "sending your note" };
-const DONE = { pick: "sent to the agent", other: "your idea sent: the agent applies it or replies below", done: "marked done", visual: "picture requested: it shows here as 'open picture' when the agent has built it", replace: "replacement started", message: "message sent: delivered when the terminal is free", nudge: "nudged: the asker has a reminder", note: "note sent" };
+const DONE = { pick: "sent to the agent", other: "your idea sent: the agent applies it or replies below", done: "marked done", visual: "picture requested: it shows here as 'open picture' when the agent has built it", replace: "replacement started", message: "message sent: delivered when the terminal is free", nudge: "reminder sent · next in 10m", note: "note sent" };
 export const pressedText = (kind, label = "") => `${PRESSED[kind] ?? "working"}${label ? `: ${label}` : ""}…`;
 export const doneText = (kind, label = "") => (kind === "pick" && label ? `picked ${label}: ${DONE.pick}` : DONE[kind] ?? "done");
 // res = { code, stderr } of the work call, or null / no code when it could not run at all
@@ -571,6 +572,88 @@ export function failText(kind, res) {
   if (/less than 10 minutes/i.test(err)) return `too soon to nudge: ${first.replace(/^ask: /, "")}`;
   if (/did not take it|busy or gone|is gone|no such terminal|still running|cannot tell whether/i.test(err)) return `${what} was not sent: the agent is busy or gone; try again in a moment, or press r to start a replacement`;
   return `${what} failed (exit ${res.code})${first ? `: ${first.replace(/^ask: /, "")}` : ""}: check the terminal or run work ask pending`;
+}
+
+// ---- the Inbox as a main tab (kuchbhi#1115) ----
+export const INBOX_MOD = "agents-view", INBOX_TAB = "Inbox";
+const tabName = (t) => t.name ?? t.label ?? t.title ?? null;
+
+// One tab.new for the Inbox, or a tab.select when it exists (a tab named Inbox that holds the mod).
+export function inboxTabSteps({ spaces, panes, focused }) {
+  const own = (spaces ?? []).flatMap((s) => s.tabs ?? []).find((t) => tabName(t) === INBOX_TAB && (panes ?? []).some((p) => p.mod === INBOX_MOD && p.tab === t.id));
+  if (own) return [["tab.select", { id: own.id }]];
+  const space = focused?.space ?? spaces?.[0]?.id;
+  return space ? [["tab.new", { space, name: INBOX_TAB, mod: INBOX_MOD }]] : [];
+}
+// { tab, pane } when this view runs as the Inbox tab (the focused tab is named Inbox and holds the mod), else null: the side panel.
+export function inTab({ spaces, panes, focused }) {
+  const t = focused && (spaces ?? []).flatMap((s) => s.tabs ?? []).find((x) => x.id === focused.tab && tabName(x) === INBOX_TAB);
+  const p = t && (panes ?? []).find((x) => x.mod === INBOX_MOD && x.tab === t.id);
+  return p ? { tab: t.id, pane: p.pane } : null;
+}
+// The pane below the mod: one pane.split, only while the tab has no terminal pane.
+export const splitSteps = ({ panes, tab, own }) => ((panes ?? []).some((p) => p.tab === tab && p.terminal) ? [] : [["pane.split", { pane: own, direction: "down" }]]);
+
+// The running agents the owner can look at: the desk, then leads, then workers and side jobs.
+export function liveAgents(vm) {
+  const row = (name, address, state, role) => ({ name, address, state, role });
+  return [...(vm.desk?.address ? [row(vm.desk.name, vm.desk.address, vm.desk.state, "desk")] : []),
+    ...vm.groups.flatMap((g) => g.rows.map((r) => row(r.name, r.address, r.state, r.role))), ...vm.sides.map((s) => row(s.name, s.address, s.state, "side"))];
+}
+// What the pane below shows: follows the highlighted ask's own terminal, or the pinned agent. An ask with no agent behind it, or a gone one, keeps the
+// last terminal (the desk when there was none), dimmed with the reason. step is the terminal.show to run, null when that agent is already shown.
+export function bottomPlan({ pane, vm, pinned, last, shown, bottom }) {
+  const agents = liveAgents(vm), by = (addr) => agents.find((a) => a.address === addr) ?? null, byName = (n) => agents.find((a) => a.name === n) ?? null;
+  const showing = (a, extra) => ({ address: a.address, name: a.name, ...extra, step: bottom && a.address !== shown ? ["terminal.show", { terminal: a.address, pane: bottom }] : null });
+  const pin = pinned ? by(pinned) : null;
+  if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "esc follow the highlight · s switch" });
+  const unpin = !!pinned;
+  const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"}`, hint: "type here to talk to it · s switch · g open its tab" });
+  const keep = (mode, why) => {
+    const k = (last && by(last.address)) ?? agents.find((a) => a.role === "desk") ?? null;
+    return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, step: k && bottom && k.address !== shown ? ["terminal.show", { terminal: k.address, pane: bottom }] : null,
+      head: why(k?.name ?? "nothing"), hint: "s switch" };
+  };
+  if (pane?.kind === "desk") { const d = agents.find((a) => a.role === "desk"); if (d) return follow(d); }
+  if (pane?.kind === "ask" && pane.ask.terminal) {
+    const a = byName(pane.ask.terminal);
+    return a ? follow(a) : keep("gone", () => `${pane.ask.terminal} is gone · r replace`);
+  }
+  if (pane?.kind === "ask" || pane?.kind === "answered") return keep("none", (n) => `no agent behind this ask · showing ${n}`);
+  const d = agents.find((a) => a.role === "desk");
+  return d ? follow(d) : keep("none", (n) => `no agent behind this ask · showing ${n}`);
+}
+// The switch picker (s): j k or arrows move inside the list, Enter picks, esc cancels.
+export function pickerStep(p, key, n) {
+  if (key === "enter") return { type: "pick", index: p.cur };
+  if (key === "escape") return { type: "cancel" };
+  const d = key === "down" || key === "j" ? 1 : key === "up" || key === "k" ? -1 : 0;
+  return { type: "move", cur: Math.max(0, Math.min(n - 1, p.cur + d)) };
+}
+// The owner's way into the agent: agent.focus on the Mac, terminal.peek (full screen with a back button) on the phone.
+export const goStep = (terminal, phone) => [phone ? "terminal.peek" : "agent.focus", { terminal }];
+const SHORT_LANE = { key: "ONE KEY", look: "LOOK", hands: "HANDS", groom: "NOT READY" };
+export const lanesLine = (lanes) => lanes.map((l) => `${SHORT_LANE[l.lane]} ${l.count}`).join(" · ");
+export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, ...(agent ? [{ key: "g", label: "Go to agent" }] : [])];
+
+// Why / What / How for one ask, from what the runner stored per card (closed-cards.json origin). A card with nothing stored shows only the epic: nothing is invented.
+export function originView(ask, vm, hasAgent) {
+  const o = vm.origin?.[ask.card], key = ask.epic ?? ask.card;
+  const epic = vm.titles?.[key] || shortCard(key);
+  if (!o) return { why: { tag: null, epic, line: "" }, what: "", how: [] };
+  const pr = prOf(ask);
+  return { why: { tag: o.by === "agent" ? "agent-filed" : "your card", epic, line: o.summary ?? "" }, what: (o.trail ?? []).join(" → "),
+    how: [ask.plan ? { key: "p", label: planRef(ask.plan)?.kind === "pr" ? "open PR" : "open plan" } : null, pr ? { key: "d", label: "diff" } : null, { key: "c", label: "open card" }, hasAgent ? { key: "g", label: "go to agent" } : null].filter(Boolean) };
+}
+// c opens the card, d the PR's files, g goes to the agent; never a key that is one of the ask's own option letters.
+export function originKey(ask, k, hasAgent) {
+  if (ask.options?.some((o) => o.key === k)) return null;
+  const m = String(ask.card).match(/^(.+)#(\d+)$/);
+  if (k === "c" && m) return { type: "open", target: `https://github.com/${m[1]}/issues/${m[2]}` };
+  const pr = prOf(ask);
+  if (k === "d" && pr) return { type: "open", target: `https://github.com/${pr.repo}/pull/${pr.pr}/files` };
+  if (k === "g" && hasAgent) return { type: "agent" };
+  return null;
 }
 
 // Runs one action through io = { run, exec, pane }. Nothing happens without a right-hand pane to show in.

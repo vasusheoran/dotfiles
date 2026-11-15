@@ -238,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "ONE KEY", count: 0, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 0, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 0, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { origin: {}, titles: {}, usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "ONE KEY", count: 0, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 0, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 0, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
