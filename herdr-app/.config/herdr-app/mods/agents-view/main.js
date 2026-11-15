@@ -135,7 +135,6 @@ export default class AgentsView extends View {
     if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.qSet = true; this.armed = null; return cx.notify(); }
     const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (r && ["post", "arm", "pick"].includes(r.type) && a.options.some((o) => o.key === k)) this.flashOn(a, k, cx);
-    if (r?.type === "other") { this.input = { mode: "other", id: a.id, q: this.q, text: "" }; return cx.notify(); }
     return this.act(a, r, cx);
   }
 
@@ -148,6 +147,8 @@ export default class AgentsView extends View {
     if (r.type === "visual" || r.type === "replace") return this.picture(a, r.type, cx);
     if (r.type === "checklist") { this.checklist = { id: a.id, cur: 0, chosen: [] }; return cx.notify(); }
     if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks; Enter sends the answer line (the picks, the recommended option for the rest)
+      const was = this.picks.get(a.id)?.[r.q];
+      if (was?.startsWith(`${r.q}note`)) this.notes.set(a.id, { ...this.notes.get(a.id), [r.q]: was.slice(was.indexOf(":") + 1).trim() }); // a note and now a pick: the note goes with the pick
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks); this.qSet = false;
       const total = questionsOfAsk(a).length, marked = questionsOfAsk(a).filter((q) => picks[q]).length, nx = partStep(a, r.q, "right");
       if (nx.q) this.q = nx.q; // marked: on to the next part
@@ -198,12 +199,14 @@ export default class AgentsView extends View {
   // a message to the agent behind an ask (its thread) or to the desk; the run files take it first, then it is delivered
   sendMessage(thread, text, cx, to = null) { this.call(thread, "message", "", messageArgv(thread, text, to), cx, () => this.read(cx)); }
 
-  // a note or an own idea on one part of a several-part question: kept in the panel until the answer is submitted
+  // a note on one part of a several-part question, kept in the panel until the answer is submitted: with an option picked it is a note on that pick; with none it is the
+  // part's own answer (marked `note`), and the part is done
   keepPart(a, i, text, cx) {
-    if (i.mode === "note") { this.notes.set(a.id, { ...this.notes.get(a.id), [i.q]: text }); this.say(a.id, "ok", `note kept for part ${i.q}: it goes with the answer`); return cx.notify(); }
-    const picks = { ...this.picks.get(a.id), [i.q]: `${i.q}other: ${text}` }; this.picks.set(a.id, picks);
-    const qs = questionsOfAsk(a), nx = partStep(a, i.q, "right"); if (nx.q) this.q = nx.q;
-    this.say(a.id, "ok", `marked ${qs.filter((q) => picks[q]).length} of ${qs.length} · your own idea for part ${i.q}`); return cx.notify();
+    const picks = this.picks.get(a.id) ?? {}, qs = questionsOfAsk(a);
+    if (picks[i.q] && !picks[i.q].startsWith(`${i.q}note`)) { this.notes.set(a.id, { ...this.notes.get(a.id), [i.q]: text }); this.say(a.id, "ok", `note kept for part ${i.q}: it goes with the answer`); return cx.notify(); }
+    const next = { ...picks, [i.q]: `${i.q}note: ${text}` }; this.picks.set(a.id, next);
+    const nx = partStep(a, i.q, "right"); if (nx.q) this.q = nx.q;
+    this.say(a.id, "ok", `marked ${qs.filter((q) => next[q]).length} of ${qs.length} · your note is the answer for part ${i.q}`); return cx.notify();
   }
 
   // while the text input or the batch checklist is open, every key goes to it
@@ -213,8 +216,7 @@ export default class AgentsView extends View {
       if (r.type === "send") {
         this.input = null;
         if (i.mode !== "message" && questionsOfAsk(a).length > 1) return this.keepPart(a, i, r.text, cx);
-        if (i.mode === "note") this.sendNote(a, r.text, cx);
-        else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx, "other");
+        if (i.mode === "note") this.send(a, otherArgv(a, r.text), cx, "other"); // one question and no option picked: the note is the answer
         else this.sendMessage(i.thread, r.text, cx, i.to);
       }
       else if (r.type === "keep") { this.input = null; if (i.mode !== "message" && questionsOfAsk(a).length > 1) return this.keepPart(a, i, r.text, cx); this.kept.set(a.id, r.text); this.say(a.id, "ok", "note kept: it goes with your pick"); }
@@ -395,18 +397,18 @@ export default class AgentsView extends View {
           .when(o.rec && !o.armed, (e) => e.child(sans(11, t.done, "↵").flex_none()))
           .when(o.armed, (e) => e.child(sans(11, t.background, "press again to send")))))))
       .when(!!this.notes.get(a.id)?.[cur], (e) => e.child(sans(12, t.muted, `Note on this part: ${this.notes.get(a.id)[cur]}`).pt(4)))
-      .when(!!this.picks.get(a.id)?.[cur]?.startsWith(`${cur}other`), (e) => e.child(sans(12, t.foreground, `Your own idea: ${this.picks.get(a.id)[cur].slice(this.picks.get(a.id)[cur].indexOf(":") + 1).trim()}`).pt(4)))
+      .when(!!this.picks.get(a.id)?.[cur]?.startsWith(`${cur}note`), (e) => e.child(sans(12, t.foreground, `Your answer is the note: ${this.picks.get(a.id)[cur].slice(this.picks.get(a.id)[cur].indexOf(":") + 1).trim()}`).pt(4)))
       .when(v.questions.length > 0 && a.targets.length < 2, (e) => e.child(h_flex().w_full().gap(8).items_baseline().pt(6).child(sans(12, t.dim, "Your answer")).child(mono(13, t.foreground, answerLine(a, this.picks.get(a.id) ?? {})))
-        .child(sans(11, t.dim, "↵ send all recommended · 1-9 then a letter changes one · o own idea").flex_1().min_w(0).truncate())))
+        .child(sans(11, t.dim, "↵ send all recommended · 1-9 then a letter changes one · n note").flex_1().min_w(0).truncate())))
       .when(!!st, (e) => e.child(this.statusLine(t, st)))
       .when(this.checklist?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
         .children(v.targets.map((tg, i) => h_flex().id(`${r.key}:t${i}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6).bg(this.checklist.cur === i ? t.selected : t.raised)
           .child(mono(12, t.foreground, this.checklist.chosen.includes(tg.id) ? "[x]" : "[ ]")).child(sans(13, t.foreground, tg.label)).child(div().flex_1())))
         .child(sans(11, t.dim, "space toggles · ↵ sends (none = hold all) · esc cancels"))))
       .when(this.input?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
-        .child(sans(12, t.muted, this.input.mode === "other" ? "Your own answer" : "Note"))
+        .child(sans(12, t.muted, "Note"))
         .child(h_flex().w_full().h(ROW).px(8).items_center().rounded(6).bg(t.raised).border_1().border_color(t.accent).child(sans(13, t.foreground, `${this.input.text}▏`)))
-        .child(sans(11, t.dim, this.input.mode === "other" ? "↵ send as your answer · the agent applies it or replies here · esc cancel" : "↵ send alone · tab keep for your pick · esc cancel"))))
+        .child(sans(11, t.dim, "↵ no option picked: your note is the answer · tab keeps it for your pick · esc cancel"))))
       .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
         .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
         .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line).underline()).child(this.keycap(t, "p")))
@@ -624,7 +626,7 @@ export default class AgentsView extends View {
       // the header of the pane below (the Inbox tab): who it shows, what it is doing, and how to talk to it
       .when(!!plan, (e) => e.child(h_flex().w_full().flex_none().px(14).py(6).gap(8).items_baseline().border_t(1).border_color(t.border)
         .child(sans(12, plan.dim ? t.dim : t.foreground, plan.head)).child(div().flex_1()).child(sans(11, t.dim, plan.hint))))
-      // the phone's bottom bar: Picture, Own idea, Go to agent (a peek of the terminal, full screen)
+      // the phone's bottom bar: Picture, Note, Go to agent (a peek of the terminal, full screen)
       .when(narrow, (e) => e.child(h_flex().w_full().flex_none().px(14).py(8).gap(8).border_t(1).border_color(t.border)
         .children(phoneBar(!!this.agentFor(curRow, pane.kind === "ask" ? pane.ask : null, vm)).map((b) => h_flex().id(`bar:${b.key}`).flex_1().h(ROW + 8).items_center().justify_center().rounded(6).bg(t.raised)
           .on_click((_e, cx2) => this.phoneKey(b.key, cx2)).child(sans(13, t.foreground, b.label))))))

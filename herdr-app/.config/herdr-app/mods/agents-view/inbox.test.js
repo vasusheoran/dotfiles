@@ -89,10 +89,10 @@ test("isNarrow: under 640px the batch list sits above the ask", () => {
 });
 
 // ---- other idea
-test("askKeyAction: o is the other-idea input on any ask but a merge ask; an option named o still wins", () => {
+test("askKeyAction: there is no o key (n is the only text key); an option named o still wins", () => {
   const a = asksOf(row("a-1", HOUR))[0];
-  assert.deepEqual(askKeyAction(a, "o", null, NOW), { type: "other" });
-  assert.equal(isAskKey(a, "o", null), true);
+  assert.equal(askKeyAction(a, "o", null, NOW), null);
+  assert.equal(isAskKey(a, "o", null), false);
   const m = asksOf(row("a-2", HOUR, { kind: "merge", batch_key: "merge:o/r#1", target: { repo: "o/r", pr: 5, head: "h".repeat(40) } }))[0];
   assert.equal(askKeyAction(m, "o", null, NOW), null);
   assert.equal(isAskKey(m, "o", null), false);

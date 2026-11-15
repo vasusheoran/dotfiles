@@ -190,7 +190,7 @@ const answered = (id, ago) => ({ ts: iso(ago), event: "answered", id, card: `o/r
 const KEYS = [
   { name: "a letter", asks: [ASK("a-1")], keys: ["a"], pressed: /^sending your pick: a…$/, ok: /^picked a: sent to the agent$/, argv: ["ask", "answer", "a-1"] },
   { name: "Enter", asks: [ASK("a-1")], keys: ["enter"], pressed: /^sending your pick: a…$/, ok: /^picked a: sent to the agent$/, argv: ["ask", "answer", "a-1"] },
-  { name: "o, your own idea", asks: [ASK("a-1")], keys: ["o", ..."Valkey".split(""), "enter"], pressed: /^sending your idea…$/, ok: /^your idea sent: the agent applies it or replies below$/, argv: ["ask", "answer", "a-1"] },
+  { name: "n, a note with no pick is the answer", asks: [ASK("a-1")], keys: ["n", ..."Valkey".split(""), "enter"], pressed: /^sending your idea…$/, ok: /^your idea sent: the agent applies it or replies below$/, argv: ["ask", "answer", "a-1"] },
   { name: "v, a picture", asks: [ASK("a-1")], keys: ["v"], pressed: /^asking the agent for a picture…$/, ok: /^picture requested: /, argv: ["ask", "visual", "a-1"] },
   { name: "/, a message", asks: [ASK("a-1")], keys: ["/", "h", "i", "enter"], pressed: /^sending your message…$/, ok: /^message sent: delivered when the terminal is free$/, argv: ["ask", "message", "a-1"] },
   { name: "x, do it yourself", asks: [ASK("a-9", { kind: "you", batch_key: "hands:o/r#1", options: [], body: "Do it.\n" })], keys: ["x"], pressed: /^marking it done…$/, ok: /^marked done$/, argv: ["ask", "answer", "a-9"] },
@@ -405,7 +405,7 @@ test("receipt: a picture asked for and a picture ready each read in the receipt"
 // ---- 6. phone
 test("phone: one column: header, the ask, the box, the lanes on one line, the bottom bar; no split, no pane below", () => {
   tabEnv(false); const v = draw({ asksText: lines(W("a-1")), showRun: false, width: 390 }); const d = select(v, keyOf(v, "batch"));
-  order(d, "A (Recommended)", "To: lead-r-1 · the epic's lead", "Picture", "Own idea", "Open"); has(d, "Inbox");
+  order(d, "A (Recommended)", "To: lead-r-1 · the epic's lead", "Picture", "Note", "Open"); has(d, "Inbox");
   flush(); assert.deepEqual(runs(), []); lacks(d, "ctrl-b t closes · g open its tab");
 });
 test("phone: the bar buttons run the keys: Open peeks the terminal", () => {
@@ -414,7 +414,7 @@ test("phone: the bar buttons run the keys: Open peeks the terminal", () => {
 });
 test("phone: Open is not offered when no agent is behind the ask", () => {
   tabEnv(false); const v = draw({ asksText: lines(W("a-3", { kind: "you", terminal: undefined, epic: "o/r#9", batch_key: "hands:o/r#9" })), showRun: false, width: 390 }); const d = select(v, keyOf(v, "batch"));
-  has(d, "Picture"); has(d, "Own idea"); lacks(d, "Open");
+  has(d, "Picture"); has(d, "Note"); lacks(d, "Open");
 });
 test("phone: an empty inbox says nothing needs you and where to type; the box names the desk", () => {
   tabEnv(false); const v = draw({ asksText: "", showRun: false, width: 390, terminals: [terms[2]] }); v.files.stuck = null; const d = paint(v);

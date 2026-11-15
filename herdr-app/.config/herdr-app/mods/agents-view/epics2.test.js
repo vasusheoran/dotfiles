@@ -1,7 +1,7 @@
 // Owner feedback round 1 on the Inbox by epic (kuchbhi#1115): the list window, one question at a time, links, focus, marks then submit. Synthetic data.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listWindow, partStep, linkSegments, linkTarget, focusStep, answerLine, submitAnswer, partNotes, bottomPlan, openAsks, parseJsonl } from "./lib.js";
+import { listWindow, partStep, linkSegments, linkTarget, focusStep, answerLine, submitAnswer, partNotes, askKeyAction, bottomPlan, openAsks, parseJsonl } from "./lib.js";
 
 test("listWindow: the selected row sits a third of the way down while the list scrolls past it", () => {
   const w = (n, sel) => listWindow(n, sel, 9);
@@ -60,11 +60,14 @@ test("the agent pane opens on the right", () => {
   assert.equal(p.steps.find((s) => s[0] === "pane.split")[1].direction, "right");
 });
 
-test("an own idea marks its part as `o`; the submit carries it as the text with key other, one line per part", () => {
-  const a = A(), picks = { 1: "1a: x", 2: "2other: use a strip", 3: "3b: y" };
-  assert.equal(answerLine(a, picks), "1a · 2o · 3b");
+test("a note on a part with no option picked is that part's own answer: `2 note` on the line, key other with one line per part", () => {
+  const a = A(), picks = { 1: "1a: x", 2: "2note: use a strip", 3: "3b: y" };
+  assert.equal(answerLine(a, picks), "1a · 2 note · 3b");
   const r = submitAnswer(a, null, 0, picks, false);
-  assert.equal(r.key, "other"); assert.equal(r.text, "1a: x (Recommended)\n2 own idea: use a strip\n3b: y");
+  assert.equal(r.key, "other"); assert.equal(r.text, "1a: x (Recommended)\n2 own answer: use a strip\n3b: y");
+});
+test("no o key: it does nothing on an ask", () => {
+  assert.equal(askKeyAction({ kind: "decide", options: [{ q: 1, key: "a", label: "A" }], targets: [] }, "o", null, 0), null);
 });
 test("partNotes: one note per part, in order, labelled by the part; none when empty", () => {
   assert.equal(partNotes(A(), { 3: "ask Hindi later", 1: "ok" }), "1: ok · 3: ask Hindi later");
