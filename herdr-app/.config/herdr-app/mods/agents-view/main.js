@@ -342,7 +342,7 @@ export default class AgentsView extends View {
     const threadOf = (id) => this.thread(t, vm.threads[id] ?? [], id);
     const nl = narrow ? narrowLanes(vm.lanes, pane.kind === "ask" ? pane.batch.lane : null) : null;
     const newDesk = deskNew(vm.threads);
-    // left: the desk (first, never counted), then the four lanes with their batches; narrow: the current batch's lane and one line for the rest
+    // top: the desk (first, never counted), then the four lanes with their batches; narrow: the current batch's lane and one line for the rest
     const laneRows = (l, only) => [
       h_flex().w_full().flex_none().px(14).pt(10).pb(2).gap(8).items_baseline().child(div().text_size(11).text_color(t.dim).child(l.label)).child(mono(11, l.count ? t.muted : t.dim, String(l.count))),
       ...l.batches.filter((b) => !only || (pane.kind === "ask" && b.key === pane.batch.key)).flatMap((b) => draw(byKey.get(`batch:${b.key}`), (r) => this.batch(t, r))),
@@ -350,8 +350,8 @@ export default class AgentsView extends View {
     const left = v_flex().w_full().flex_none().gap(2)
       .child(this.line(t, byKey.get("desk"), [vm.desk.name, newDesk ? `${newDesk} new` : "", vm.desk.state], tone(vm.desk.state)))
       .children(narrow ? [...(nl.current ? laneRows(nl.current, true) : []), ...(nl.others ? [sans(11, t.dim, nl.others).w_full().flex_none().px(14).pt(8)] : [])] : vm.lanes.flatMap((l) => laneRows(l, false)));
-    // right: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
-    const right = v_flex().w_full().flex_1().min_w(0).gap(4)
+    // below: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
+    const right = v_flex().w_full().flex_none().min_w(0).gap(4)
       .child(...(pane.kind === "desk"
         ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, "Desk")).child(sans(12, t.dim, "General messages · / to write · ↵ shows the terminal")).child(threadOf("desk"))]
         : pane.kind === "ask"
@@ -362,7 +362,8 @@ export default class AgentsView extends View {
             : vm.batches.length
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))]));
-    const asksBody = [h_flex().w_full().flex_none().when(narrow, (e) => e.flex_col()).child(v_flex().flex_none().when(narrow, (e) => e.w_full()).when(!narrow, (e) => e.w(260)).child(left)).child(right)];
+    // stacked at every width: the batch list on top, the open ask below it at full width; the message box is the bar under the scrolling body
+    const asksBody = [v_flex().w_full().flex_none().gap(4).child(left).child(right)];
     // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
     const runBody = () => [
       this.section(t, "Running", runCount, false),

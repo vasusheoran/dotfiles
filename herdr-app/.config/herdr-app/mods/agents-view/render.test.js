@@ -6,7 +6,7 @@ import { register } from "node:module";
 
 const stub = (src) => `data:text/javascript,${encodeURIComponent(src)}`;
 // every string handed to a call of the stubbed UI (text, labels, children) lands in globalThis.__drawn, so a test can assert what was drawn
-const chain = `const chain = () => new Proxy(function () {}, { get: (_t, k) => k === "when" ? (c, f) => (c ? f(chain()) : chain()) : k === Symbol.toPrimitive ? () => "" : (...a) => { for (const x of a) if (typeof x === "string") (globalThis.__drawn ??= []).push(x); return chain(); }, apply: () => chain() });`;
+const chain = `const chain = () => new Proxy(function () {}, { get: (_t, k) => k === "when" ? (c, f) => (c ? f(chain()) : chain()) : k === Symbol.toPrimitive ? () => "" : (...a) => { if (k === "w" && typeof a[0] === "number") (globalThis.__drawn ??= []).push("@w:" + a[0]); for (const x of a) if (typeof x === "string") (globalThis.__drawn ??= []).push(x); return chain(); }, apply: () => chain() });`;
 const mods = {
   "gpui-kit": `${chain} export class View {} export const div = () => chain();`,
   "gpui-base": `${chain} export const v_flex = () => chain(); export const h_flex = () => chain();`,
@@ -159,4 +159,18 @@ test("render: a batch is named by its epic's cached title, 'to land' for the fir
   has(paint(v), "Epic 05: Stalls and the parent-facing site · 3 to land");
   v.files.closed = JSON.stringify({ closed: [], titles: { "o/r#721": "E".repeat(100) } });
   assert.equal(v.model().vm.batches[0].name, `${"E".repeat(59)}… · 3 to land`);
+});
+
+test("render: stacked at wide and narrow widths: the lanes, then the open ask with its thread, then the message box", () => {
+  const thread = [msg("a-2", "s-1", 5, "owner", "does it need a release?"), msg("a-2", "s-2", 4, "agent", "yes, a build")];
+  for (const width of [900, 300]) {
+    const v = draw({ asksText: lines(...lanes, ...thread), showRun: false, width });
+    const d = select(v, keyOf(v, "batch", 1)), at = (x) => d.findIndex((s) => (x instanceof RegExp ? x.test(s) : s === x));
+    const [lane, batch, ask, opt, thr, box] = ["NEEDS A LOOK", "Title a-2", "ask 1 of 1 ‹ ›", "A (Recommended)", /^Thread · 2 messages/, "To: agent behind this ask"].map(at);
+    for (const [name, i] of [["lane", lane], ["batch", batch], ["ask", ask], ["options", opt], ["thread", thr], ["box", box]]) assert.ok(i >= 0, `${name} drawn at width ${width}`);
+    assert.ok(lane < batch && batch < ask && ask < opt && opt < thr && thr < box, `order at width ${width}: ${[lane, batch, ask, opt, thr, box]}`);
+    lacks(d, "@w:260"); // no fixed-width side column
+    if (width === 900) for (const l of ["ONE KEY", "YOUR HANDS", "NOT READY"]) assert.ok(at(l) >= 0 && at(l) < ask, `${l} listed above the ask`);
+    else has(d, "ONE KEY 1 · YOUR HANDS 1 · NOT READY 1");
+  }
 });
