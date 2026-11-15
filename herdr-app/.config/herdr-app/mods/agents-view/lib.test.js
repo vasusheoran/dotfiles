@@ -6,6 +6,7 @@ import {
   parseJsonl, openAsks, usageText, normalize, stuckRows, epicGroups, otherSessions, ageText, shortCard, flatRows, viewModel, upNextLine,
   askKeyAction, answerArgv, rightPaneId, sideJobs, deskRow, selectTarget, perform, DOUBLE_PRESS_MS, isAskKey, composeAnswer, picksText,
   runFiles, askView, questionTitles, firstLine, planRef, runnerLine,
+  askLayout, askGroups, recommended, acceptRecommended, checklistStep, noteStep, noteArgv, runSummary, footerHint,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -237,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], askGroups: [], runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -297,12 +298,14 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
     eventsText: "", usageJson: null, nowMs: NOW,
   });
   const rows = flatRows(vm);
-  assert.deepEqual(rows.map((r) => r.section), ["asks", "group", "desk", "stuck", "others"]);
-  assert.equal(rows[0].id, "https://example.test/acme/app#12"); // a legacy row without an id keys on its url
-  assert.equal(rows[1].address, "tL");
-  assert.equal(rows[3].address, "tL");
-  assert.equal(new Set(rows.map((r) => r.key)).size, 5);
-  assert.equal(rows[0].key, "ask:https://example.test/acme/app#12");
+  assert.deepEqual(rows.map((r) => r.section), ["epic", "asks", "summary", "others"]); // an ask is waiting: running hides behind one line
+  assert.equal(rows[1].id, "legacy-12"); // a legacy row without an id keys on legacy-<trailing digits of its url>
+  assert.equal(rows[1].key, "ask:legacy-12");
+  const full = flatRows(vm, { showRun: true });
+  assert.deepEqual(full.map((r) => r.section), ["epic", "asks", "summary", "group", "desk", "stuck", "others"]);
+  assert.equal(full[3].address, "tL");
+  assert.equal(full[5].address, "tL");
+  assert.equal(new Set(full.map((r) => r.key)).size, 7);
   assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], sides: [], desk: { address: null }, others: [] }).map((r) => r.section), ["desk"]);
 });
 
@@ -419,8 +422,8 @@ test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
 });
 
 test("answerArgv: a picked option's key goes as --key, so the hook can tell a Merge from free text", () => {
-  assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: Merge", "a"), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: Merge", "--via", "screen", "--key", "a"]);
-  assert.ok(!answerArgv({ id: "a-20261114080000-1a2b3c" }, "x", undefined).includes("--key"));
+  assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: Merge", { key: "a" }), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: Merge", "--via", "screen", "--key", "a"]);
+  assert.ok(!answerArgv({ id: "a-20261114080000-1a2b3c" }, "x", {}).includes("--key"));
 });
 
 test("askKeyAction: a pick in a many-question ask carries no key (the answer is composed from several picks)", () => {
@@ -486,7 +489,7 @@ test("flatRows: sections in order asks, running (epics then side jobs), desk, st
   const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side"] };
   const blocked = { address: "tB", name: "x", status: { state: "blocked", kind: "permission" }, labels: [] };
   const vm = viewModel({ terminals: [side, blocked, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW });
-  assert.deepEqual([...new Set(flatRows(vm).map((r) => r.section))], ["asks", "group", "side", "desk", "stuck", "others"]);
+  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["epic", "asks", "summary", "group", "side", "desk", "stuck", "others"]);
 });
 
 test("selectTarget: a terminal row shows its terminal; the desk row starts one when none is live", () => {
@@ -562,7 +565,7 @@ test("isAskKey: option letters, x, v and question digits; navigation keys never,
 });
 
 test("viewModel: hidden ids leave Needs you", () => {
-  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenIds: new Set([URL1]) });
+  const vm = viewModel({ terminals: [], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW, hiddenIds: new Set(["legacy-555"]) });
   assert.deepEqual(vm.asks, []);
 });
 
@@ -585,8 +588,8 @@ test("picksText: shows each question's pick or a question mark", () => {
 // ---- side panel (kuchbhi#1058) ----
 
 test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", stuck: "/h/handoffs/run/stuck.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", closed: "/h/handoffs/run/closed-cards.json", stuck: "/h/handoffs/run/stuck.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", closed: "/h/.config/herdr-app/agents-view-fixture/closed-cards.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
@@ -732,4 +735,272 @@ test("viewModel: the runner line comes from the settings file", () => {
   const vm = viewModel({ terminals: [], nowMs: NOW, settingsJson: JSON.stringify({ runner: true, worker_limit: 2 }) });
   assert.equal(vm.runnerLine, "Runner setting: on · 2 workers · reviewers: verifier, codex");
   assert.equal(viewModel({ terminals: [], nowMs: NOW }).runnerLine, null);
+});
+
+// ---- #1074: open asks only, one line per epic, Enter accepts the recommendation, a batched merge ask, notes ----
+// The open-rule fixture below matches the one in claude-plugins tests/test_ask.sh: same rows, same open ids.
+const FIX = [
+  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "a-1", card: "o/r#10", epic: "o/r#1", from: "worker", question: "1. Approve this plan?", body: "b", options: [], kind: "decide" },
+  { ts: "2030-01-01T02:00:00Z", event: "ask", id: "a-2", card: "o/r#10", epic: "o/r#1", from: "worker", question: "**In plain words:** Roll it?", body: "b", options: [], kind: "decide", title: "Roll the fix today?" },
+  { ts: "2030-01-01T02:30:00Z", event: "ask", id: "a-3", card: "o/r#11", epic: "o/r#1", from: "worker", question: "Q3", body: "b", options: [], kind: "decide", title: "T3" },
+  { ts: "2030-01-01T02:40:00Z", event: "answered", id: "a-3", card: "o/r#11", text: "x", by: "owner", via: "screen" },
+  { ts: "2030-01-01T03:00:00Z", event: "ask", id: "a-4", card: "o/r#12", epic: "o/r#1", from: "lead", question: "Q4", body: "b", options: [], kind: "decide", title: "T4" },
+  { ts: "2030-01-01T03:10:00Z", event: "applied", id: "a-4" },
+  { ts: "2030-01-01T04:00:00Z", event: "ask", id: "a-5", card: "o/r#13", epic: "o/r#1", from: "lead", question: "Q5", body: "b", options: [], kind: "decide", title: "T5" },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "a-6", card: "o/r#14", epic: "o/r#1", from: "lead", question: "Q6", body: "b", options: [{ q: 1, key: "a", label: "Merge" }, { q: 1, key: "b", label: "Hold" }], kind: "merge", title: "Merge 2 hook PRs for Epic 1", target: { repo: "o/r", pr: 1, head: "h1" } },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "a-7", card: "o/r#14", epic: "o/r#1", from: "lead", question: "Q6", body: "b", options: [{ q: 1, key: "a", label: "Merge" }, { q: 1, key: "b", label: "Hold" }], kind: "merge", title: "Merge 2 hook PRs for Epic 1", target: { repo: "o/r", pr: 2, head: "h2" }, batch: "a-6" },
+];
+const AFTER = Date.parse("2030-01-01T06:00:00Z");
+const AFTER2 = Date.parse("2030-01-02T00:00:00Z");
+
+test("openAsks: the shared open rule: superseded, answered and applied asks are not open; a batch is one entry", () => {
+  const r = openAsks(FIX, AFTER);
+  assert.deepEqual(r.map((a) => a.id), ["a-2", "a-5", "a-6"]);
+});
+
+test("openAsks: a batch entry carries its targets, in order, and the all / pick options", () => {
+  const b = openAsks(FIX, AFTER).find((a) => a.id === "a-6");
+  assert.deepEqual(b.targets, [{ id: "a-6", repo: "o/r", pr: 1, head: "h1" }, { id: "a-7", repo: "o/r", pr: 2, head: "h2" }]);
+  assert.deepEqual(b.options.map((o) => [o.q, o.key]), [[1, "a"], [1, "b"]]);
+  assert.match(b.options[0].label, /all 2/i);
+  assert.match(b.options[0].label, /\(Recommended\)/);
+});
+
+test("openAsks: title is the row's own, else the first line without markup or numbering", () => {
+  const all = openAsks(FIX.filter((l) => l.id !== "a-2"), AFTER); // a-1 is open again once a-2 is gone
+  assert.equal(all.find((a) => a.id === "a-1").title, "Approve this plan?");
+  assert.equal(openAsks(FIX, AFTER).find((a) => a.id === "a-2").title, "Roll the fix today?");
+  const plain = openAsks([{ ...FIX[1], title: undefined }], AFTER)[0];
+  assert.equal(plain.title, "Roll it?");
+});
+
+test("openAsks: a newer ask for the same card and role supersedes; another role does not", () => {
+  const lead = { ...FIX[1], id: "a-9", from: "lead", ts: "2030-01-01T02:10:00Z" };
+  assert.deepEqual(openAsks([...FIX.slice(0, 2), lead], AFTER).map((a) => a.id), ["a-2", "a-9"]);
+});
+
+test("openAsks: a noted line marks the open ask 'note sent' and does not close it", () => {
+  const r = openAsks([...FIX, { ts: "2030-01-01T05:30:00Z", event: "noted", id: "a-5", card: "o/r#13", text: "look at the logs" }], AFTER);
+  assert.equal(r.find((a) => a.id === "a-5").noteSent, true);
+  assert.equal(r.find((a) => a.id === "a-2").noteSent, false);
+});
+
+const grp = () => askGroups(openAsks([
+  FIX[6], FIX[7], FIX[8],
+  { ...FIX[1], id: "b-1", card: "p/q#3", epic: "p/q#2", ts: "2030-01-01T05:50:00Z", title: "Other epic" },
+  { ...FIX[1], id: "b-2", card: "p/q#4", epic: "p/q#2", ts: "2030-01-01T05:10:00Z", kind: "you", title: "Do this yourself" },
+], AFTER));
+
+test("askGroups: one group per epic, the oldest first; merges, then decisions, then do-this-yourself", () => {
+  const g = grp();
+  assert.deepEqual(g.map((x) => x.key), ["o/r#1", "p/q#2"]);
+  assert.deepEqual(g[0].asks.map((a) => a.kind), ["merge", "decide"]); // the batch is one entry
+  assert.deepEqual(g[1].asks.map((a) => a.id), ["b-1", "b-2"]);
+});
+
+test("askGroups: the one-line summary counts by kind and gives the oldest age", () => {
+  const g = grp();
+  assert.equal(g[0].line, "r#1 · 2 merges · 1 decision · oldest 2h");
+  assert.equal(g[1].line, "q#2 · 1 decision · 1 task · oldest 50m");
+});
+
+test("askGroups: an ask with no epic groups under its own card; none gives no groups", () => {
+  const g = askGroups(openAsks([{ ...FIX[1], epic: null }], AFTER));
+  assert.equal(g[0].key, "o/r#10");
+  assert.deepEqual(askGroups([]), []);
+});
+
+test("flatRows: an epic is one row; only the open epic lists its asks; running hides behind one summary row while asks wait", () => {
+  const vm = viewModel({
+    terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "working" }],
+    asksText: [FIX[7], FIX[8], { ...FIX[1], id: "a-9", card: "p/q#4", epic: "p/q#2", ts: "2030-01-01T05:30:00Z" }].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: AFTER,
+  });
+  const keys = (o) => flatRows(vm, o).map((r) => r.key);
+  assert.deepEqual(keys({}).filter((k) => /^(epic|ask|summary)/.test(k)), ["epic:o/r#1", "ask:a-6", "epic:p/q#2", "summary:running"]); // default: the first epic open
+  assert.deepEqual(keys({ openEpic: "p/q#2" }).filter((k) => /^(epic|ask)/.test(k)), ["epic:o/r#1", "epic:p/q#2", "ask:a-9"]);
+  assert.ok(!keys({}).some((k) => k.startsWith("group:") || k === "desk")); // hidden behind the summary
+  assert.ok(keys({ showRun: true }).some((k) => k.startsWith("group:")));
+  assert.ok(flatRows({ ...vm, asks: [], askGroups: [] }).some((r) => r.key === "desk")); // nothing needs you: running comes back in full
+});
+
+test("runSummary: one line for running, stuck and the runner", () => {
+  const vm = viewModel({ terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "blocked" }], eventsText: "", nowMs: NOW, settingsJson: JSON.stringify({ runner: true }) });
+  assert.equal(runSummary(vm), "Running 1 · Stuck 1 · Runner on");
+  assert.equal(runSummary(viewModel({ terminals: [], nowMs: NOW })), "Running 0 · Stuck 0");
+});
+
+// ---- Enter accepts the recommendation ----
+const recAsk = (o = {}) => openAsks([{ ...FIX[4], id: "a-r1", ts: iso(HOUR), kind: "decide", body: "", options: [{ q: 1, key: "a", label: "Hold off" }, { q: 1, key: "b", label: "Roll now (Recommended); then run install.sh" }], ...o }], NOW)[0];
+
+test("recommended: the option marked (Recommended), per question", () => {
+  assert.deepEqual(recommended(recAsk()), { 1: "b" });
+  assert.deepEqual(recommended(recAsk({ options: [{ q: 1, key: "a", label: "x" }] })), {});
+  assert.deepEqual(recommended(recAsk({ options: [{ q: 1, key: "a", label: "x (recommended)" }, { q: 2, key: "c", label: "y (Recommended)" }] })), { 1: "a", 2: "c" });
+});
+
+test("acceptRecommended: a decide ask posts the recommended option with its key", () => {
+  assert.deepEqual(acceptRecommended(recAsk(), null, NOW), { type: "post", text: "1b: Roll now (Recommended); then run install.sh", key: "b" });
+});
+
+test("acceptRecommended: a merge ask arms first, the second Enter posts", () => {
+  const a = recAsk({ kind: "merge", options: [{ q: 1, key: "a", label: "Merge now (Recommended)" }, { q: 1, key: "b", label: "Hold" }] });
+  const first = acceptRecommended(a, null, NOW);
+  assert.equal(first.type, "arm");
+  assert.deepEqual(acceptRecommended(a, first.armed, NOW + 1000), { type: "post", text: "1a: Merge now (Recommended)", key: "a" });
+});
+
+test("acceptRecommended: a many-question ask posts one line per question once each has a recommendation", () => {
+  const o = [{ q: 1, key: "a", label: "yes (Recommended)" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later (Recommended)" }];
+  assert.deepEqual(acceptRecommended(recAsk({ options: o }), null, NOW), { type: "post", text: "1a: yes (Recommended)\n2b: later (Recommended)" });
+  assert.equal(acceptRecommended(recAsk({ options: o.slice(0, 3) }), null, NOW), null);
+});
+
+test("acceptRecommended: nothing recommended, or a you ask, does nothing", () => {
+  assert.equal(acceptRecommended(recAsk({ options: [{ q: 1, key: "a", label: "x" }] }), null, NOW), null);
+  assert.equal(acceptRecommended(recAsk({ kind: "you", options: [] }), null, NOW), null);
+});
+
+test("askView: each option says whether it is the recommended one", () => {
+  const v = askView(recAsk(), {}, null);
+  assert.deepEqual(v.questions[0].options.map((o) => o.rec), [false, true]);
+  assert.equal(v.title, "T4");
+});
+
+// ---- a batched merge ask ----
+const batch = () => openAsks(FIX, AFTER).find((a) => a.id === "a-6");
+
+test("askKeyAction: on a batch, a arms then posts 'all' with key a; b opens the checklist", () => {
+  const b = batch();
+  const first = askKeyAction(b, "a", null, NOW);
+  assert.equal(first.type, "arm");
+  const done = askKeyAction(b, "a", first.armed, NOW + 1000);
+  assert.equal(done.type, "post");
+  assert.equal(done.key, "a");
+  assert.deepEqual(askKeyAction(b, "b", null, NOW), { type: "checklist" });
+});
+
+test("checklistStep: j k move, space toggles, enter sends the chosen PRs with key a, none chosen holds all, escape cancels", () => {
+  const b = batch();
+  let s = { cur: 0, chosen: [] };
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6"]);
+  s = checklistStep(b, s, "j"); assert.equal(s.cur, 1);
+  s = checklistStep(b, s, "j"); assert.equal(s.cur, 1); // stops at the end
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6", "a-7"]);
+  s = checklistStep(b, s, "space"); assert.deepEqual(s.chosen, ["a-6"]);
+  assert.deepEqual(checklistStep(b, s, "enter"), { type: "send", key: "a", only: [1], text: "Merge 1 of 2: o/r#1" });
+  assert.deepEqual(checklistStep(b, { cur: 0, chosen: [] }, "enter"), { type: "send", key: "b", only: [], text: "Hold all 2" });
+  assert.deepEqual(checklistStep(b, s, "escape"), { type: "cancel" });
+});
+
+test("answerArgv: a single-question pick passes --key; a note passes --note; a batch pick passes --only", () => {
+  const a = recAsk();
+  assert.deepEqual(answerArgv(a, "1b: x", { key: "b" }), ["ask", "answer", "a-r1", "--text", "1b: x", "--via", "screen", "--key", "b"]);
+  assert.deepEqual(answerArgv(a, "1b: x", { key: "b", note: "after lunch" }), ["ask", "answer", "a-r1", "--text", "1b: x", "--via", "screen", "--key", "b", "--note", "after lunch"]);
+  assert.deepEqual(answerArgv(batch(), "all", { key: "a", only: [1] }), ["ask", "answer", "a-6", "--text", "all", "--via", "screen", "--key", "a", "--only", "1"]);
+  assert.deepEqual(answerArgv(batch(), "all", { key: "a" }), ["ask", "answer", "a-6", "--text", "all", "--via", "screen", "--key", "a"]);
+});
+
+test("noteArgv: a note alone goes through ask answer --note with no text and no key", () => {
+  assert.deepEqual(noteArgv(recAsk(), "look at the logs"), ["ask", "answer", "a-r1", "--note", "look at the logs", "--via", "screen"]);
+});
+
+// ---- notes ----
+test("noteStep: typing builds the line, enter sends, tab keeps it for the next pick, escape cancels", () => {
+  let s = "";
+  for (const k of ["h", "i", "space", "t", "h", "e", "r", "e", "x", "backspace"]) s = noteStep(s, k).text;
+  assert.equal(s, "hi there");
+  assert.deepEqual(noteStep("hi", "enter"), { type: "send", text: "hi" });
+  assert.deepEqual(noteStep("hi", "tab"), { type: "keep", text: "hi" });
+  assert.deepEqual(noteStep("hi", "escape"), { type: "cancel" });
+  assert.deepEqual(noteStep("  ", "enter"), { type: "cancel" }); // a blank note sends nothing
+  assert.equal(noteStep("hi", "up").text, "hi"); // other named keys are ignored
+});
+
+test("isAskKey: n opens a note on any ask, never an option key", () => {
+  assert.equal(isAskKey(recAsk(), "n", null), true);
+  assert.equal(isAskKey(recAsk({ kind: "you", options: [] }), "n", null), true);
+});
+
+test("footerHint: asks say how to accept, note and open; other rows say how to show the terminal", () => {
+  assert.equal(footerHint("asks"), "↵ accept recommended · n note · v open");
+  assert.equal(footerHint("epic"), "↵ open epic · j k move");
+  assert.equal(footerHint("summary"), "↵ show running · j k move");
+  assert.equal(footerHint("group"), "j k move · ↵ show terminal");
+});
+
+// ---- #1074 round 2: closed cards, epic titles, expanded order, supersede by kind, Enter on a single merge ask ----
+const SUP = [
+  { ts: "2030-01-01T01:00:00Z", event: "ask", id: "s-1", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M", target: { repo: "o/r", pr: 1, head: "h" } },
+  { ts: "2030-01-01T02:00:00Z", event: "ask", id: "s-2", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "decide", title: "D" },
+  { ts: "2030-01-01T03:00:00Z", event: "ask", id: "s-3", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M", target: { repo: "o/r", pr: 2, head: "h" } },
+  { ts: "2030-01-01T04:00:00Z", event: "ask", id: "s-4", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "decide", title: "D again" },
+  { ts: "2030-01-01T05:00:00Z", event: "ask", id: "s-5", card: "o/r#20", epic: "o/r#1", from: "lead", question: "Q", body: "b", options: [], kind: "merge", title: "M new head", target: { repo: "o/r", pr: 1, head: "h2" } },
+];
+
+test("openAsks: a decide ask never hides a merge ask, a merge ask hides only an older merge ask for the same PR (same fixture as claude-plugins)", () => {
+  assert.deepEqual(openAsks(SUP, AFTER).map((a) => a.id), ["s-3", "s-4", "s-5"]);
+});
+
+test("openAsks: asks of closed cards are not open; an empty or missing list hides nothing", () => {
+  assert.deepEqual(openAsks(FIX, AFTER, ["o/r#13"]).map((a) => a.id), ["a-2", "a-6"]);
+  assert.deepEqual(openAsks(FIX, AFTER, []).map((a) => a.id), ["a-2", "a-5", "a-6"]);
+  assert.deepEqual(openAsks(FIX, AFTER).map((a) => a.id), ["a-2", "a-5", "a-6"]);
+});
+
+test("viewModel: closed-cards.json hides the asks of closed cards and gives the epic titles; a broken file changes nothing", () => {
+  const asksText = FIX.map((l) => JSON.stringify(l)).join("\n");
+  const vm = viewModel({ terminals: [], asksText, nowMs: AFTER, closedJson: JSON.stringify({ closed: ["o/r#13"], titles: { "o/r#1": "Epic 1: CI and agents" } }) });
+  assert.deepEqual(vm.asks.map((a) => a.id), ["a-2", "a-6"]);
+  assert.match(vm.askGroups[0].line, /^Epic 1: CI and agents · 2 merges · 1 decision · oldest /);
+  const bad = viewModel({ terminals: [], asksText, nowMs: AFTER, closedJson: "{broken" });
+  assert.equal(bad.asks.length, 3);
+  assert.match(bad.askGroups[0].line, /^r#1 · /);
+});
+
+test("askGroups: the header shows the epic's title when there is one, else the short ref", () => {
+  const asks = openAsks(FIX, AFTER);
+  assert.match(askGroups(asks, { "o/r#1": "Epic 1: CI" })[0].line, /^Epic 1: CI · /);
+  assert.match(askGroups(asks, {})[0].line, /^r#1 · /);
+  assert.match(askGroups(asks)[0].line, /^r#1 · /);
+});
+
+test("askLayout: title, then the options, then the plan or PR link, then the body", () => {
+  const a = openAsks([{ ...FIX[4], id: "a-r2", ts: iso(HOUR), plan: "/h/plan.html", body: "what changes", options: [{ q: 1, key: "a", label: "Go (Recommended)" }] }], NOW)[0];
+  assert.deepEqual(askLayout(askView(a, {}, null)), ["options", "plan", "body"]);
+  const bare = openAsks([{ ...FIX[4], id: "a-r3", ts: iso(HOUR), question: "T4", body: "", options: [] }], NOW)[0];
+  assert.deepEqual(askLayout(askView(bare, {}, null)), []);
+});
+
+test("acceptRecommended: a single merge ask from ask.sh (Merge is Recommended) arms, then the second Enter posts key a", () => {
+  const a = openAsks([{ ...FIX[7], options: [{ q: 1, key: "a", label: "Merge (Recommended)" }, { q: 1, key: "b", label: "Hold" }] }], AFTER)[0];
+  const first = acceptRecommended(a, null, NOW);
+  assert.equal(first.type, "arm");
+  assert.deepEqual(acceptRecommended(a, first.armed, NOW + 1000), { type: "post", text: "1a: Merge (Recommended)", key: "a" });
+});
+
+// ---- round 3: the legacy id and the defaults agree with asks.jq (same extra rows as claude-plugins tests/test_ask.sh) ----
+const FIX3 = [
+  ...FIX,
+  {"ts":"2030-01-01T06:00:00Z","event":"ask","url":"https://x.test/o/r/issues/9#issuecomment-555","card":"o/r#40","from":"worker","question":"Legacy Q","kind":"decide"},
+  {"ts":"2030-01-01T06:10:00Z","event":"answered","id":"legacy-555","card":"o/r#40","text":"x","by":"owner","via":"screen"},
+  {"ts":"2030-01-01T07:00:00Z","event":"ask","id":"a-10","card":"o/r#30","epic":"o/r#1","question":"Q10","body":"b","options":[]},
+  {"ts":"2030-01-01T08:00:00Z","event":"ask","id":"a-11","card":"o/r#30","epic":"o/r#1","from":"worker","kind":"decide","question":"Q11","body":"b","options":[]},
+  {"ts":"2030-01-01T09:00:00Z","event":"ask","id":"a-12","from":"worker","kind":"decide","question":"Q12","body":"b","options":[]},
+  {"ts":"2030-01-01T10:00:00Z","event":"ask","id":"a-13","from":"worker","kind":"decide","question":"Q13","body":"b","options":[]},
+];
+
+test("openAsks: the whole shared fixture gives the same open ids as asks.jq (legacy ids, defaults, cardless asks)", () => {
+  assert.deepEqual(openAsks(FIX3, AFTER2).map((a) => a.id), ["a-2", "a-5", "a-6", "a-11", "a-12", "a-13"]); // a-7 is a-6's batch row
+});
+
+test("openAsks: an id-less ask is answered by legacy-<trailing comment id>, and answers as the same id", () => {
+  const legacy = { ts: "2030-01-01T06:00:00Z", event: "ask", url: "https://x.test/o/r/issues/9#issuecomment-555", card: "o/r#40", from: "worker", question: "Legacy Q", kind: "decide" };
+  assert.deepEqual(openAsks([legacy], AFTER2).map((a) => a.id), ["legacy-555"]);
+  assert.deepEqual(openAsks([legacy, { event: "answered", id: "legacy-555", ts: "2030-01-01T06:10:00Z" }], AFTER2), []);
+  assert.equal(answerArgv(openAsks([legacy], AFTER2)[0], "x")[2], "legacy-555");
+});
+
+test("openAsks: a missing role means worker and a missing kind means decide, and a cardless ask is never superseded", () => {
+  const plain = FIX3.filter((l) => ["a-10", "a-11", "a-12", "a-13"].includes(l.id));
+  assert.deepEqual(openAsks(plain, AFTER2).map((a) => a.id), ["a-11", "a-12", "a-13"]);
 });
