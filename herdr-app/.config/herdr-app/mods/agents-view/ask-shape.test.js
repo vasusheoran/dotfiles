@@ -86,3 +86,12 @@ test("viewModel and flatRows: answered asks are rows after the open ones; the nu
   assert.deepEqual(rows.map((r) => r.id), ["a-1"]);
   assert.match(footerHint("answered"), /nudge/);
 });
+
+test("openAsks: a batch with one PR landed stays one entry with both targets, the landed one marked", () => {
+  const row = (id, pr, extra = {}) => ask({ id, batch: "b-1", kind: "merge", options: [], target: { repo: "o/r", pr, head: "h" + pr }, ...extra });
+  const lines = [row("b-1", 1), row("b-2", 2), { ts: iso(5), event: "landed", id: "b-1", card: "o/r#5", reason: "merged" }];
+  const [b, ...rest] = openAsks(lines, NOW);
+  assert.equal(rest.length, 0);
+  assert.deepEqual(b.targets.map((t) => [t.pr, t.landed]), [[1, true], [2, false]]);
+  assert.deepEqual(askView(b, null).targets.map((t) => t.label), ["r#1 (landed)", "r#2"]);
+});

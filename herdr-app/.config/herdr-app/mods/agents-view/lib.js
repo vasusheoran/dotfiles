@@ -50,12 +50,13 @@ export function answeredAsks(lines, nowMs) {
 }
 
 export function openAsks(lines, nowMs, closed = []) {
-  const open = new Map(), seq = [], noted = new Set();
+  const open = new Map(), seq = [], noted = new Set(), landed = new Set();
   for (const l of lines) {
     const k = askKey(l);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
     else if (k != null && END_EVENTS.has(l.event)) { open.delete(k); noted.delete(k); }
     else if (k != null && l.event === "noted") noted.add(k);
+    else if (k != null && l.event === "landed") landed.add(k);
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
     && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))));
@@ -64,7 +65,7 @@ export function openAsks(lines, nowMs, closed = []) {
   return [...groups.values()]
     .map((rows) => {
       const l = rows[0];
-      const targets = rows.length > 1 ? rows.map((r) => ({ id: askKey(r), repo: r.target?.repo, pr: r.target?.pr, head: r.target?.head })) : [];
+      const targets = rows.length > 1 ? rows.map((r) => ({ id: askKey(r), repo: r.target?.repo, pr: r.target?.pr, head: r.target?.head, landed: landed.has(askKey(r)) })) : [];
       return {
         id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
         ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: roleOf(l),
@@ -216,7 +217,7 @@ export function askView(ask, picks, armed) {
     // with a title of its own, the whole question is body; without one the first line is the title and the rest is body
     body: [ask.titled && ask.question.trim() !== ask.title ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
       .map((x) => x.trim()).filter(Boolean).join("\n"),
-    targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}` })),
+    targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}${t.landed ? " (landed)" : ""}` })),
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
       key: o.key, label: o.label, then: o.then ?? null, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
