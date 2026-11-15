@@ -5,9 +5,9 @@
 // When ~/.config/herdr-app/agents-view-fixture/ exists it is read instead of the live run files (screenshots only).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
+import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
-  inboxTabSteps, inTab, splitSteps, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
+  inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -25,7 +25,7 @@ export default class AgentsView extends View {
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
-    this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; this.splitSent = new Set();
+    this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -62,19 +62,17 @@ export default class AgentsView extends View {
   show(address) { this.shown = address; return perform({ type: "show", terminal: address }, { run, exec, pane: this.pane() }); }
 
   // { tab, pane } when this view is the Inbox tab (the mod's own pane in a tab named Inbox), else null: the side panel
-  tab() { return inTab({ spaces: spaces(), panes: panes(), focused: focused() }); }
+  tab() { return inTab({ panes: panes(), focused: focused(), props: props() }); }
 
   // the pane below the mod: split once, then show the agent behind the highlighted ask (or the pinned one). Deferred, never run inside the render.
   syncTab(tab, vm, pane, cx) {
-    if (!this.splitSent.has(tab.tab)) {
-      this.splitSent.add(tab.tab);
-      const steps = splitSteps({ panes: panes(), tab: tab.tab, own: tab.pane });
-      if (steps.length) cx.timer.after(0, () => steps.forEach((s) => run(...s)));
-    }
-    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom: rightPaneId(panes(), tab.tab) });
+    const bottom = rightPaneId(panes(), tab.tab);
+    if (bottom) this.sawBottom = true;
+    else if (this.sawBottom) { this.sawBottom = false; this.bottomShown = null; } // it was there and is gone (closed by hand, or its program ended): attach again; until it first appears, the split is on its way
+    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom, own: tab.pane });
     if (plan.unpin) this.pinned = null;
     if (plan.address && (plan.mode === "follow" || plan.mode === "pinned")) this.lastAgent = { address: plan.address, name: plan.name };
-    if (plan.step) { this.bottomShown = plan.address; cx.timer.after(0, () => run(...plan.step)); }
+    if (plan.steps.length) { this.bottomShown = plan.address; cx.timer.after(0, () => plan.steps.forEach((st) => run(...st))); }
     return plan;
   }
 
@@ -202,7 +200,7 @@ export default class AgentsView extends View {
     const own = (kk) => !!ask?.options.some((o) => o.key === kk), tab = this.tab(), agent = this.agentFor(cur, ask, vm);
     if (k === "escape" && this.pinned) { cx.stop_propagation(); this.pinned = null; return cx.notify(); }
     if (k === "s" && tab && !own("s")) { cx.stop_propagation(); this.picker = { cur: 0 }; return cx.notify(); }
-    if (k === "i" && !tab && !own("i")) { cx.stop_propagation(); inboxTabSteps({ spaces: spaces(), panes: panes(), focused: focused() }).forEach((s) => run(...s)); return; }
+    if (k === "i" && !tab && !own("i")) { cx.stop_propagation(); inboxTabSteps({ panes: panes() }).forEach((s) => run(...s)); return; }
     if (k === "g" && agent && !own("g")) { cx.stop_propagation(); run(...goStep(agent.address, isNarrow(this.width ?? 0))); return; }
     const ok = ask && originKey(ask, k, !!agent);
     if (ok?.type === "open") { cx.stop_propagation(); return this.act(ask, ok, cx); }
@@ -399,7 +397,7 @@ export default class AgentsView extends View {
     const narrow = isNarrow(this.width ?? 0);
     const curRow = rows[this.selIdx], pane = paneFor(curRow, vm, this.pos);
     // the Inbox tab and the phone read in the order of the spec: the open ask, the message box, then the lanes; the side panel keeps the lanes on top
-    const tab = this.tab(), plan = tab ? this.syncTab(tab, vm, pane, cx) : null, flow = !!tab || narrow;
+    const tab = this.tab(), plan = tab ? this.syncTab(tab, vm, pane, cx) : null;
     const threadOf = (id) => this.thread(t, vm.threads[id] ?? [], id);
     const picker = this.picker ? [v_flex().w_full().px(14).py(8).gap(2).child(sans(12, t.dim, "Switch to")).children(liveAgents(vm).map((a, i) => h_flex().id(`pick:${a.address}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6).bg(this.picker.cur === i ? t.selected : t.raised)
       .on_click((_e, cx2) => { this.picker = null; this.pinned = a.address; cx2.notify(); }).child(sans(13, t.foreground, a.name).flex_1().min_w(0)).child(sans(12, t.muted, a.state ?? "starting")))).child(sans(11, t.dim, "↑ ↓ move · ↵ show and pin · esc cancel"))] : [];
@@ -412,9 +410,8 @@ export default class AgentsView extends View {
     ];
     const curBatches = (nl?.current?.batches ?? []).filter((b) => pane.kind === "ask" && b.key === pane.batch.key).flatMap((b) => draw(byKey.get(`batch:${b.key}`), (r) => this.batch(t, r)));
     const leftEl = () => v_flex().w_full().flex_none().gap(2)
-      .when(!narrow || !flow, (e) => e.child(this.line(t, byKey.get("desk"), [vm.desk.name, newDesk ? `${newDesk} new` : "", vm.desk.state], tone(vm.desk.state))))
-      .children(narrow && flow ? [sans(11, t.dim, lanesLine(vm.lanes)).w_full().flex_none().px(14).pt(8), ...curBatches]
-        : narrow ? [...(nl.current ? laneRows(nl.current, true) : []), ...(nl.others ? [sans(11, t.dim, nl.others).w_full().flex_none().px(14).pt(8)] : [])] : vm.lanes.flatMap((l) => laneRows(l, false)));
+      .when(!narrow, (e) => e.child(this.line(t, byKey.get("desk"), [vm.desk.name, newDesk ? `${newDesk} new` : "", vm.desk.state], tone(vm.desk.state))))
+      .children(narrow ? [sans(11, t.dim, lanesLine(vm.lanes)).w_full().flex_none().px(14).pt(8), ...curBatches] : vm.lanes.flatMap((l) => laneRows(l, false)));
     // below: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
     // an answered ask leaves the open list at once: its status stays on screen until the owner acts on something else
     const shown = pane.kind === "ask" ? pane.ask.id : pane.kind === "desk" ? "desk" : pane.kind === "answered" ? pane.thread : null;
@@ -431,7 +428,7 @@ export default class AgentsView extends View {
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))])]);
     // stacked at every width: the batch list on top, the open ask below it at full width; the message box is the bar under the scrolling body
-    const asksBody = flow ? [rightEl(), this.chatBar(t, pane, vm), leftEl()] : (() => { const l = leftEl(), r = rightEl(); return [v_flex().w_full().flex_none().gap(4).child(l).child(r)]; })();
+    const asksBody = [rightEl(), this.chatBar(t, pane, vm), leftEl()];
     // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
     const runBody = () => [
       this.section(t, "Running", runCount, false),
@@ -446,7 +443,6 @@ export default class AgentsView extends View {
     ];
     const body = [
       ...picker,
-      ...(flow ? [] : [this.section(t, "Inbox", vm.asks.length, vm.asksOld, "i opens the tab")]),
       ...asksBody,
       ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.flatMap((a) => draw(byKey.get(`answered:${a.id}`), (r) => this.answered(t, r)))] : []),
       ...(waiting ? draw(byKey.get("summary:running"), (r) => this.summary(t, r)) : []),
@@ -459,11 +455,9 @@ export default class AgentsView extends View {
       .on_key_down((e, cx) => this.key(e, cx))
       .on_size_change((size, cx2) => { if (isNarrow(size.width) !== isNarrow(this.width ?? 0)) { this.width = size.width; cx2.notify(); } else this.width = size.width; })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(sans(13, t.foreground, "Inbox").font_semibold()).child(sans(12, t.muted, headerLine(vm).inbox)).child(div().flex_1()).child(sans(12, t.dim, headerLine(vm).run)))
-      .when(!flow, (e) => e.child(div().w_full().flex_none().px(14).py(4).border_b(1).border_color(t.border).child(sans(11, t.dim, footerHint(rows[this.selIdx]?.section)))))
+        .child(sans(13, t.foreground, "Inbox").font_semibold()).child(sans(12, t.muted, headerLine(vm).inbox)).when(!tab, (e) => e.child(sans(11, t.dim, "· i opens the tab"))).child(div().flex_1()).child(sans(12, t.dim, headerLine(vm).run)))
       .child(v_flex().id("av-body").w_full().flex_1().min_h(props()?.overlay ? POPUP_BODY_H : 0).overflow_y_scrollbar().children(body))
-      .when(!flow, (e) => e.child(this.chatBar(t, pane, vm)))
-      .when(flow, (e) => e.child(div().w_full().flex_none().px(14).py(4).border_t(1).border_color(t.border).child(sans(11, t.dim, footerHint(rows[this.selIdx]?.section)))))
+      .child(div().w_full().flex_none().px(14).py(4).border_t(1).border_color(t.border).child(sans(11, t.dim, footerHint(rows[this.selIdx]?.section))))
       // the header of the pane below (the Inbox tab): who it shows, what it is doing, and how to talk to it
       .when(!!plan, (e) => e.child(h_flex().w_full().flex_none().px(14).py(6).gap(8).items_baseline().border_t(1).border_color(t.border)
         .child(sans(12, plan.dim ? t.dim : t.foreground, plan.head)).child(div().flex_1()).child(sans(11, t.dim, plan.hint))))

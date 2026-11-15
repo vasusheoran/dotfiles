@@ -576,23 +576,20 @@ export function failText(kind, res) {
 
 // ---- the Inbox as a main tab (kuchbhi#1115) ----
 export const INBOX_MOD = "agents-view", INBOX_TAB = "Inbox";
-const tabName = (t) => t.name ?? t.label ?? t.title ?? null;
 
-// One tab.new for the Inbox, or a tab.select when it exists (a tab named Inbox that holds the mod).
-export function inboxTabSteps({ spaces, panes, focused }) {
-  const own = (spaces ?? []).flatMap((s) => s.tabs ?? []).find((t) => tabName(t) === INBOX_TAB && (panes ?? []).some((p) => p.mod === INBOX_MOD && p.tab === t.id));
-  if (own) return [["tab.select", { id: own.id }]];
-  const space = focused?.space ?? spaces?.[0]?.id;
-  return space ? [["tab.new", { space, name: INBOX_TAB, mod: INBOX_MOD }]] : [];
+// One tab.new for the Inbox (in the selected space, the mod's props say it is the Inbox), or a tab.select when a tab already holds the mod.
+export function inboxTabSteps({ panes }) {
+  const own = (panes ?? []).find((p) => p.mod === INBOX_MOD);
+  return own ? [["tab.select", { id: own.tab }]] : [["tab.new", { name: INBOX_TAB, mod: INBOX_MOD, props: { inbox: true } }]];
 }
-// { tab, pane } when this view runs as the Inbox tab (the focused tab is named Inbox and holds the mod), else null: the side panel.
-export function inTab({ spaces, panes, focused }) {
-  const t = focused && (spaces ?? []).flatMap((s) => s.tabs ?? []).find((x) => x.id === focused.tab && tabName(x) === INBOX_TAB);
-  const p = t && (panes ?? []).find((x) => x.mod === INBOX_MOD && x.tab === t.id);
-  return p ? { tab: t.id, pane: p.pane } : null;
+// { tab, pane } when this copy of the mod was opened as the Inbox tab (its props say so), else null: the side panel. Its own pane is the mod pane
+// of the focused tab when there is one, else the first mod pane.
+export function inTab({ panes, focused, props }) {
+  if (!props?.inbox) return null;
+  const mine = (panes ?? []).filter((p) => p.mod === INBOX_MOD);
+  const p = mine.find((x) => x.tab === focused?.tab) ?? mine[0];
+  return p ? { tab: p.tab, pane: p.pane } : null;
 }
-// The pane below the mod: one pane.split, only while the tab has no terminal pane.
-export const splitSteps = ({ panes, tab, own }) => ((panes ?? []).some((p) => p.tab === tab && p.terminal) ? [] : [["pane.split", { pane: own, direction: "down" }]]);
 
 // The running agents the owner can look at: the desk, then leads, then workers and side jobs.
 export function liveAgents(vm) {
@@ -601,17 +598,19 @@ export function liveAgents(vm) {
     ...vm.groups.flatMap((g) => g.rows.map((r) => row(r.name, r.address, r.state, r.role))), ...vm.sides.map((s) => row(s.name, s.address, s.state, "side"))];
 }
 // What the pane below shows: follows the highlighted ask's own terminal, or the pinned agent. An ask with no agent behind it, or a gone one, keeps the
-// last terminal (the desk when there was none), dimmed with the reason. step is the terminal.show to run, null when that agent is already shown.
-export function bottomPlan({ pane, vm, pinned, last, shown, bottom }) {
+// last terminal (the desk when there was none), dimmed with the reason. steps close the old lower pane and split a new one that runs `hc attach <agent>`
+// (a live mirror you can type in; terminal.show only jumps to an agent that has a pane of its own); none when that agent is already shown.
+export function bottomPlan({ pane, vm, pinned, last, shown, bottom, own }) {
   const agents = liveAgents(vm), by = (addr) => agents.find((a) => a.address === addr) ?? null, byName = (n) => agents.find((a) => a.name === n) ?? null;
-  const showing = (a, extra) => ({ address: a.address, name: a.name, ...extra, step: bottom && a.address !== shown ? ["terminal.show", { terminal: a.address, pane: bottom }] : null });
+  const attach = (a) => (own && a.address !== shown ? [...(bottom ? [["pane.close", { pane: bottom }]] : []), ["pane.split", { pane: own, direction: "down", argv: ["hc", "attach", a.address] }]] : []);
+  const showing = (a, extra) => ({ address: a.address, name: a.name, ...extra, steps: attach(a) });
   const pin = pinned ? by(pinned) : null;
   if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "esc follow the highlight · s switch" });
   const unpin = !!pinned;
   const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"}`, hint: "type here to talk to it · s switch · g open its tab" });
   const keep = (mode, why) => {
     const k = (last && by(last.address)) ?? agents.find((a) => a.role === "desk") ?? null;
-    return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, step: k && bottom && k.address !== shown ? ["terminal.show", { terminal: k.address, pane: bottom }] : null,
+    return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, steps: k ? attach(k) : [],
       head: why(k?.name ?? "nothing"), hint: "s switch" };
   };
   if (pane?.kind === "desk") { const d = agents.find((a) => a.role === "desk"); if (d) return follow(d); }

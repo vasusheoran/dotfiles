@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  inboxTabSteps, inTab, splitSteps, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
+  inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -16,27 +16,20 @@ const vmOf = (asks, terminals = TERMS, closed) => viewModel({ terminals, asksTex
 const paneOf = (vm, i = 0) => { const b = vm.batches[i]; return { kind: "ask", ask: b.asks[0], batch: b, thread: b.asks[0].id }; };
 
 // ---- 1. opening the tab
-const spaces = [{ id: "s1", tabs: [{ id: "tab-a", name: "work", panes: 1 }, { id: "tab-i", name: "Inbox", panes: 2 }] }];
-test("open: with no Inbox tab, one tab.new in the focused space naming the mod", () => {
-  assert.deepEqual(inboxTabSteps({ spaces: [{ id: "s1", tabs: [{ id: "tab-a", name: "work", panes: 1 }] }], panes: [], focused: { space: "s1", tab: "tab-a" } }), [["tab.new", { space: "s1", name: "Inbox", mod: "agents-view" }]]);
+test("open: with no Inbox tab, one tab.new in the selected space, its props saying it is the Inbox", () => {
+  assert.deepEqual(inboxTabSteps({ panes: [{ pane: "p9", tab: "tab-a", terminal: "t1" }] }), [["tab.new", { name: "Inbox", mod: "agents-view", props: { inbox: true } }]]);
 });
-test("open: an existing Inbox tab is selected, never opened twice", () => {
-  const panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p2", tab: "tab-i", terminal: "t1" }];
-  assert.deepEqual(inboxTabSteps({ spaces, panes, focused: { space: "s1", tab: "tab-a" } }), [["tab.select", { id: "tab-i" }]]);
+test("open: a tab that already holds the mod is selected, never opened twice", () => {
+  assert.deepEqual(inboxTabSteps({ panes: [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p2", tab: "tab-i", terminal: "t1" }] }), [["tab.select", { id: "tab-i" }]]);
 });
-test("open: a tab named Inbox that holds no agents-view pane does not count", () => {
-  assert.deepEqual(inboxTabSteps({ spaces, panes: [{ pane: "p9", tab: "tab-i", terminal: "t1" }], focused: { space: "s1", tab: "tab-a" } })[0][0], "tab.new");
-});
-test("inTab: true only for the Inbox tab that holds the mod, with its own pane", () => {
-  const panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }];
-  assert.deepEqual(inTab({ spaces, panes, focused: { space: "s1", tab: "tab-i" } }), { tab: "tab-i", pane: "p1" });
-  assert.equal(inTab({ spaces, panes, focused: { space: "s1", tab: "tab-a" } }), null);
-  assert.equal(inTab({ spaces, panes: [], focused: { space: "s1", tab: "tab-i" } }), null);
-  assert.equal(inTab({ spaces, panes, focused: null }), null);
-});
-test("split: a pane below the mod, once: none when the tab already has a terminal pane", () => {
-  assert.deepEqual(splitSteps({ panes: [{ pane: "p1", tab: "tab-i", mod: "agents-view" }], tab: "tab-i", own: "p1" }), [["pane.split", { pane: "p1", direction: "down" }]]);
-  assert.deepEqual(splitSteps({ panes: [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p2", tab: "tab-i", terminal: "t1" }], tab: "tab-i", own: "p1" }), []);
+test("inTab: decided by the props this copy was opened with, not by the tab's name or by what has the focus", () => {
+  const panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p9", tab: "tab-a", terminal: "t1" }];
+  assert.deepEqual(inTab({ panes, focused: { tab: "tab-i" }, props: { inbox: true } }), { tab: "tab-i", pane: "p1" });
+  assert.deepEqual(inTab({ panes, focused: { tab: "tab-a" }, props: { inbox: true } }), { tab: "tab-i", pane: "p1" }, "still the Inbox while another tab has the focus");
+  assert.deepEqual(inTab({ panes, focused: null, props: { inbox: true } }), { tab: "tab-i", pane: "p1" });
+  assert.equal(inTab({ panes, focused: { tab: "tab-i" }, props: {} }), null, "the side panel has no inbox prop");
+  assert.equal(inTab({ panes, focused: { tab: "tab-i" }, props: undefined }), null);
+  assert.equal(inTab({ panes: [], focused: null, props: { inbox: true } }), null, "no mod pane to split from");
 });
 
 // ---- 2. the pane below follows the highlight
@@ -45,56 +38,57 @@ test("liveAgents: the desk, then leads, then workers, as the picker lists them",
 });
 test("follow: the highlighted ask's own terminal is shown, with its status and the follow hints", () => {
   const vm = vmOf([ask("a-3")]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2" });
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1" });
   assert.equal(p.mode, "follow"); assert.equal(p.address, "t1");
-  assert.deepEqual(p.step, ["terminal.show", { terminal: "t1", pane: "p2" }]);
+  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t1"] }]]);
   assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "type here to talk to it · s switch · g open its tab"); assert.equal(p.dim, false);
 });
 test("follow: no second terminal.show while the same agent is shown", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.equal(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1", bottom: "p2" }).step, null);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1", bottom: "p2", own: "p1" }).steps, []);
 });
 test("follow: moving to an ask of another agent shows that one", () => {
   const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
-  const p = bottomPlan({ pane: paneOf(vm, 1), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2" });
-  assert.deepEqual(p.step, ["terminal.show", { terminal: "t2", pane: "p2" }]); assert.equal(p.head, "lead-r-1 · idle");
+  const p = bottomPlan({ pane: paneOf(vm, 1), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
+  assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t2"] }]); assert.equal(p.head, "lead-r-1 · idle");
 });
 test("follow: the desk row shows the desk", () => {
   const vm = vmOf([]);
-  const p = bottomPlan({ pane: { kind: "desk", thread: "desk" }, vm, pinned: null, last: null, shown: null, bottom: "p2" });
+  const p = bottomPlan({ pane: { kind: "desk", thread: "desk" }, vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1" });
   assert.equal(p.address, "t3"); assert.equal(p.head, "desk-r · idle");
 });
 test("follow: an ask with no agent behind it keeps the last terminal, dims, and says why", () => {
   const vm = vmOf([ask("a-4", { kind: "you", terminal: undefined })]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2" });
-  assert.equal(p.mode, "none"); assert.equal(p.dim, true); assert.equal(p.step, null); assert.equal(p.address, "t1");
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
+  assert.equal(p.mode, "none"); assert.equal(p.dim, true); assert.deepEqual(p.steps, []); assert.equal(p.address, "t1");
   assert.equal(p.head, "no agent behind this ask · showing card-r-3");
 });
 test("follow: a gone agent keeps the last terminal, dims, and says r replaces it", () => {
   const vm = vmOf([ask("a-5", { terminal: "card-r-9" })]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2" });
-  assert.equal(p.mode, "gone"); assert.equal(p.dim, true); assert.equal(p.step, null);
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
+  assert.equal(p.mode, "gone"); assert.equal(p.dim, true); assert.deepEqual(p.steps, []);
   assert.equal(p.head, "card-r-9 is gone · r replace");
 });
 test("follow: with nothing shown before and no agent behind the ask, it falls back to the desk", () => {
   const vm = vmOf([ask("a-4", { kind: "you", terminal: undefined })]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2" });
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1" });
   assert.equal(p.address, "t3"); assert.equal(p.head, "no agent behind this ask · showing desk-r");
 });
 test("pinned: the picked agent stays while the highlight moves, with the pinned header and the way back", () => {
   const vm = vmOf([ask("a-3")]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1", bottom: "p2" });
-  assert.equal(p.mode, "pinned"); assert.deepEqual(p.step, ["terminal.show", { terminal: "t2", pane: "p2" }]);
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1", bottom: "p2", own: "p1" });
+  assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t2"] }]);
   assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "esc follow the highlight · s switch");
 });
 test("pinned: a pinned agent that has gone away is dropped and the pane follows again", () => {
   const vm = vmOf([ask("a-3")]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t-dead", last: null, shown: null, bottom: "p2" });
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t-dead", last: null, shown: null, bottom: "p2", own: "p1" });
   assert.equal(p.mode, "follow"); assert.equal(p.unpin, true);
 });
-test("no bottom pane yet: nothing is run", () => {
+test("no lower pane yet: the first attach only splits (nothing to close); with no mod pane to split from, nothing runs", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.equal(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null }).step, null);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1" }).steps, [["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t1"] }]]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: null }).steps, []);
 });
 test("picker: j k move within the list, Enter picks the index, esc cancels, the cursor stays inside", () => {
   assert.deepEqual(pickerStep({ cur: 0 }, "down", 3), { type: "move", cur: 1 });
