@@ -308,11 +308,12 @@ export default class AgentsView extends View {
     if (!this.touched) this.sel = defaultKey(rows); // until the owner moves: the first batch, never the desk when there is anything else
     if (!keys.includes(this.sel)) this.sel = keys[Math.min(this.selIdx, keys.length - 1)] ?? null;
     this.selIdx = Math.max(0, keys.indexOf(this.sel));
-    const at = (section, i) => rows.filter((r) => r.section === section)[i];
     const tone = (s) => (s === "blocked" || s === "error" ? t.blocked : s === "working" ? t.working : s === "done" ? t.done : t.dim);
 
     const byKey = new Map(rows.map((r) => [r.key, r]));
     const waiting = vm.asks.length > 0, runCount = vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length;
+    // flatRows leaves rows out (the closed epics' asks, the lists while hidden): a row that is not in `rows` is not drawn
+    const draw = (r, f) => (r ? [f(r)] : []);
     const narrow = isNarrow(this.width ?? 0);
     const curRow = rows[this.selIdx], pane = paneFor(curRow, vm, this.pos);
     const threadOf = (id) => this.thread(t, vm.threads[id] ?? [], id);
@@ -339,24 +340,24 @@ export default class AgentsView extends View {
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))]));
     const asksBody = [h_flex().w_full().flex_none().when(narrow, (e) => e.flex_col()).child(v_flex().flex_none().when(narrow, (e) => e.w_full()).when(!narrow, (e) => e.w(260)).child(left)).child(right)];
-    const runBody = [
+    // built only when shown: while asks wait and the lists are hidden, `rows` has no running or stuck rows
+    const runBody = () => [
       this.section(t, "Running", runCount, false),
       ...(runCount ? [] : [this.empty(t, "Nothing running")]),
       ...vm.groups.flatMap((g) => {
-        const first = rows.findIndex((r) => r.section === "group" && r.address === g.rows[0].address);
-        return [this.label(t, g.epic), ...g.rows.map((r, i) => this.line(t, rows[first + i], [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state)))];
+        return [this.label(t, g.epic), ...g.rows.flatMap((r) => draw(byKey.get(`group:${r.address}`), (x) => this.line(t, x, [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state))))];
       }),
-      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.map((s, i) => this.line(t, at("side", i), [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state)))] : []),
-      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked))] : []),
+      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.flatMap((s) => draw(byKey.get(`side:${s.address}`), (x) => this.line(t, x, [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state))))] : []),
+      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.flatMap((s) => draw(byKey.get(`stuck:${s.kind}:${s.name}`), (x) => this.line(t, x, [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked)))] : []),
       ...(vm.upNext ? [mono(12, t.muted, vm.upNext).w_full().flex_none().px(14).pt(12)] : []),
       ...(vm.runnerLine ? [mono(12, t.muted, vm.runnerLine).w_full().flex_none().px(14).pt(vm.upNext ? 4 : 12)] : []),
     ];
     const body = [
       this.section(t, "Inbox", vm.asks.length, vm.asksOld),
       ...asksBody,
-      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.map((a) => this.answered(t, byKey.get(`answered:${a.id}`)))] : []),
-      ...(waiting ? [this.summary(t, byKey.get("summary:running"))] : []),
-      ...(!waiting || this.showRun ? runBody : []),
+      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.flatMap((a) => draw(byKey.get(`answered:${a.id}`), (r) => this.answered(t, r)))] : []),
+      ...(waiting ? draw(byKey.get("summary:running"), (r) => this.summary(t, r)) : []),
+      ...(!waiting || this.showRun ? runBody() : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
     ];
 
