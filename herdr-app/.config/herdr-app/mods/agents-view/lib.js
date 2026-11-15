@@ -597,29 +597,28 @@ export function liveAgents(vm) {
   return [...(vm.desk?.address ? [row(vm.desk.name, vm.desk.address, vm.desk.state, "desk")] : []),
     ...vm.groups.flatMap((g) => g.rows.map((r) => row(r.name, r.address, r.state, r.role))), ...vm.sides.map((s) => row(s.name, s.address, s.state, "side"))];
 }
-// The lower pane runs one of two programs: a read-only mirror (hc read once a second: the agent's size is untouched) or, after t, a real hc attach (typeable;
-// it sizes the agent's terminal to the pane until it is dropped). terminal.show only jumps to an agent that has a pane of its own, so it is not used.
+// The lower pane is a real `hc attach` to the agent (typeable), opened with t or ctrl-b t and closed the same way; it sizes the agent's terminal to the pane
+// while it is open. There is no pane until t. terminal.show only jumps to an agent that has a pane of its own, so it is not used.
 const SAFE_ADDR = /^[A-Za-z0-9/_.-]+$/;
-export const mirrorArgv = (addr) => ["sh", "-c", `while :; do printf '\\033[H\\033[2J'; hc read ${addr}; sleep 1; done`];
 export const attachArgv = (addr) => ["hc", "attach", addr];
-// What the pane below shows: follows the highlighted ask's own terminal, or the pinned agent. An ask with no agent behind it, or a gone one, keeps the
-// last terminal (the desk when there was none), dimmed with the reason. steps close the old lower pane and split a new one; none while that agent is
-// already shown the same way. `shown` is the key of what is there now; `taken` is the address taken over with t, else null.
-export function bottomPlan({ pane, vm, pinned, last, shown, bottom, own, taken = null }) {
+// What the pane below shows once it is on: follows the highlighted ask's own terminal, or the pinned agent (a change closes the old pane and attaches the new
+// agent). An ask with no agent behind it, or a gone one, keeps the last terminal (the desk when there was none), dimmed with the reason. steps close the old
+// lower pane and split a new one; none while that agent is already attached. `shown` is the key of what is there now. Off: the pane is closed, once.
+export function bottomPlan({ pane, vm, pinned, last, shown, bottom, own, on = false }) {
+  if (!on) return { mode: "off", dim: true, address: null, name: null, key: "off", steps: bottom && shown !== "off" ? [["pane.close", { pane: bottom }]] : [], head: "agent pane closed", hint: "t opens it · ctrl-b t from anywhere" };
   const agents = liveAgents(vm), by = (addr) => agents.find((a) => a.address === addr) ?? null, byName = (n) => agents.find((a) => a.name === n) ?? null;
-  const keyOf = (a, over) => `${a.address}:${over ? "attach" : "mirror"}`;
-  const show = (a, over) => (own && SAFE_ADDR.test(a.address) && keyOf(a, over) !== shown
-    ? [...(bottom ? [["pane.close", { pane: bottom }]] : []), ["pane.split", { pane: own, direction: "down", argv: over ? attachArgv(a.address) : mirrorArgv(a.address) }]] : []);
-  const showing = (a, extra) => { const over = taken === a.address; return { address: a.address, name: a.name, key: keyOf(a, over), taken: over, ...extra, steps: show(a, over),
-    ...(over ? { head: `${a.name} · taken over · esc or move away to give it back`, hint: "" } : {}) }; };
+  const keyOf = (a) => `${a.address}:attach`;
+  const show = (a) => (own && SAFE_ADDR.test(a.address) && keyOf(a) !== shown
+    ? [...(bottom ? [["pane.close", { pane: bottom }]] : []), ["pane.split", { pane: own, direction: "down", argv: attachArgv(a.address) }]] : []);
+  const showing = (a, extra) => ({ address: a.address, name: a.name, key: keyOf(a), ...extra, steps: show(a) });
   const pin = pinned ? by(pinned) : null;
-  if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "t take over · esc follow the highlight · s switch" });
+  if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "ctrl-b t closes · esc follow the highlight · s switch" });
   const unpin = !!pinned;
-  const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"} · watching`, hint: "t take over · s switch · g open its tab" });
+  const follow = (a) => showing(a, { mode: "follow", dim: false, unpin, head: `${a.name} · ${a.state ?? "starting"}`, hint: "ctrl-b t closes · g open its tab" });
   const keep = (mode, why) => {
     const k = (last && by(last.address)) ?? agents.find((a) => a.role === "desk") ?? null;
-    return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, key: k ? keyOf(k, false) : null, taken: false, steps: k ? show(k, false) : [],
-      head: why(k?.name ?? "nothing"), hint: "s switch" };
+    return { mode, dim: true, unpin, address: k?.address ?? null, name: k?.name ?? null, key: k ? keyOf(k) : null, steps: k ? show(k) : [],
+      head: why(k?.name ?? "nothing"), hint: "ctrl-b t closes · s switch" };
   };
   if (pane?.kind === "desk") { const d = agents.find((a) => a.role === "desk"); if (d) return follow(d); }
   if (pane?.kind === "ask" && pane.ask.terminal) {

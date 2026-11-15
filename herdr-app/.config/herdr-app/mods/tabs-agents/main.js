@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
-import { agentsToggle } from "./lib.js";
+import { spaces, panes, focused, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
+import { agentsToggle, PANE_ON } from "./lib.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -18,8 +18,9 @@ export default class Tabs extends View {
   init(_props, cx) {
     cx.spawn(async () => {
       for (;;) {
-        if (await nextCommand() !== "toggle") continue;
-        this.openAgents();
+        const cmd = await nextCommand();
+        if (cmd === "pane") setShared(PANE_ON, shared(PANE_ON) !== true); // ctrl-b t: the Inbox opens or closes its agent pane, whichever pane has the focus
+        else if (cmd === "toggle") this.openAgents();
       }
     });
     this.pressed = null; this.back = null;

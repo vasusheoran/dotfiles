@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentsToggle } from "./lib.js";
+import { agentsToggle, PANE_ON } from "./lib.js";
 
 const mod = { pane: "p1", tab: "tab-i", mod: "agents-view" };
 const NEW = ["tab.new", { name: "Inbox", mod: "agents-view", props: { inbox: true } }];
@@ -21,4 +21,9 @@ test("agents toggle: pressed on the Inbox tab with no tab to go back to (or one 
 });
 test("agents toggle: with no focused tab it still opens the Inbox", () => {
   assert.deepEqual(agentsToggle({ panes: [], focused: null, back: null }), { steps: [NEW], back: null });
+});
+
+test("the flag both panes agree on is named once", async () => {
+  const { PANE_ON: inView } = await import("../agents-view/lib.js").then(() => ({ PANE_ON }));
+  assert.equal(inView, "agents-view.pane");
 });
