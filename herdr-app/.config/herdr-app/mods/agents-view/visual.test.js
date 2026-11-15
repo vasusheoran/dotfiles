@@ -1,4 +1,4 @@
-// kuchbhi#1117: explain an ask visually. The events (visual_requested, visual_delivered, visual_ready, replaced) are written by claude-plugins
+// kuchbhi#1117: explain an ask visually. The events (visual_requested, visual_ready, replaced, replace_failed) are written by claude-plugins
 // ask.sh and documented at the top of its asks.jq. All data here is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,7 +18,7 @@ const vm = (lines, terminals) => viewModel({ terminals, asksText: lines.map((l) 
 test("an ask with no visual events has no picture; a request reads coming; a ready picture carries its url", () => {
   assert.deepEqual([first([ask()]).visual, first([ask()]).visualUrl], ["none", null]);
   assert.deepEqual([first([ask(), REQ]).visual, first([ask(), REQ]).visualUrl], ["coming", null]);
-  assert.deepEqual([first([ask(), REQ, ev("visual_delivered")]).visual], ["coming"]);
+  assert.deepEqual([first([ask(), REQ, ev("message_delivered")]).visual], ["coming"]);
   assert.deepEqual([first([ask(), REQ, READY]).visual, first([ask(), REQ, READY]).visualUrl], ["ready", "http://127.0.0.1:7777/p/abc"]);
   assert.equal(first([ask(), READY]).visual, "none", "a picture nobody asked for does not count");
 });
@@ -98,4 +98,15 @@ test("Enter opens a ready picture while the picture row has focus; with focus on
   assert.deepEqual(enterAction(a, null, NOW, false), { type: "post", text: "1a: Redis (Recommended)", key: "a" });
   const b = first([ask(), REQ]);
   assert.deepEqual(enterAction(b, null, NOW, true), { type: "post", text: "1a: Redis (Recommended)", key: "a" }, "no picture, nothing to open");
+});
+
+test("r is offered only for a gone asker whose picture was asked for and is not ready; a failed replace gives the claim back", () => {
+  const none = vm([ask()], [rawT("other")]).asks[0], coming = vm([ask(), REQ], [rawT("other")]).asks[0], ready = vm([ask(), REQ, READY], [rawT("other")]).asks[0];
+  assert.deepEqual([none, coming, ready].map((a) => a.replaceable), [false, true, false]);
+  assert.equal(askKeyAction(none, "r", null, NOW), null, "no request yet: the replacement could not record a picture");
+  assert.equal(isAskKey(none, "r", null), false);
+  assert.equal(askView(none, {}, null).gone, true, "the panel still says the asker is gone");
+  assert.equal(askView(coming, {}, null).replaceable, true);
+  assert.equal(vm([ask(), REQ, ev("replaced"), ev("replace_failed")], [rawT("other")]).asks[0].replaceable, true);
+  assert.equal(vm([ask(), REQ, ev("replaced")], [rawT("other")]).asks[0].replaceable, false);
 });

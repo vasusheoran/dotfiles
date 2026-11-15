@@ -50,7 +50,7 @@ export function answeredAsks(lines, nowMs) {
 }
 
 export function openAsks(lines, nowMs, closed = []) {
-  const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Set();
+  const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map();
   for (const l of lines) {
     const k = askKey(l);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
@@ -59,7 +59,8 @@ export function openAsks(lines, nowMs, closed = []) {
     else if (k != null && l.event === "landed") landed.add(k);
     else if (k != null && l.event === "visual_requested") asked.add(k);
     else if (k != null && l.event === "visual_ready" && asked.has(k) && l.url) urls.set(k, l.url); // a picture nobody asked for does not count
-    else if (k != null && l.event === "replaced") replaced.add(k);
+    else if (k != null && l.event === "replaced") replaced.set(k, (replaced.get(k) ?? 0) + 1);
+    else if (k != null && l.event === "replace_failed") replaced.set(k, (replaced.get(k) ?? 0) - 1); // the claim given back
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
     && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))));
@@ -76,7 +77,7 @@ export function openAsks(lines, nowMs, closed = []) {
         kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: l.body ?? "", targets,
         today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
         visual: urls.has(askKey(l)) ? "ready" : asked.has(askKey(l)) ? "coming" : "none", visualUrl: urls.get(askKey(l)) ?? null,
-        terminal: l.terminal ?? null, replaced: replaced.has(askKey(l)), askerGone: false,
+        terminal: l.terminal ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
       };
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -93,7 +94,7 @@ export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   if (key === "x" && ask.kind === "you" && !ask.options.length) text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : { type: "visual" }; // a picture answers nothing: no second key
   else if (key === "p" && ask.plan && !ask.options.some((o) => o.key === "p")) return { type: "open", target: ask.plan };
-  else if (key === "r" && ask.askerGone && !ask.options.some((o) => o.key === "r")) return { type: "replace" };
+  else if (key === "r" && ask.replaceable && !ask.options.some((o) => o.key === "r")) return { type: "replace" };
   else if (key === "b" && ask.targets?.length > 1) return { type: "checklist" }; // a batched merge ask: b picks which PRs
   else {
     const o = ask.options.find((o) => o.q === q && o.key === key);
@@ -174,7 +175,7 @@ export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ?
 // Whether a key belongs to the selected ask: option letters, x (you asks), v, n (a note), a question digit, or any single key while an
 // answer is armed (it cancels). j, k and the arrows always navigate, so they never count.
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || (k === "p" && !!ask.plan) || (k === "r" && !!ask.askerGone) || (k === "o" && ask.kind !== "merge") || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || (k === "p" && !!ask.plan) || (k === "r" && !!ask.replaceable) || (k === "o" && ask.kind !== "merge") || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 // { key } is the picked option (single-question asks: merge-green reads it), { note } rides with the pick, { only } is a batch's chosen PR numbers.
@@ -322,7 +323,7 @@ export function askView(ask, picks, armed) {
   const qs = questionsOf(ask);
   return {
     evidence: [["Today", ask.today], ["After", ask.after], ["Checked", ask.checked], ["Why you", ask.whyYou]].filter(([, v]) => v),
-    visual: ask.visual === "ready" ? { label: "open picture", ready: true } : ask.visual === "coming" ? { label: "picture coming", ready: false } : null, gone: !!ask.askerGone,
+    visual: ask.visual === "ready" ? { label: "open picture", ready: true } : ask.visual === "coming" ? { label: "picture coming", ready: false } : null, gone: !!ask.askerGone, replaceable: !!ask.replaceable,
     card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: ask.title, noteSent: ask.noteSent,
     // with a title of its own, the whole question is body; without one the first line is the title and the rest is body
     body: [ask.titled && ask.question.trim() !== ask.title ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
@@ -486,7 +487,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const cc = parse(closedJson);
   const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
   const here = new Set(ts.filter((t) => t.live).map((t) => t.name).filter(Boolean));
-  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => ({ ...a, askerGone: !!a.terminal && !a.replaced && !here.has(a.terminal) }));
+  const asks = openAsks(parseJsonl(asksText), nowMs, closed).filter((a) => !hiddenIds?.has(a.id)).map((a) => { const gone = !!a.terminal && !a.replaced && !here.has(a.terminal); return { ...a, askerGone: gone, replaceable: gone && a.visual === "coming" }; }); // a replacement can only record a picture somebody asked for
   const up = parse(upNextJson);
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");

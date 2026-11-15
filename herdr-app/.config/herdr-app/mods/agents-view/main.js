@@ -83,7 +83,7 @@ export default class AgentsView extends View {
       r = { type: "post", text, key: composeKey(a, picks) };
     }
     if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
-    else if (r.type === "open") perform(r, { run, exec, pane: null });
+    else if (r.type === "open") perform(r, { run, exec, pane: null }).then((x) => { if (x?.code !== 0) { this.note = "could not open it"; cx.notify(); } });
     else if (r.type === "arm") this.note = `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`;
     cx.notify();
   }
@@ -233,7 +233,8 @@ export default class AgentsView extends View {
         .on_click((_e, cx) => this.act(a, askKeyAction(a, "v", null, Date.now()), cx))
         .child(sans(13, t.accent, "open picture")).child(this.keycap(t, "v")).when(this.onPicture(a), (e) => e.child(sans(11, t.done, "↵")).child(sans(11, t.dim, "tab: options"))).when(this.onPicture(a), (e) => e.border_1().border_color(t.accent).rounded(6).px(8).h(ROW))))
       .when(v.gone, (e) => e.child(h_flex().w_full().pt(8).gap(8).items_center()
-        .child(sans(12, t.blocked, "the agent behind this ask is gone")).child(sans(12, t.muted, "start a replacement with this ask as its brief")).child(this.keycap(t, "r"))))
+        .child(sans(12, t.blocked, "the agent behind this ask is gone")).when(v.replaceable, (e) => e.child(sans(12, t.muted, "start a replacement with this ask as its brief")).child(this.keycap(t, "r")))
+        .when(!v.replaceable, (e) => e.child(sans(12, t.muted, "press v for a picture, then start a replacement")))))
       .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
