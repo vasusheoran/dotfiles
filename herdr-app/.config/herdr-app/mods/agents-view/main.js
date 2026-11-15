@@ -250,7 +250,8 @@ export default class AgentsView extends View {
       const open = g.asks.length > 0 && byKey.has(`ask:${g.asks[0].id}`);
       return [this.epic(t, byKey.get(`epic:${g.key}`), open), ...(open ? g.asks.map((a) => this.ask(t, byKey.get(`ask:${a.id}`))) : [])];
     });
-    const runBody = [
+    // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
+    const runBody = () => [
       this.section(t, "Running", runCount, false),
       ...(runCount ? [] : [this.empty(t, "Nothing running")]),
       ...vm.groups.flatMap((g) => {
@@ -267,7 +268,7 @@ export default class AgentsView extends View {
     const body = [
       this.section(t, "Needs you", vm.asks.length, vm.asksOld),
       ...(waiting ? [...asksBody, this.summary(t, byKey.get("summary:running"))] : [this.empty(t, "No questions waiting")]),
-      ...(!waiting || this.showRun ? runBody : []),
+      ...(!waiting || this.showRun ? runBody() : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
     ];
 
