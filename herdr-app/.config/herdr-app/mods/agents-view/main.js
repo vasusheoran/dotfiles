@@ -216,6 +216,10 @@ export default class AgentsView extends View {
     // title, what is true today and after, the options with what each does next, then the plan or PR link, then the body
     return el
       .children(v.evidence.map(([k, text]) => h_flex().w_full().gap(8).items_baseline().pt(2).child(sans(11, t.dim, k).w(56).flex_none()).child(sans(12, t.muted, text).flex_1().min_w(0))))
+      .when(v.cards.length > 0, (e) => e.child(v_flex().w_full().gap(2).pt(8)
+        .child(sans(12, t.dim, `${v.cards.length} card${v.cards.length === 1 ? "" : "s"} not ready`))
+        .children(v.cards.map((c) => h_flex().w_full().gap(8).items_baseline().px(8)
+          .child(mono(12, t.foreground, c.label).w(56).flex_none()).child(sans(12, t.muted, c.choices.join(" · ")).flex_1().min_w(0).truncate())))))
       .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)

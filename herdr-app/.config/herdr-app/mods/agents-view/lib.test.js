@@ -1007,3 +1007,42 @@ test("viewModel: the desk's project is the settings' desk_project", () => {
   assert.equal(viewModel({ terminals: [], settingsJson: JSON.stringify({ desk_project: "acme/app" }), nowMs: NOW }).deskProject, "acme/app");
   assert.equal(viewModel({ terminals: [], settingsJson: "{}", nowMs: NOW }).deskProject, null);
 });
+
+// kuchbhi#1119: a groom batch is one ask per epic; its cards and open choices come from `groomed` events
+const groomAsk = (o = {}) => ({ ts: iso(HOUR), event: "ask", id: "a-g1", card: EPIC, epic: EPIC, from: "lead", kind: "groom", title: "Cards in app#10 are not ready", batch_key: `groom:${EPIC}`,
+  question: "Cards are not ready.", body: "", options: [{ q: 1, key: "a", label: "Groom with the desk (Recommended)", then: "The desk builds one page" }, { q: 1, key: "b", label: "Show the questions one by one", then: "x" }, { q: 1, key: "c", label: "Park the epic", then: "y" }], ...o });
+const groomed = (member, choices, o = {}) => ({ ts: iso(HOUR / 2), event: "groomed", id: "a-g1", member, ready: false, choices, ...o });
+
+test("openAsks: a groom ask lists its cards with their open choices, in the groom lane", () => {
+  const [a, ...rest] = openAsks([groomAsk(), groomed("acme/app#21", ["Which store?", "Keep the API?"]), groomed("acme/app#22", ["Which queue?"])], NOW);
+  assert.equal(rest.length, 0);
+  assert.equal(a.lane, "groom");
+  assert.deepEqual(a.cards, [{ card: "acme/app#21", choices: ["Which store?", "Keep the API?"] }, { card: "acme/app#22", choices: ["Which queue?"] }]);
+});
+
+test("openAsks: a card groomed again keeps its newest choices; one that passes the readiness check leaves the list", () => {
+  const [a] = openAsks([groomAsk(), groomed("acme/app#21", ["old"]), groomed("acme/app#22", ["q"]), groomed("acme/app#21", ["new"]), groomed("acme/app#22", [], { ready: true })], NOW);
+  assert.deepEqual(a.cards, [{ card: "acme/app#21", choices: ["new"] }]);
+});
+
+test("openAsks: an ask that is not a groom batch has no cards; groomed events never open or close an ask", () => {
+  const [a] = openAsks([ask("acme/app#12", HOUR), groomed("acme/app#21", ["q"], { id: undefined })], NOW);
+  assert.deepEqual(a.cards, []);
+  assert.equal(openAsks([groomAsk(), groomed("acme/app#21", ["q"])], NOW).length, 1);
+});
+
+test("askView: the groom batch shows its cards with their choices", () => {
+  const [a] = openAsks([groomAsk(), groomed("acme/app#21", ["Which store?"])], NOW);
+  assert.deepEqual(askView(a, {}, null).cards, [{ label: "app#21", choices: ["Which store?"] }]);
+  assert.deepEqual(askView(openAsks([ask("acme/app#12", HOUR)], NOW)[0], {}, null).cards, []);
+});
+
+test("viewModel: a groom batch shows in the NOT READY lane, counted by its cards, with the epic and count as its name", () => {
+  const asksText = [groomAsk(), groomed("acme/app#21", ["a"]), groomed("acme/app#22", ["b"]), groomed("acme/app#23", ["c"]), groomed("acme/app#23", [], { ready: true })].map((l) => JSON.stringify(l)).join("\n");
+  const vm = viewModel({ terminals: [], asksText, nowMs: NOW });
+  const lane = vm.lanes.find((l) => l.lane === "groom");
+  assert.equal(lane.label, "NOT READY");
+  assert.equal(lane.count, 2);
+  assert.equal(lane.batches[0].name, "app#10 · 2 to groom");
+  assert.equal(vm.lanes.filter((l) => l.lane !== "groom").every((l) => l.count === 0), true);
+});
