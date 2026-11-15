@@ -1,7 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
-import { agentsToggle, PANE_ON } from "./lib.js";
+import { spaceToggle, inboxFinish, PANE_ON } from "./lib.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -29,9 +29,17 @@ export default class Tabs extends View {
   }
 
   openAgents() {
-    const r = agentsToggle({ panes: panes(), focused: focused(), back: this.back });
+    const r = spaceToggle({ spaces: spaces(), panes: panes(), back: this.back });
     this.back = r.back;
     for (const [name, args] of r.steps) run(name, args);
+    if (r.finish) this.finishInbox(0);
+  }
+
+  // the new space shows up a moment after space.new: put the Inbox mod tab in it, then drop the shell tab it started with
+  finishInbox(tries) {
+    const steps = inboxFinish({ spaces: spaces(), panes: panes() });
+    if (steps) { for (const [name, args] of steps) run(name, args); return; }
+    if (tries < 20) setTimeout(() => this.finishInbox(tries + 1), 150);
   }
 
   // The side panel is remembered per space: switching shows that space's choice

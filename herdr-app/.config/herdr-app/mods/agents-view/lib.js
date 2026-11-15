@@ -53,13 +53,14 @@ export function answeredAsks(lines, nowMs) {
 export const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
 export function openAsks(lines, nowMs, closed = []) {
-  const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map(), groomed = new Map();
+  const parts = new Map(), open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map(), groomed = new Map();
   for (const l of lines) {
     const k = askKey(l);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
     else if (k != null && END_EVENTS.has(l.event)) { open.delete(k); noted.delete(k); }
     else if (k != null && l.event === "noted") noted.add(k);
     else if (k != null && l.event === "landed") landed.add(k);
+    else if (k != null && l.event === "part") parts.set(k, [...(parts.get(k) ?? []), l]); // a lead's later question on the epic: part n+1 of this ask
     else if (k != null && l.event === "visual_requested") asked.add(k);
     else if (k != null && l.event === "visual_ready" && asked.has(k) && l.url) urls.set(k, l.url); // a picture nobody asked for does not count
     else if (k != null && l.event === "replaced") replaced.set(k, (replaced.get(k) ?? 0) + 1);
@@ -77,8 +78,9 @@ export function openAsks(lines, nowMs, closed = []) {
       return {
         id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
         ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: roleOf(l),
-        options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : Array.isArray(l.options) ? l.options : [],
-        kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: l.body ?? "", targets,
+        options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : [...(Array.isArray(l.options) ? l.options : []), ...(parts.get(askKey(l)) ?? []).flatMap((p) => p.options ?? [])],
+        parts: (parts.get(askKey(l)) ?? []).map((p) => ({ q: p.q, card: p.card, title: p.title, question: p.question, today: p.today, after: p.after, checked: p.checked, whyYou: p.why_you })), landed: landed.has(askKey(l)),
+        kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: (l.body ?? "") + (parts.get(askKey(l)) ?? []).map((p) => `\n${p.body ?? ""}`).join(""), targets,
         today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
         visual: urls.has(askKey(l)) ? "ready" : asked.has(askKey(l)) ? "coming" : "none", visualUrl: urls.get(askKey(l)) ?? null,
         terminal: l.terminal ?? null, target: l.target ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
@@ -128,16 +130,20 @@ export function recommended(ask) {
 
 // Enter on an ask: pick the recommended option of each question. A merge, roll or money ask still needs the second press.
 // Returns what askKeyAction returns ({ type: "post" | "arm" | ... }), or null when there is nothing recommended to accept.
-export function acceptRecommended(ask, armed, nowMs) {
-  const rec = recommended(ask), qs = questionsOf(ask);
+export function acceptRecommended(ask, armed, nowMs, picks = {}) {
+  const eff = effective(ask, picks), qs = questionsOf(ask);
   if (!qs.length || ask.kind === "you") return null;
-  if (qs.length === 1) return rec[qs[0]] ? askKeyAction(ask, rec[qs[0]], armed, nowMs, qs[0]) : null;
-  if (!qs.every((q) => rec[q])) return null;
+  if (qs.length === 1) return eff[qs[0]] ? askKeyAction(ask, eff[qs[0]], armed, nowMs, qs[0]) : null;
+  if (!qs.every((q) => eff[q])) return null;
   if (NEEDS_SECOND_KEY.has(ask.kind) && !(armed && armed.id === ask.id && armed.key === "enter" && nowMs - armed.at <= DOUBLE_PRESS_MS)) {
     return { type: "arm", armed: { id: ask.id, key: "enter", q: 0, at: nowMs }, body: ask.body };
   }
-  return { type: "post", text: qs.map((q) => `${q}${rec[q]}: ${ask.options.find((o) => o.q === q && o.key === rec[q]).label}`).join("\n"), key: qs.map((q) => `${q}${rec[q]}`).join(",") };
+  return { type: "post", text: qs.map((q) => `${q}${eff[q]}: ${ask.options.find((o) => o.q === q && o.key === eff[q]).label}`).join("\n"), key: qs.map((q) => `${q}${eff[q]}`).join(",") };
 }
+// The option that goes with each question: the owner's pick ("1b: label"), else the recommended one: { q: key }.
+const effective = (ask, picks = {}) => { const rec = recommended(ask), out = {}; for (const q of questionsOf(ask)) out[q] = picks[q] ? picks[q].split(":")[0].slice(String(q).length) : rec[q]; return out; };
+// The line under the question: what Enter would send, one `<q><key>` per question, `<q> ?` where nothing is recommended or picked.
+export const answerLine = (ask, picks = {}) => { const eff = effective(ask, picks); return questionsOf(ask).map((q) => (eff[q] ? `${q}${eff[q]}` : `${q} ?`)).join(" · "); };
 
 // The checklist of a batched merge ask: state { cur, chosen: [target ids] }. j k move, space toggles, enter sends, escape cancels.
 // A step that changes the list returns the new state; enter returns { type: "send", key, only, text }, escape { type: "cancel" }.
@@ -235,7 +241,7 @@ export function inputStep(input, key) {
   return { input: { ...input, text: r.text } };
 }
 
-export const messageArgv = (thread, text) => ["ask", "message", thread, "--text", text, "--by", "owner"];
+export const messageArgv = (thread, text, to = null) => ["ask", "message", thread, "--text", text, "--by", "owner", ...(to ? ["--to", to] : [])];
 // With an ask open the message goes to the agent behind it (the ask's thread); with none open, to the desk.
 export const messageTarget = (ask) => (ask ? askId(ask) : "desk");
 
@@ -259,7 +265,7 @@ export function inboxBatches(asks, titles = {}) {
   }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
 }
 // Enter on an ask: open its ready picture while the picture row has focus (tab moves focus to the options), else accept the recommended option.
-export const enterAction = (ask, armed, nowMs, onPicture) => (onPicture && ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : acceptRecommended(ask, armed, nowMs));
+export const enterAction = (ask, armed, nowMs, onPicture, picks = {}) => (onPicture && ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : acceptRecommended(ask, armed, nowMs, picks));
 export const laneSummary = (batches) => LANE_ORDER.map((lane) => {
   const bs = batches.filter((b) => b.lane === lane);
   return { lane, label: LANE_LABELS[lane], count: bs.reduce((n, b) => n + b.count, 0), batches: bs };
@@ -276,20 +282,22 @@ export const isNarrow = (width) => typeof width === "number" && width < 640;
 // thread (where the asker's reply to an other idea shows), or nothing.
 export function paneFor(row, vm, pos) {
   if (row?.section === "desk") return { kind: "desk", thread: "desk" };
+  if (row?.section === "epic") { const e = row.row; if (!e.asks.length) return { kind: "epic", epic: e, thread: `epic:${e.ref}` }; const ask = askAt(pos, e); return { kind: "ask", ask, batch: e, epic: e, thread: ask.id }; }
+  if (row?.section === "fold") return { kind: "fold", fold: row.row, thread: null };
   if (row?.section === "batch") { const ask = askAt(pos, row.row); return { kind: "ask", ask, batch: row.row, thread: ask.id }; }
   if (row?.section === "answered") return { kind: "answered", answered: row.row, thread: row.row.id };
   return { kind: "empty" };
 }
 // Until the owner moves: the first batch; with none, the first row that is not the desk; else the desk.
-export const defaultKey = (rows) => (rows.find((r) => r.section === "batch") ?? rows.find((r) => r.section !== "desk") ?? rows[0])?.key ?? null;
+export const defaultKey = (rows) => (rows.find((r) => r.section === "epic" && r.row.state === "needs") ?? rows.find((r) => r.section === "batch") ?? rows.find((r) => r.section !== "desk" && r.section !== "epic" && r.section !== "fold") ?? rows[0])?.key ?? null;
 // A narrow panel shows the current batch's lane and one line for the other lanes that hold asks.
 export function narrowLanes(lanes, currentLane) {
   return { current: lanes.find((l) => l.lane === currentLane) ?? null, others: lanes.filter((l) => l.lane !== currentLane && l.count > 0).map((l) => `${l.label} ${l.count}`).join(" · ") };
 }
 // The header's counts: asks in batches (the desk is not counted), running and stuck.
 export function headerLine(vm) {
-  const n = vm.lanes.reduce((c, l) => c + l.count, 0), m = vm.batches.length, running = vm.groups.reduce((c, g) => c + g.rows.length, 0) + vm.sides.length;
-  return { inbox: n ? `${n} ask${n === 1 ? "" : "s"} in ${m} batch${m === 1 ? "" : "es"}` : "0 asks", run: `${running} running · ${vm.stuck.length} stuck` };
+  const by = (st) => (vm.epics ?? []).filter((e) => e.state === st).length, n = by("needs");
+  return { inbox: n ? `${n} epic${n === 1 ? " needs" : "s need"} you` : "Nothing needs you", run: `${by("working")} working · ${by("stuck")} stuck` };
 }
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
@@ -501,7 +509,8 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  const stuck = mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups = epicGroups(ts);
+  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck, groups, epics: buildEpics({ asks, groups, stuck, closed, titles, areas: cc?.areas && typeof cc.areas === "object" ? cc.areas : {}, origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, statuses: leadStatuses(parseJsonl(asksText)), nowMs }), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
@@ -529,12 +538,13 @@ export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.r
 // Every selectable row in display order: the desk first (never counted), one row per batch in lane order, answered asks, the running summary,
 // then running (epics, then side jobs), stuck, then others. While asks wait, running and stuck show only when `showRun` is set.
 // A terminal in STUCK and in its epic group is selectable in both.
-export function flatRows(vm, { showRun } = {}) {
+export function flatRows(vm, { showRun, filter = "", unfolded = false } = {}) {
+  const list = epicList(vm.epics ?? [], { filter, unfolded });
   const waiting = vm.asks.length > 0;
   const answered = (vm.answered ?? []).map((a) => ({ key: `answered:${a.id}`, section: "answered", address: null, id: a.id, row: a }));
   return [
     { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
-    ...(vm.batches ?? []).map((b) => ({ key: `batch:${b.key}`, section: "batch", address: null, id: null, row: b })),
+    ...list.rows.map((r) => (r.kind === "fold" ? { key: "fold", section: "fold", address: null, id: null, row: r } : { key: r.epic.key, section: "epic", address: null, id: null, row: r.epic })),
     ...answered,
     ...(waiting ? [{ key: "summary:running", section: "summary", address: null, id: null, row: { line: runSummary(vm) } }] : []),
     ...(waiting && !showRun ? [] : [
@@ -547,7 +557,7 @@ export function flatRows(vm, { showRun } = {}) {
 }
 
 // The header's key hint for the selected row.
-export const footerHint = (section) => ({ batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", answered: ". nudge an answer not picked up · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
+export const footerHint = (section) => ({ epic: "↑ ↓ epic · ↵ send recommended · 1-9 then a letter changes one · o own idea · ← → ask · f filter · b board · t lead's terminal · / message the lead", fold: "space shows or hides the finished · ↑ ↓ move", batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", answered: ". nudge an answer not picked up · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
 // Enter on a row: show its terminal in the right-hand pane. The desk, when it is not running, starts only on this owner key,
 // through spawn.sh, for the project the settings name (desk_project). Batches are not shown.
@@ -631,6 +641,10 @@ export function bottomPlan({ pane, vm, pinned, last, shown, bottom, bottomTermin
       head: why(k?.name ?? "nothing"), hint: "ctrl-b t closes · s switch" };
   };
   if (pane?.kind === "desk") { const d = agents.find((a) => a.role === "desk"); if (d) return follow(d); }
+  if (pane?.epic) { // an epic's agent is its lead, not the worker whose ask it is
+    const a = pane.epic.lead ? by(pane.epic.lead.address) : null;
+    return a ? follow(a) : keep("none", (n) => `no lead running · showing ${n}`);
+  }
   if (pane?.kind === "ask" && pane.ask.terminal) {
     const a = byName(pane.ask.terminal);
     return a ? follow(a) : keep("gone", () => `${pane.ask.terminal} is gone · r replace`);
@@ -650,7 +664,7 @@ export function pickerStep(p, key, n) {
 export const goStep = (terminal, phone) => [phone ? "terminal.peek" : "agent.focus", { terminal }];
 const SHORT_LANE = { key: "One key", look: "Look", hands: "Hands", groom: "Not ready" };
 export const lanesLine = (lanes) => lanes.map((l) => `${SHORT_LANE[l.lane]} ${l.count}`).join(" · ");
-export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, ...(agent ? [{ key: "g", label: "Go to agent" }] : [])];
+export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, { key: "b", label: "Board" }, ...(agent ? [{ key: "g", label: "Open" }] : [])];
 
 // Why / What / How for one ask, from what the runner stored per card (closed-cards.json origin). A card with nothing stored shows only the epic: nothing is invented.
 export function originView(ask, vm, hasAgent) {
@@ -683,4 +697,73 @@ export async function perform(a, io) {
     let address = null; try { address = JSON.parse(r.stdout).address; } catch { /* not started */ }
     if (address) io.run("terminal.show", { terminal: address, pane: io.pane });
   }
+}
+
+// ---- Inbox by epic (kuchbhi#1115) ----
+// The newest lead_status per epic: { epic: { text, ts, terminal? } }. An event with no text is ignored.
+export function leadStatuses(lines) {
+  const out = {};
+  for (const l of lines) if (l.event === "lead_status" && l.epic && typeof l.text === "string" && l.text) out[l.epic] = { text: l.text, ts: l.ts, ...(l.terminal ? { terminal: l.terminal } : {}) };
+  return out;
+}
+
+// The board's Area field, by its friendly name; one map. An Area not in it shows as itself with a capital; no Area: the repo.
+export const AREA_NAMES = { agents: "Agent tooling", gtm: "Marketing", pwa: "Parent app", infra: "Infrastructure", security: "Security", home: "Home", business: "Business", support: "Support" };
+const repoOf = (epic) => String(epic).split("#")[0].split("/").pop();
+export const groupName = (area, epic) => (area ? AREA_NAMES[String(area).toLowerCase()] ?? `${String(area)[0].toUpperCase()}${String(area).slice(1)}` : repoOf(epic));
+
+const STATE_RANK = { needs: 0, stuck: 1, working: 2, done: 3 };
+const lastOf = (a) => (Array.isArray(a) && a.length ? a[a.length - 1] : null);
+
+// One row per epic: those with an open ask, a running terminal or a status line. state: needs (an open ask), stuck, working, done (the epic is closed and nothing waits).
+// line: the lead's status, else the open ask's title, else what is stuck, else the last /work phase of its cards. prs: the badges, deduplicated by number.
+export function buildEpics({ asks, groups, stuck, closed, titles, areas, origin, statuses, nowMs }) {
+  const keys = new Set([...asks.map((a) => a.epic ?? a.card), ...groups.map((g) => g.epic), ...Object.keys(statuses ?? {})]);
+  const closedSet = new Set(closed ?? []);
+  return [...keys].map((key) => {
+    const mine = asks.filter((a) => (a.epic ?? a.card) === key).sort((a, b) => (a.kind === "merge") - (b.kind === "merge") || b.ageMs - a.ageMs);
+    const rows = groups.find((g) => g.epic === key)?.rows ?? [];
+    const lead = rows.find((r) => r.role === "lead") ?? rows.find((r) => r.role !== "worker") ?? null, workers = rows.filter((r) => r.role === "worker");
+    const mineRows = new Set(rows.flatMap((r) => [r.address, r.name]));
+    const stucks = (stuck ?? []).filter((s) => mineRows.has(s.address) || mineRows.has(s.name));
+    const st = statuses?.[key] ?? null;
+    const state = mine.length ? "needs" : closedSet.has(key) ? "done" : stucks.length ? "stuck" : "working";
+    const prs = [];
+    const addPr = (pr, state2) => { if (pr == null) return; const at = prs.findIndex((p) => p.pr === pr); if (at < 0) prs.push({ pr, state: state2 }); else if (state2 === "merged") prs[at].state = "merged"; };
+    for (const a of mine) { for (const t of a.targets ?? []) addPr(t.pr, t.landed ? "merged" : "waiting"); if (!(a.targets ?? []).length && a.target?.pr != null) addPr(a.target.pr, a.landed ? "merged" : "waiting"); }
+    for (const a of mine) for (const p of origin?.[a.card]?.trail ?? []) { const m = /^PR #(\d+)/.exec(p); if (m) addPr(Number(m[1]), "waiting"); }
+    const phase = lastOf(origin?.[key]?.trail) ?? mine.map((a) => lastOf(origin?.[a.card]?.trail)).find(Boolean) ?? null;
+    const line = st?.text ?? mine[0]?.title ?? stucks[0]?.text ?? phase ?? (state === "done" ? "finished" : "");
+    const area = areas?.[key] ?? null;
+    return {
+      key: `epic:${key}`, ref: key, num: Number(String(key).split("#").pop()), title: titles?.[key] || shortCard(key), area, group: groupName(area, key),
+      state, line, prs, ageMs: mine.length ? Math.max(...mine.map((a) => a.ageMs)) : st?.ts ? nowMs - Date.parse(st.ts) : null,
+      asks: mine, lead: lead ? { name: lead.name, address: lead.address } : null, workers, stuck: stucks, origin: origin?.[mine[0]?.card] ?? origin?.[key] ?? null,
+    };
+  });
+}
+
+// The epics as the list draws them: groups by Area (needs you, stuck, working inside each), the finished folded into one row, and `rows`, the selectable ones in order.
+// filter: text that narrows by title, number (#22 or 22) or area; unfolded: the finished epics follow the fold row.
+export function epicList(epics, { filter = "", unfolded = false } = {}) {
+  const f = String(filter ?? "").trim().toLowerCase().replace(/^#/, "");
+  const hit = (e) => !f || e.title.toLowerCase().includes(f) || String(e.num) === f || (e.area ?? "").toLowerCase().includes(f) || e.group.toLowerCase().includes(f);
+  const shown = epics.filter(hit), live = shown.filter((e) => e.state !== "done"), finished = shown.filter((e) => e.state === "done");
+  const by = new Map();
+  for (const e of live) by.set(e.group, [...(by.get(e.group) ?? []), e]);
+  const groups = [...by].map(([name, list]) => ({ name, epics: list.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state] || (b.ageMs ?? 0) - (a.ageMs ?? 0) || a.num - b.num) }))
+    .sort((a, b) => STATE_RANK[a.epics[0].state] - STATE_RANK[b.epics[0].state] || a.name.localeCompare(b.name));
+  const fold = { kind: "fold", label: `${finished.length} finished`, count: finished.length, open: unfolded };
+  const rows = [...groups.flatMap((g) => g.epics.map((e) => ({ kind: "epic", epic: e }))), ...(finished.length ? [fold, ...(unfolded ? finished.map((e) => ({ kind: "epic", epic: e })) : [])] : [])];
+  return { groups, finished: { count: finished.length, epics: finished }, rows };
+}
+
+// b: the board where it is already open. Returns { steps, share, receipt }: select its space and tab and hand it the epic (the shared flag the board mod reads);
+// with none open, nothing runs and the receipt says so. Never opens a board.
+export const BOARD_MOD = "zaksha-board", BOARD_EPIC = "zaksha-board.epic";
+export function boardStep({ spaces, panes, epic }) {
+  if (!epic) return { steps: [], share: null, receipt: "no epic selected" };
+  const board = (panes ?? []).find((p) => p.mod === BOARD_MOD), sp = board && (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === board.tab));
+  if (!board || !sp) return { steps: [], share: null, receipt: "no board open · ctrl-b b opens it" };
+  return { steps: [["space.select", { id: sp.id }], ["tab.select", { id: board.tab }]], share: epic, receipt: "" };
 }

@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
 import { exec, hc, run, props, panes, spaces, focused, terminals, agents, theme, readTextFile, appHome, home, notify, openOverlay, closeOverlay, shared, setShared, nextCommand } from "herdr";
 import {
-  parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView, agentsView, agentsFlat, addCard,
+  epicRequest, EPIC_REQUEST, parseConfig, fetchAll, cardAgents, excerpt, single, defaultUi, todayView, epicsView, drillView, statusView, searchView, focusView, agentsView, agentsFlat, addCard,
   needsCount, flatten, rowButtons, primaryAction, startPlan, repoFolder, keyAction, escapeStep, renameStep, tabMarks, linkTerminals, nowFlat, pushHistory, boardSpace, toggleBoard, ensureBoard,
   shouldRefreshOnShow, syncLabel, startMode, ageText, liveSummary, moveSel, resolveSel, afterPeek, scrollTop, clampTop, facets, PRIORITIES,
 } from "./lib.js";
@@ -93,6 +93,7 @@ export default class Board extends View {
     this.asked = null; this.pending = new Set(); // /work starts: the issue asked about, and those starting
     this.refresh(cx);
     cx.timer.every(ASK_MS, (cx) => this.readAsks(cx));
+    cx.timer.every(400, (cx) => { const e = epicRequest(shared(EPIC_REQUEST)); if (e) { setShared(EPIC_REQUEST, null); this.openEpic(e); cx.notify(); } }); // b in the Inbox: show this epic
     cx.spawn(async (cx) => { for (;;) { const c = await nextCommand(); log("info", "nextCommand", { name: c }); if (c === "focus") { this.h.focus(); cx.notify(); } else if (c === "start") this.startWork(cx); } });
   }
 

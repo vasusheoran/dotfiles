@@ -1,29 +1,35 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentsToggle, PANE_ON } from "./lib.js";
+import { spaceToggle, inboxFinish, PANE_ON } from "./lib.js";
 
-const mod = { pane: "p1", tab: "tab-i", mod: "agents-view" };
-const NEW = ["tab.new", { name: "Inbox", mod: "agents-view", props: { inbox: true } }];
+const work = { id: "s1", name: "Work", active: true, tabs: [{ id: "t1" }] };
+const inbox = (active = false) => ({ id: "s2", name: "Inbox", active, tabs: [{ id: "t2" }] });
+const pane = { pane: "p2", tab: "t2", mod: "agents-view" };
+const MOD = ["tab.new", { space: "s2", name: "Inbox", mod: "agents-view", props: { inbox: true } }];
 
-test("agents toggle: no Inbox tab yet: opens it, and remembers the tab it left", () => {
-  assert.deepEqual(agentsToggle({ panes: [{ pane: "p9", tab: "tab-a", terminal: "t1" }], focused: { tab: "tab-a" }, back: null }), { steps: [NEW], back: "tab-a" });
+test("first time: a space named Inbox is made, and the owner's space is remembered", () => {
+  const r = spaceToggle({ spaces: [work], panes: [], back: null });
+  assert.deepEqual(r.steps, [["space.new", { name: "Inbox" }]]); assert.equal(r.back, "s1"); assert.equal(r.finish, true);
 });
-test("agents toggle: an Inbox tab that is open elsewhere is selected, not opened twice", () => {
-  assert.deepEqual(agentsToggle({ panes: [mod, { pane: "p2", tab: "tab-i", terminal: "t1" }], focused: { tab: "tab-a" }, back: null }), { steps: [["tab.select", { id: "tab-i" }], ["pane.focus", { pane: "p1" }]], back: "tab-a" }, "the keyboard goes to the Inbox pane, not the agent pane below it");
+test("the new space's first terminal tab is replaced by the Inbox mod tab", () => {
+  assert.deepEqual(inboxFinish({ spaces: [work, inbox(true)], panes: [] }), [MOD, ["tab.close", { id: "t2" }]]);
+  assert.deepEqual(inboxFinish({ spaces: [work], panes: [] }), null, "the space is not there yet: wait");
+  assert.deepEqual(inboxFinish({ spaces: [work, inbox(true)], panes: [pane] }), [], "the Inbox tab is there: nothing to do");
 });
-test("agents toggle: pressed on the Inbox tab, it goes back to the tab it came from", () => {
-  const panes = [mod, { pane: "p9", tab: "tab-a", terminal: "t1" }];
-  assert.deepEqual(agentsToggle({ panes, focused: { tab: "tab-i" }, back: "tab-a" }), { steps: [["tab.select", { id: "tab-a" }]], back: null });
+test("after that: the Inbox space is selected and its pane focused", () => {
+  const r = spaceToggle({ spaces: [work, inbox()], panes: [pane], back: null });
+  assert.deepEqual(r.steps, [["space.select", { id: "s2" }], ["pane.focus", { pane: "p2" }]]); assert.equal(r.back, "s1"); assert.equal(r.finish, false);
 });
-test("agents toggle: pressed on the Inbox tab with no tab to go back to (or one that is closed), it goes to the previous tab", () => {
-  assert.deepEqual(agentsToggle({ panes: [mod], focused: { tab: "tab-i" }, back: null }), { steps: [["tab.prev"]], back: null });
-  assert.deepEqual(agentsToggle({ panes: [mod], focused: { tab: "tab-i" }, back: "tab-gone" }), { steps: [["tab.prev"]], back: null });
+test("a space without the Inbox tab (closed by hand) gets it again", () => {
+  const r = spaceToggle({ spaces: [work, inbox()], panes: [], back: null });
+  assert.deepEqual(r.steps, [["space.select", { id: "s2" }]]); assert.equal(r.finish, true);
 });
-test("agents toggle: with no focused tab it still opens the Inbox", () => {
-  assert.deepEqual(agentsToggle({ panes: [], focused: null, back: null }), { steps: [NEW], back: null });
+test("pressed again on the Inbox space: back to the space it came from", () => {
+  assert.deepEqual(spaceToggle({ spaces: [work, inbox(true)].map((s) => ({ ...s, active: s.id === "s2" })), panes: [pane], back: "s1" }), { steps: [["space.select", { id: "s1" }]], back: null, finish: false });
 });
-
-test("the flag both panes agree on is named once", async () => {
-  const { PANE_ON: inView } = await import("../agents-view/lib.js").then(() => ({ PANE_ON }));
-  assert.equal(inView, "agents-view.pane");
+test("back to a space that is closed, or none remembered: the first other space", () => {
+  const sp = [{ ...work, active: false }, inbox(true)];
+  assert.deepEqual(spaceToggle({ spaces: sp, panes: [pane], back: "gone" }).steps, [["space.select", { id: "s1" }]]);
+  assert.deepEqual(spaceToggle({ spaces: sp, panes: [pane], back: null }).steps, [["space.select", { id: "s1" }]]);
 });
+test("the flag both panes agree on is named once", () => { assert.equal(PANE_ON, "agents-view.pane"); });

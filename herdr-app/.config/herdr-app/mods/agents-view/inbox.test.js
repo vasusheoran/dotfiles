@@ -164,9 +164,9 @@ test("flatRows: batches follow the desk; the place of running things is behind t
   const vm = viewModel({ terminals: [], asksText: text, eventsText: "", nowMs: NOW });
   assert.deepEqual(vm.lanes.map((l) => l.count), [0, 1, 1, 0]);
   const keys = flatRows(vm).map((r) => r.key);
-  assert.deepEqual(keys.slice(0, 3), ["desk", "batch:look:o/r#2", "batch:hands:o/r#3"]);
+  assert.deepEqual(keys.slice(0, 3), ["desk", "epic:o/r#1", "epic:o/r#3"]);
   assert.equal(keys.filter((k) => k === "desk").length, 1);
-  assert.ok(flatRows(vm).find((r) => r.key === "batch:look:o/r#2").section === "batch");
+  assert.ok(flatRows(vm).find((r) => r.key === "epic:o/r#1").section === "epic");
 });
 
 test("viewModel: threads come from the message events", () => {
@@ -209,7 +209,7 @@ test("paneFor: the right pane follows the selected row: desk thread, the batch's
   const rows = flatRows(vm);
   const at = (sec) => rows.find((r) => r.section === sec);
   assert.deepEqual(paneFor(at("desk"), vm, {}), { kind: "desk", thread: "desk" });
-  const b = paneFor(at("batch"), vm, {});
+  const b = paneFor(at("epic"), vm, {});
   assert.equal(b.kind, "ask"); assert.equal(b.thread, b.ask.id);
   const a = paneFor(at("answered"), vm, {});
   assert.equal(a.kind, "answered"); assert.equal(a.thread, "a-3"); assert.equal(a.answered.id, "a-3");
@@ -256,9 +256,9 @@ test("deskNew: desk replies after your last desk message", () => {
   assert.equal(deskNew({}), 0);
 });
 
-test("headerLine: asks in batches, running and stuck counts; the desk is not counted", () => {
+test("headerLine: epics that need you, working and stuck counts; the desk is not counted", () => {
   const vm = viewModel({ terminals: [{ address: "tD", name: "desk-r", status: "idle", labels: ["role=desk"] }, { address: "tW", name: "card-r-12", status: "working", labels: ["role=worker", "epic=o/r#1", "card=o/r#12"] }, { address: "tL", name: "lead-r-1", status: "working", labels: ["role=lead", "epic=o/r#1"] }],
     asksText: [row("a-1", HOUR), row("a-2", HOUR, { kind: "you", batch_key: "hands:o/r#3", epic: "o/r#3", card: "o/r#30" })].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: NOW });
-  assert.deepEqual(headerLine(vm), { inbox: "2 asks in 2 batches", run: "2 running · 0 stuck" });
-  assert.equal(headerLine(viewModel({ terminals: [], nowMs: NOW })).inbox, "0 asks");
+  assert.deepEqual(headerLine(vm), { inbox: "2 epics need you", run: "0 working · 0 stuck" });
+  assert.equal(headerLine(viewModel({ terminals: [], nowMs: NOW })).inbox, "Nothing needs you");
 });

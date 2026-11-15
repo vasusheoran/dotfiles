@@ -1299,3 +1299,10 @@ test("keys: Shift-N renames (names) the tab, Shift-L links an agent to an issue"
   assert.equal(keyAction("shift-n"), "rename");
   assert.equal(keyAction("shift-l"), "link");
 });
+
+test("epicRequest: an owner/repo#N ref is taken, anything else is ignored", async () => {
+  const { epicRequest, EPIC_REQUEST } = await import("./lib.js");
+  assert.equal(EPIC_REQUEST, "zaksha-board.epic");
+  assert.equal(epicRequest("o/r#12"), "o/r#12");
+  for (const bad of [null, undefined, "", "12", "o/r", "o/r#x", 5, "o/r#1 x"]) assert.equal(epicRequest(bad), null);
+});

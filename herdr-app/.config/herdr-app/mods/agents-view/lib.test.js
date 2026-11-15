@@ -238,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { origin: {}, titles: {}, usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "One key", count: 0, batches: [] }, { lane: "look", label: "Needs a look", count: 0, batches: [] }, { lane: "hands", label: "Your hands", count: 0, batches: [] }, { lane: "groom", label: "Not ready", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { epics: [], origin: {}, titles: {}, usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "One key", count: 0, batches: [] }, { lane: "look", label: "Needs a look", count: 0, batches: [] }, { lane: "hands", label: "Your hands", count: 0, batches: [] }, { lane: "groom", label: "Not ready", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -298,10 +298,10 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
     eventsText: "", usageJson: null, nowMs: NOW,
   });
   const rows = flatRows(vm);
-  assert.deepEqual(rows.map((r) => r.section), ["desk", "batch", "summary", "others"]); // the desk first; an ask is waiting: running hides behind one line
+  assert.deepEqual(rows.map((r) => r.section), ["desk", "epic", "summary", "others"]); // the desk first; an ask is waiting: running hides behind one line
   assert.equal(rows[1].row.asks[0].id, "legacy-12"); // a legacy row without an id keys on legacy-<trailing digits of its url>
   const full = flatRows(vm, { showRun: true });
-  assert.deepEqual(full.map((r) => r.section), ["desk", "batch", "summary", "group", "stuck", "others"]);
+  assert.deepEqual(full.map((r) => r.section), ["desk", "epic", "summary", "group", "stuck", "others"]);
   assert.equal(full[3].address, "tL");
   assert.equal(full[4].address, "tL");
   assert.equal(new Set(full.map((r) => r.key)).size, 6);
@@ -481,14 +481,14 @@ test("viewModel: side jobs are not in the epic groups or other sessions; desk is
   assert.equal(vm.desk.address, "tD");
   assert.deepEqual(vm.others, []);
   assert.deepEqual(vm.groups.map((g) => g.epic), [EPIC]);
-  assert.deepEqual(flatRows(vm).map((r) => r.section), ["desk", "group", "side"]);
+  assert.deepEqual(flatRows(vm).map((r) => r.section), ["desk", "epic", "group", "side"]); // the running lead is an epic row too
 });
 
 test("flatRows: sections in order asks, running (epics then side jobs), desk, stuck, others", () => {
   const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side"] };
   const blocked = { address: "tB", name: "x", status: { state: "blocked", kind: "permission" }, labels: [] };
   const vm = viewModel({ terminals: [side, blocked, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW });
-  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["desk", "batch", "summary", "group", "side", "stuck", "others"]);
+  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["desk", "epic", "summary", "group", "side", "stuck", "others"]);
 });
 
 test("selectTarget: a terminal row shows its terminal; the desk row starts one when none is live", () => {
