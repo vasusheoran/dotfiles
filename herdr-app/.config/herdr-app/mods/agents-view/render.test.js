@@ -148,3 +148,15 @@ test("render: a long title is cut to one line in the batch row, wide and narrow"
   const title = `${"long title ".repeat(20)}end`, cut = `${title.slice(0, 59).trimEnd()}…`;
   for (const width of [900, 300]) { const v = draw({ asksText: lines(ASK("a-1", { title })), showRun: false, width }); has(v.drawn, cut); assert.ok(cut.length <= 60); }
 });
+
+test("render: a batch is named by its epic's cached title, 'to land' for the first lane, the ref when no title is cached", () => {
+  const t = (n) => ({ repo: "o/r", pr: n, head: String(n).repeat(40).slice(0, 40) });
+  const batch = Array.from({ length: 3 }, (_, i) => ASK(`m-${i}`, { kind: "merge", batch_key: "merge:o/r#721", epic: "o/r#721", card: "o/r#72", target: t(i + 1) }));
+  const v = draw({ asksText: lines(...batch), showRun: false });
+  assert.equal(v.model().vm.batches[0].name, "r#721 · 3 to land");
+  v.files.closed = JSON.stringify({ closed: [], titles: { "o/r#721": "Epic 05: Stalls and the parent-facing site" } });
+  assert.equal(v.model().vm.batches[0].name, "Epic 05: Stalls and the parent-facing site · 3 to land");
+  has(paint(v), "Epic 05: Stalls and the parent-facing site · 3 to land");
+  v.files.closed = JSON.stringify({ closed: [], titles: { "o/r#721": "E".repeat(100) } });
+  assert.equal(v.model().vm.batches[0].name, `${"E".repeat(59)}… · 3 to land`);
+});

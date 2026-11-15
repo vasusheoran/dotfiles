@@ -243,7 +243,7 @@ export const LANE_LABELS = { key: "ONE KEY", look: "NEEDS A LOOK", hands: "YOUR 
 const LANE_ORDER = ["key", "look", "hands", "groom"];
 const askCount = (a) => Math.max(1, a.targets?.length ?? 0, a.lane === "groom" ? a.cards?.length ?? 0 : 0); // a groom batch counts its cards
 // One batch per batch key (an ask from before batch keys is batched by lane and epic), asks oldest first, batches in lane order.
-export function inboxBatches(asks) {
+export function inboxBatches(asks, titles = {}) {
   const by = new Map();
   for (const a of asks) {
     const key = a.batchKey ?? `${a.lane}:${a.epic ?? a.card}`;
@@ -252,7 +252,7 @@ export function inboxBatches(asks) {
   }
   return [...by.values()].map((b) => {
     const count = b.asks.reduce((n, a) => n + askCount(a), 0), epic = b.asks[0].epic ?? b.asks[0].card;
-    return { ...b, count, epic, name: b.asks.length === 1 && b.lane !== "groom" ? clip(b.asks[0].title, 60) : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
+    return { ...b, count, epic, name: b.asks.length === 1 && b.lane !== "groom" ? clip(b.asks[0].title, 60) : `${clip(titles?.[epic] || shortCard(epic), 60)} · ${count} ${{ key: "to land", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
       coming: b.asks.filter((a) => a.visual === "coming").length,
       asks: [...b.asks].sort((x, y) => (y.visual === "ready") - (x.visual === "ready") || Date.parse(x.ts) - Date.parse(y.ts)) }; // a ready picture goes to the top
   }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
@@ -499,7 +499,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks), lanes: laneSummary(inboxBatches(asks)), threads: threadsOf(parseJsonl(asksText)), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(parseJsonl(asksText)), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
