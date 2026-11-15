@@ -263,7 +263,7 @@ test("tab: the top pane reads header, the open ask with its options and thread, 
   const thread = [msg("a-2", "s-1", 5, "owner", "does it need a release?"), msg("a-2", "s-2", 4, "agent", "yes, a build")];
   const v = draw({ asksText: lines(W("a-2", { kind: "look", batch_key: "look:o/r#1" }), ...thread), showRun: false });
   const d = select(v, keyOf(v, "batch"));
-  order(d, "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: lead-r-1 · the epic's lead", /^↑ ↓ epic/, "lead-r-1 · working", "cmd-shift-t closes · g open its tab");
+  order(d, "Title a-2", "A (Recommended)", /^Thread · 2 messages/, "To: lead-r-1 · the epic's lead", /^↑ ↓ rows/, "lead-r-1 · working", "cmd-shift-t closes · g open its tab");
   has(d, "1 epic needs you"); has(d, "Inbox");
 });
 test("tab: the message box names the desk when the desk is highlighted", () => {
