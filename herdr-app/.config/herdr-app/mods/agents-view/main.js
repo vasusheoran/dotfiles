@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv,
+import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
   stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 const MONO = "JetBrains Mono";
@@ -24,7 +24,7 @@ export default class AgentsView extends View {
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
-    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.pos = {}; this.width = null; this.back = 0;
+    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -74,6 +74,7 @@ export default class AgentsView extends View {
   act(a, r, cx) {
     if (!r) { this.note = "nothing recommended: press an option letter"; return cx.notify(); }
     this.armed = r.type === "arm" ? r.armed : null;
+    if (r.type === "visual" || r.type === "replace") return this.picture(a, r.type, cx);
     if (r.type === "checklist") { this.checklist = { id: a.id, cur: 0, chosen: [] }; return cx.notify(); }
     if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
@@ -82,7 +83,7 @@ export default class AgentsView extends View {
       r = { type: "post", text, key: composeKey(a, picks) };
     }
     if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
-    else if (r.type === "open") perform(r, { run, exec, pane: null });
+    else if (r.type === "open") perform(r, { run, exec, pane: null }).then((x) => { if (x?.code !== 0) { this.note = "could not open it"; cx.notify(); } });
     else if (r.type === "arm") this.note = `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`;
     cx.notify();
   }
@@ -99,6 +100,13 @@ export default class AgentsView extends View {
   }
 
   // one reminder to the asker of an answer not applied 10 minutes after it was sent; never on a timer
+  // v asks the agent behind the ask for a picture (on file first, then sent); r starts a replacement for a gone asker. Neither answers the ask.
+  picture(a, type, cx) {
+    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
+    const ok = type === "visual" ? "picture requested" : "replacement started", bad = type === "visual" ? "request failed" : "no replacement started";
+    perform({ type: "post", argv: type === "visual" ? visualArgv(a) : replaceArgv(a) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? ok : bad; cx.notify(); });
+  }
+
   nudge(a, cx) {
     if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
     if (!a.notPickedUp) { this.note = "answer is not overdue"; return cx.notify(); }
@@ -148,6 +156,9 @@ export default class AgentsView extends View {
   }
 
   // the ask shown for a batch row: the place in the batch is kept in this.pos
+  // Enter opens a ready picture while its row has focus; tab hands focus to the options, and back
+  onPicture(a) { return a.visual === "ready" && !this.picOff.has(a.id); }
+
   askOf(r) { return r?.section === "batch" ? askAt(this.pos, r.row) : null; }
 
   key(e, cx) {
@@ -164,9 +175,10 @@ export default class AgentsView extends View {
       if (k === ".") { cx.stop_propagation(); return this.nudge(cur.row, cx); }
     }
     if (cur?.section === "batch" && (k === "left" || k === "right")) { cx.stop_propagation(); this.pos = stepAsk(this.pos, cur.row, k); this.q = 1; this.armed = null; return cx.notify(); }
+    if (k === "tab" && ask?.visual === "ready") { cx.stop_propagation(); this.picOff.has(ask.id) ? this.picOff.delete(ask.id) : this.picOff.add(ask.id); return cx.notify(); }
     if (k === "enter" && ask) {
       cx.stop_propagation(); this.note = "";
-      return this.act(ask, acceptRecommended(ask, this.armed, Date.now()), cx);
+      return this.act(ask, enterAction(ask, this.armed, Date.now(), this.onPicture(ask)), cx);
     }
     if (ask && isAskKey(ask, k, this.armed)) { cx.stop_propagation(); return this.askKey(ask, k, cx); }
     this.armed = null; // navigation cancels an armed answer and still moves
@@ -209,6 +221,7 @@ export default class AgentsView extends View {
       .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, v.card)).child(sans(12, t.muted, v.kind))
         .when(!!posText, (e) => e.child(sans(11, t.dim, `${posText} ‹ ›`)))
         .when(v.noteSent || this.sent.has(a.id), (e) => e.child(sans(11, t.done, "note sent")))
+        .when(!!v.visual, (e) => e.child(sans(11, v.visual.ready ? t.accent : t.working, v.visual.label)))
         .child(div().flex_1()).child(mono(12, t.muted, v.age)))
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
         .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
@@ -216,6 +229,12 @@ export default class AgentsView extends View {
     // title, what is true today and after, the options with what each does next, then the plan or PR link, then the body
     return el
       .children(v.evidence.map(([k, text]) => h_flex().w_full().gap(8).items_baseline().pt(2).child(sans(11, t.dim, k).w(56).flex_none()).child(sans(12, t.muted, text).flex_1().min_w(0))))
+      .when(!!v.visual?.ready, (e) => e.child(h_flex().id(`${r.key}:picture`).w_full().pt(8).gap(8).items_center()
+        .on_click((_e, cx) => this.act(a, askKeyAction(a, "v", null, Date.now()), cx))
+        .child(sans(13, t.accent, "open picture")).child(this.keycap(t, "v")).when(this.onPicture(a), (e) => e.child(sans(11, t.done, "↵")).child(sans(11, t.dim, "tab: options"))).when(this.onPicture(a), (e) => e.border_1().border_color(t.accent).rounded(6).px(8).h(ROW))))
+      .when(v.gone, (e) => e.child(h_flex().w_full().pt(8).gap(8).items_center()
+        .child(sans(12, t.blocked, "the agent behind this ask is gone")).when(v.replaceable, (e) => e.child(sans(12, t.muted, "start a replacement with this ask as its brief")).child(this.keycap(t, "r")))
+        .when(!v.replaceable, (e) => e.child(sans(12, t.muted, "press v for a picture, then start a replacement")))))
       .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
@@ -235,7 +254,7 @@ export default class AgentsView extends View {
         .child(sans(11, t.dim, this.input.mode === "other" ? "↵ send as your answer · the agent applies it or replies here · esc cancel" : "↵ send alone · tab keep for your pick · esc cancel"))))
       .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
         .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
-        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "v")))
+        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "p")))
         .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
       .when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
       .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
