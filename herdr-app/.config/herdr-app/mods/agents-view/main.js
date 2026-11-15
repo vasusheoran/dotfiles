@@ -25,7 +25,7 @@ export default class AgentsView extends View {
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
-    this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null;
+    this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; this.taken = null; this.takenAt = null; this.plan = null; this.focusNew = false; this.bottomWas = null;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -65,14 +65,17 @@ export default class AgentsView extends View {
   tab() { return inTab({ panes: panes(), focused: focused(), props: props() }); }
 
   // the pane below the mod: split once, then show the agent behind the highlighted ask (or the pinned one). Deferred, never run inside the render.
-  syncTab(tab, vm, pane, cx) {
+  syncTab(tab, vm, pane, cx, hl) {
     const bottom = rightPaneId(panes(), tab.tab);
     if (bottom) this.sawBottom = true;
-    else if (this.sawBottom) { this.sawBottom = false; this.bottomShown = null; } // it was there and is gone (closed by hand, or its program ended): attach again; until it first appears, the split is on its way
-    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom, own: tab.pane });
+    else if (this.sawBottom) { this.sawBottom = false; this.bottomShown = null; } // it was there and is gone (closed by hand, or its program ended): show again; until it first appears, the split is on its way
+    if (this.taken && this.takenAt !== hl) this.taken = null; // moving to another ask gives it back
+    if (this.focusNew && bottom && bottom !== this.bottomWas) { this.focusNew = false; cx.timer.after(0, () => run("pane.focus", { pane: bottom })); }
+    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom, own: tab.pane, taken: this.taken });
     if (plan.unpin) this.pinned = null;
     if (plan.address && (plan.mode === "follow" || plan.mode === "pinned")) this.lastAgent = { address: plan.address, name: plan.name };
-    if (plan.steps.length) { this.bottomShown = plan.address; cx.timer.after(0, () => plan.steps.forEach((st) => run(...st))); }
+    if (plan.steps.length) { this.bottomShown = plan.key; this.bottomWas = bottom; this.focusNew = plan.taken; cx.timer.after(0, () => plan.steps.forEach((st) => run(...st))); }
+    this.plan = plan;
     return plan;
   }
 
@@ -198,8 +201,10 @@ export default class AgentsView extends View {
     if (open && ask && open.id === ask.id) { cx.stop_propagation(); return this.modal(ask, k, cx); }
     this.input = null; this.checklist = null;
     const own = (kk) => !!ask?.options.some((o) => o.key === kk), tab = this.tab(), agent = this.agentFor(cur, ask, vm);
+    if (k === "escape" && this.taken) { cx.stop_propagation(); this.taken = null; return cx.notify(); }
+    if (k === "t" && tab && !own("t") && ["follow", "pinned"].includes(this.plan?.mode)) { cx.stop_propagation(); this.taken = this.plan.address; this.takenAt = `${cur?.key}|${ask?.id}`; return cx.notify(); }
     if (k === "escape" && this.pinned) { cx.stop_propagation(); this.pinned = null; return cx.notify(); }
-    if (k === "s" && tab && !own("s")) { cx.stop_propagation(); this.picker = { cur: 0 }; return cx.notify(); }
+    if (k === "s" && tab && !own("s")) { cx.stop_propagation(); this.taken = null; this.picker = { cur: 0 }; return cx.notify(); }
     if (k === "i" && !tab && !own("i")) { cx.stop_propagation(); inboxTabSteps({ panes: panes() }).forEach((s) => run(...s)); return; }
     if (k === "g" && agent && !own("g")) { cx.stop_propagation(); run(...goStep(agent.address, isNarrow(this.width ?? 0))); return; }
     const ok = ask && originKey(ask, k, !!agent);
@@ -397,7 +402,7 @@ export default class AgentsView extends View {
     const narrow = isNarrow(this.width ?? 0);
     const curRow = rows[this.selIdx], pane = paneFor(curRow, vm, this.pos);
     // the Inbox tab and the phone read in the order of the spec: the open ask, the message box, then the lanes; the side panel keeps the lanes on top
-    const tab = this.tab(), plan = tab ? this.syncTab(tab, vm, pane, cx) : null;
+    const tab = this.tab(), plan = tab ? this.syncTab(tab, vm, pane, cx, `${curRow?.key}|${pane.ask?.id}`) : null;
     const threadOf = (id) => this.thread(t, vm.threads[id] ?? [], id);
     const picker = this.picker ? [v_flex().w_full().px(14).py(8).gap(2).child(sans(12, t.dim, "Switch to")).children(liveAgents(vm).map((a, i) => h_flex().id(`pick:${a.address}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6).bg(this.picker.cur === i ? t.selected : t.raised)
       .on_click((_e, cx2) => { this.picker = null; this.pinned = a.address; cx2.notify(); }).child(sans(13, t.foreground, a.name).flex_1().min_w(0)).child(sans(12, t.muted, a.state ?? "starting")))).child(sans(11, t.dim, "↑ ↓ move · ↵ show and pin · esc cancel"))] : [];

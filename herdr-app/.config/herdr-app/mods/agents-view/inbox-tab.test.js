@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
+  inboxTabSteps, inTab, liveAgents, bottomPlan, mirrorArgv, attachArgv, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -40,32 +40,33 @@ test("follow: the highlighted ask's own terminal is shown, with its status and t
   const vm = vmOf([ask("a-3")]);
   const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1" });
   assert.equal(p.mode, "follow"); assert.equal(p.address, "t1");
-  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t1"] }]]);
-  assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "type here to talk to it · s switch · g open its tab"); assert.equal(p.dim, false);
+  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: mirrorArgv("t1") }]]);
+  assert.equal(p.key, "t1:mirror");
+  assert.equal(p.head, "card-r-3 · working · watching"); assert.equal(p.hint, "t take over · s switch · g open its tab"); assert.equal(p.dim, false);
 });
 test("follow: no second terminal.show while the same agent is shown", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1", bottom: "p2", own: "p1" }).steps, []);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1:mirror", bottom: "p2", own: "p1" }).steps, []);
 });
 test("follow: moving to an ask of another agent shows that one", () => {
   const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
-  const p = bottomPlan({ pane: paneOf(vm, 1), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
-  assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t2"] }]); assert.equal(p.head, "lead-r-1 · idle");
+  const p = bottomPlan({ pane: paneOf(vm, 1), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1:mirror", bottom: "p2", own: "p1" });
+  assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: mirrorArgv("t2") }]); assert.equal(p.head, "lead-r-1 · idle · watching");
 });
 test("follow: the desk row shows the desk", () => {
   const vm = vmOf([]);
   const p = bottomPlan({ pane: { kind: "desk", thread: "desk" }, vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1" });
-  assert.equal(p.address, "t3"); assert.equal(p.head, "desk-r · idle");
+  assert.equal(p.address, "t3"); assert.equal(p.head, "desk-r · idle · watching");
 });
 test("follow: an ask with no agent behind it keeps the last terminal, dims, and says why", () => {
   const vm = vmOf([ask("a-4", { kind: "you", terminal: undefined })]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1:mirror", bottom: "p2", own: "p1" });
   assert.equal(p.mode, "none"); assert.equal(p.dim, true); assert.deepEqual(p.steps, []); assert.equal(p.address, "t1");
   assert.equal(p.head, "no agent behind this ask · showing card-r-3");
 });
 test("follow: a gone agent keeps the last terminal, dims, and says r replaces it", () => {
   const vm = vmOf([ask("a-5", { terminal: "card-r-9" })]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1", bottom: "p2", own: "p1" });
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1:mirror", bottom: "p2", own: "p1" });
   assert.equal(p.mode, "gone"); assert.equal(p.dim, true); assert.deepEqual(p.steps, []);
   assert.equal(p.head, "card-r-9 is gone · r replace");
 });
@@ -76,9 +77,9 @@ test("follow: with nothing shown before and no agent behind the ask, it falls ba
 });
 test("pinned: the picked agent stays while the highlight moves, with the pinned header and the way back", () => {
   const vm = vmOf([ask("a-3")]);
-  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1", bottom: "p2", own: "p1" });
-  assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t2"] }]);
-  assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "esc follow the highlight · s switch");
+  const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1:mirror", bottom: "p2", own: "p1" });
+  assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: mirrorArgv("t2") }]);
+  assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "t take over · esc follow the highlight · s switch");
 });
 test("pinned: a pinned agent that has gone away is dropped and the pane follows again", () => {
   const vm = vmOf([ask("a-3")]);
@@ -87,7 +88,7 @@ test("pinned: a pinned agent that has gone away is dropped and the pane follows 
 });
 test("no lower pane yet: the first attach only splits (nothing to close); with no mod pane to split from, nothing runs", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1" }).steps, [["pane.split", { pane: "p1", direction: "down", argv: ["hc", "attach", "t1"] }]]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1" }).steps, [["pane.split", { pane: "p1", direction: "down", argv: mirrorArgv("t1") }]]);
   assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: null }).steps, []);
 });
 test("picker: j k move within the list, Enter picks the index, esc cancels, the cursor stays inside", () => {
@@ -183,4 +184,28 @@ test("lanesLine: the four lanes on one line, zeros included", () => {
 test("phoneBar: Picture, Own idea, Go to agent; Go to agent only with an agent behind the ask", () => {
   assert.deepEqual(phoneBar(true).map((b) => [b.key, b.label]), [["v", "Picture"], ["o", "Own idea"], ["g", "Go to agent"]]);
   assert.deepEqual(phoneBar(false).map((b) => b.key), ["v", "o"]);
+});
+
+// ---- the lower pane is a read-only mirror until t
+test("mirror: hc read once a second, never hc attach, so the agent's size is untouched", () => {
+  const a = mirrorArgv("t7r").join(" ");
+  assert.match(a, /hc read t7r; sleep 1/); assert.doesNotMatch(a, /attach/); assert.deepEqual(attachArgv("t7r"), ["hc", "attach", "t7r"]);
+});
+test("mirror: an address with shell characters starts nothing", () => {
+  const vm = vmOf([ask("a-3")], [term({ address: "t1;boom" }), TERMS[2]]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1" }).steps, []);
+});
+test("take over: only after t is there an attach; the header says so; the key differs so the pane is swapped", () => {
+  const vm = vmOf([ask("a-3")]);
+  const watch = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1:mirror", bottom: "p2", own: "p1" });
+  assert.deepEqual(watch.steps, []); assert.equal(watch.taken, false);
+  const over = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1:mirror", bottom: "p2", own: "p1", taken: "t1" });
+  assert.deepEqual(over.steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t1") }]]);
+  assert.equal(over.head, "card-r-3 · taken over · esc or move away to give it back"); assert.equal(over.taken, true); assert.equal(over.key, "t1:attach");
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1:attach", bottom: "p2", own: "p1", taken: "t1" }).steps, [], "already attached");
+});
+test("take over: dropping it (taken null) swaps the attach back to the mirror", () => {
+  const vm = vmOf([ask("a-3")]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: "t1:attach", bottom: "p2", own: "p1", taken: null }).steps,
+    [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: mirrorArgv("t1") }]]);
 });
