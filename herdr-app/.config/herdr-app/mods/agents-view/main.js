@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
+import { pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
   stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 const MONO = "JetBrains Mono";
@@ -24,7 +24,7 @@ export default class AgentsView extends View {
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
-    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0;
+    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -72,61 +72,60 @@ export default class AgentsView extends View {
 
   // what a key or Enter resolved to on an ask: post, arm, open the plan, open the batch checklist, or nothing
   act(a, r, cx) {
-    if (!r) { this.note = "nothing recommended: press an option letter"; return cx.notify(); }
+    if (!r) { this.say(a.id, "fail", "nothing is recommended on this ask: press an option letter"); return cx.notify(); }
     this.armed = r.type === "arm" ? r.armed : null;
     if (r.type === "visual" || r.type === "replace") return this.picture(a, r.type, cx);
     if (r.type === "checklist") { this.checklist = { id: a.id, cur: 0, chosen: [] }; return cx.notify(); }
     if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
       const text = composeAnswer(a, picks);
-      if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
+      if (text == null) { this.say(a.id, "ok", `picked ${r.text.split(":")[0]}: pick the other questions, then press Enter to send`); return cx.notify(); }
       r = { type: "post", text, key: composeKey(a, picks) };
     }
-    if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
-    else if (r.type === "open") perform(r, { run, exec, pane: null }).then((x) => { if (x?.code !== 0) { this.note = "could not open it"; cx.notify(); } });
-    else if (r.type === "arm") this.note = `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`;
+    if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx, r.text === "Done." && a.kind === "you" ? "done" : "pick", r.text === "Done." ? "" : r.key ?? "");
+    else if (r.type === "open") { this.say(a.id, "pending", "opening it…"); perform(r, { run, exec, pane: null }).then((x) => { this.last = { argv: ["open", r.target], code: x?.code, stderr: x?.stderr }; this.say(a.id, x?.code === 0 ? "ok" : "fail", x?.code === 0 ? "opened" : `could not open it${x?.stderr ? `: ${String(x.stderr).trim().split("\n")[0]}` : ""}`); cx.notify(); }, (e) => { this.last = { argv: ["open", r.target], code: null, stderr: String(e?.message ?? e) }; this.say(a.id, "fail", `could not open it: ${e?.message ?? e}`); cx.notify(); }); }
+    else if (r.type === "arm") this.say(a.id, "pending", `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`);
     cx.notify();
   }
 
+  // every work call the panel runs goes through here: the pressed line at once, then the confirmed or failed line with the call's exit code and stderr kept in this.last
+  call(key, kind, label, argv, cx, then) {
+    if (this.fixture) { this.say(key, "fail", "fixture data: nothing sent"); return cx.notify(); }
+    this.say(key, "pending", pressedText(kind, label)); cx.notify();
+    const done = (x) => {
+      this.last = { argv, code: x?.code ?? null, stderr: x?.stderr ?? "" };
+      const ok = x?.code === 0;
+      this.say(key, ok ? "ok" : "fail", ok ? doneText(kind, label) : failText(kind, x));
+      if (then) then(ok);
+      cx.notify();
+    };
+    perform({ type: "post", argv }, { run, exec, pane: null }).then(done, (e) => done({ code: null, stderr: String(e?.message ?? e) }));
+  }
+
+  say(key, tone, text) { this.status.set(key, { tone, text }); this.recent = key; }
+
   // answers go through `work ask answer`; one in flight per ask
-  send(a, argv, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); } // screenshots never answer a real ask
+  send(a, argv, cx, kind = "pick", label = "") {
+    if (this.fixture) { this.say(a.id, "fail", "fixture data: nothing sent"); return cx.notify(); }
     if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
     this.hidden.add(a.id);
-    perform({ type: "post", argv }, { run, exec, pane: null }).then((x) => {
-      if (x?.code === 0) { this.note = `answered ${shortCard(a.card)}`; this.kept.delete(a.id); this.checklist = null; } else { this.hidden.delete(a.id); this.note = "answer failed"; }
-      cx.notify();
-    });
+    this.call(a.id, kind, label, argv, cx, (ok) => { if (ok) { this.kept.delete(a.id); this.checklist = null; } else this.hidden.delete(a.id); });
   }
+
+  // v asks the agent behind the ask for a picture (on file first, then sent); r starts a replacement for a gone asker. Neither answers the ask.
+  picture(a, type, cx) { this.call(a.id, type, "", type === "visual" ? visualArgv(a) : replaceArgv(a), cx); }
 
   // one reminder to the asker of an answer not applied 10 minutes after it was sent; never on a timer
-  // v asks the agent behind the ask for a picture (on file first, then sent); r starts a replacement for a gone asker. Neither answers the ask.
-  picture(a, type, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
-    const ok = type === "visual" ? "picture requested" : "replacement started", bad = type === "visual" ? "request failed" : "no replacement started";
-    perform({ type: "post", argv: type === "visual" ? visualArgv(a) : replaceArgv(a) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? ok : bad; cx.notify(); });
-  }
-
   nudge(a, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
-    if (!a.notPickedUp) { this.note = "answer is not overdue"; return cx.notify(); }
-    perform({ type: "post", argv: nudgeArgv(a) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? "reminder sent" : "asker busy or gone: nothing sent"; cx.notify(); });
+    if (!a.notPickedUp) { this.say(a.id, "fail", "that answer is not overdue yet: a reminder works once it has waited 10 minutes"); return cx.notify(); }
+    this.call(a.id, "nudge", "", nudgeArgv(a), cx);
   }
 
   // a note alone: recorded and sent to the asker, the ask stays open
-  sendNote(a, text, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
-    perform({ type: "post", argv: noteArgv(a, text) }, { run, exec, pane: null }).then((x) => {
-      if (x?.code === 0) { this.sent.add(a.id); this.note = "note sent"; } else this.note = "note failed";
-      cx.notify();
-    });
-  }
+  sendNote(a, text, cx) { this.call(a.id, "note", "", noteArgv(a, text), cx, (ok) => { if (ok) this.sent.add(a.id); }); }
 
   // a message to the agent behind an ask (its thread) or to the desk; the run files take it first, then it is delivered
-  sendMessage(thread, text, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
-    perform({ type: "post", argv: messageArgv(thread, text) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? "message sent" : "message failed"; this.read(cx); });
-  }
+  sendMessage(thread, text, cx) { this.call(thread, "message", "", messageArgv(thread, text), cx, () => this.read(cx)); }
 
   // while the text input or the batch checklist is open, every key goes to it
   modal(a, k, cx) {
@@ -135,16 +134,16 @@ export default class AgentsView extends View {
       if (r.type === "send") {
         this.input = null;
         if (i.mode === "note") this.sendNote(a, r.text, cx);
-        else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx);
+        else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx, "other");
         else this.sendMessage(i.thread, r.text, cx);
       }
-      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.input = null; this.note = "note kept for your pick"; }
+      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.input = null; this.say(a.id, "ok", "note kept: it goes with your pick"); }
       else if (r.type === "cancel") this.input = null;
       else this.input = r.input;
     } else {
       const r = checklistStep(a, this.checklist, k);
       if (r.type === "cancel") this.checklist = null;
-      else if (r.type === "send") this.send(a, answerArgv(a, r.text, { key: r.key, only: r.only, note: this.kept.get(a.id) }), cx);
+      else if (r.type === "send") this.send(a, answerArgv(a, r.text, { key: r.key, only: r.only, note: this.kept.get(a.id) }), cx, "pick", "your landing choice");
       else this.checklist = { ...r, id: a.id };
     }
     cx.notify();
@@ -205,6 +204,9 @@ export default class AgentsView extends View {
       .child(div().text_size(12).text_color(t.muted).child(label)).child(mono(11, red ? t.blocked : t.dim, String(count)));
   }
 
+  // the status of the last key on this ask / thread: pending, ok or failed, in one line
+  statusLine(t, st) { return sans(12, st.tone === "fail" ? t.blocked : st.tone === "ok" ? t.done : t.working, st.text).w_full().flex_none().pt(6); }
+
   empty(t, text) { return div().w_full().flex_none().px(14).py(4).text_size(13).text_color(t.dim).child(text); }
 
   label(t, text) { return div().w_full().flex_none().px(14).pt(8).text_size(12).text_color(t.dim).child(text); }
@@ -217,6 +219,7 @@ export default class AgentsView extends View {
   ask(t, a, posText) {
     const r = { key: `ask:${a.id}` }, sel = true;
     const v = askView(a, this.picks.get(a.id) ?? {}, this.armed);
+    const st = this.status.get(a.id);
     const el = v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
       .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, v.card)).child(sans(12, t.muted, v.kind))
         .when(!!posText, (e) => e.child(sans(11, t.dim, `${posText} ‹ ›`)))
@@ -232,6 +235,7 @@ export default class AgentsView extends View {
       .when(!!v.visual?.ready, (e) => e.child(h_flex().id(`${r.key}:picture`).w_full().pt(8).gap(8).items_center()
         .on_click((_e, cx) => this.act(a, askKeyAction(a, "v", null, Date.now()), cx))
         .child(sans(13, t.accent, "open picture")).child(this.keycap(t, "v")).when(this.onPicture(a), (e) => e.child(sans(11, t.done, "↵")).child(sans(11, t.dim, "tab: options"))).when(this.onPicture(a), (e) => e.border_1().border_color(t.accent).rounded(6).px(8).h(ROW))))
+      .when(!!st, (e) => e.child(this.statusLine(t, st)))
       .when(v.gone, (e) => e.child(h_flex().w_full().pt(8).gap(8).items_center()
         .child(sans(12, t.blocked, "the agent behind this ask is gone")).when(v.replaceable, (e) => e.child(sans(12, t.muted, "start a replacement with this ask as its brief")).child(this.keycap(t, "r")))
         .when(!v.replaceable, (e) => e.child(sans(12, t.muted, "press v for a picture, then start a replacement")))))
@@ -351,17 +355,20 @@ export default class AgentsView extends View {
       .child(this.line(t, byKey.get("desk"), [vm.desk.name, newDesk ? `${newDesk} new` : "", vm.desk.state], tone(vm.desk.state)))
       .children(narrow ? [...(nl.current ? laneRows(nl.current, true) : []), ...(nl.others ? [sans(11, t.dim, nl.others).w_full().flex_none().px(14).pt(8)] : [])] : vm.lanes.flatMap((l) => laneRows(l, false)));
     // below: follows the selected row: the desk thread, one ask with its thread, an answered ask with its thread, or the empty inbox
+    // an answered ask leaves the open list at once: its status stays on screen until the owner acts on something else
+    const shown = pane.kind === "ask" ? pane.ask.id : pane.kind === "desk" ? "desk" : pane.kind === "answered" ? pane.thread : null;
+    const away = this.recent && this.recent !== shown ? this.status.get(this.recent) : null;
     const right = v_flex().w_full().flex_none().min_w(0).gap(4)
-      .child(...(pane.kind === "desk"
-        ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, "Desk")).child(sans(12, t.dim, "General messages · / to write · ↵ shows the terminal")).child(threadOf("desk"))]
+      .children([...(away ? [v_flex().w_full().px(14).child(this.statusLine(t, away))] : []), ...(pane.kind === "desk"
+        ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, "Desk")).child(sans(12, t.dim, "General messages · / to write · ↵ shows the terminal")).when(this.status.has("desk"), (e) => e.child(this.statusLine(t, this.status.get("desk")))).child(threadOf("desk"))]
         : pane.kind === "ask"
           ? [this.ask(t, pane.ask, `ask ${pane.batch.asks.indexOf(pane.ask) + 1} of ${pane.batch.asks.length}`), v_flex().w_full().px(14).child(threadOf(pane.thread))]
           : pane.kind === "answered"
             ? [v_flex().w_full().px(14).py(10).gap(4).child(sans(14, t.foreground, pane.answered.title)).child(sans(12, t.muted, `You answered: ${String(pane.answered.pick).split("\n").join(" · ")}`))
-              .child(sans(12, t.dim, `sent ${pane.answered.sent ? "✓" : "–"} · received ${pane.answered.received ? "✓" : "–"} · done ${pane.answered.done ? "✓" : "–"}`)).child(threadOf(pane.thread))]
+              .child(sans(12, t.dim, `sent ${pane.answered.sent ? "✓" : "–"} · received ${pane.answered.received ? "✓" : "–"} · done ${pane.answered.done ? "✓" : "–"}`)).when(this.status.has(pane.thread), (e) => e.child(this.statusLine(t, this.status.get(pane.thread)))).child(threadOf(pane.thread))]
             : vm.batches.length
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
-              : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))]));
+              : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))])]);
     // stacked at every width: the batch list on top, the open ask below it at full width; the message box is the bar under the scrolling body
     const asksBody = [v_flex().w_full().flex_none().gap(4).child(left).child(right)];
     // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows

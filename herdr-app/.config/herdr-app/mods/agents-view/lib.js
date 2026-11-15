@@ -555,6 +555,24 @@ export function selectTarget(r, deskProject) {
   return null;
 }
 
+// The one-line status of a key press, shown in the open ask (or the answered row, or the desk) in the same redraw as the key: what was pressed,
+// then what the call did. A failure says so in plain words with what to do; nothing is silent. kind: pick | other | done | visual | replace | message | nudge | note.
+const PRESSED = { pick: "sending your pick", other: "sending your idea", done: "marking it done", visual: "asking the agent for a picture", replace: "starting a replacement", message: "sending your message", nudge: "nudging the asker", note: "sending your note" };
+const DONE = { pick: "sent to the agent", other: "your idea sent: the agent applies it or replies below", done: "marked done", visual: "picture requested: it shows here as 'open picture' when the agent has built it", replace: "replacement started", message: "message sent: delivered when the terminal is free", nudge: "nudged: the asker has a reminder", note: "note sent" };
+export const pressedText = (kind, label = "") => `${PRESSED[kind] ?? "working"}${label ? `: ${label}` : ""}…`;
+export const doneText = (kind, label = "") => (kind === "pick" && label ? `picked ${label}: ${DONE.pick}` : DONE[kind] ?? "done");
+// res = { code, stderr } of the work call, or null / no code when it could not run at all
+export function failText(kind, res) {
+  const err = String(res?.stderr ?? "").trim(), first = err.split("\n").find((l) => l.trim())?.trim() ?? "";
+  const what = { pick: "your pick", other: "your idea", done: "marking it done", visual: "the picture request", replace: "the replacement", message: "your message", nudge: "the nudge", note: "your note" }[kind] ?? "that";
+  if (res == null || typeof res.code !== "number") return `${what} did not run${first ? ` (${first})` : ""}: is the work plugin installed? run /plugin update, then press the key again`;
+  if (res.code === 126 || res.code === 127 || /no such script|command not found|unknown (verb|command)|usage:/i.test(err)) return `your plugin is older than this panel (${first || `exit ${res.code}`}): run /plugin update, then press the key again`;
+  if (/not open|not waiting to be applied|already has a replacement|already applied/i.test(err)) return `${what} was not sent: that ask is already answered or closed`;
+  if (/less than 10 minutes/i.test(err)) return `too soon to nudge: ${first.replace(/^ask: /, "")}`;
+  if (/did not take it|busy or gone|is gone|no such terminal|still running|cannot tell whether/i.test(err)) return `${what} was not sent: the agent is busy or gone; try again in a moment, or press r to start a replacement`;
+  return `${what} failed (exit ${res.code})${first ? `: ${first.replace(/^ask: /, "")}` : ""}: check the terminal or run work ask pending`;
+}
+
 // Runs one action through io = { run, exec, pane }. Nothing happens without a right-hand pane to show in.
 export async function perform(a, io) {
   if (a.type === "post") return io.exec("work", a.argv);

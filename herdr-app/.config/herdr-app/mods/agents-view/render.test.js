@@ -11,7 +11,7 @@ const mods = {
   "gpui-kit": `${chain} export class View {} export const div = () => chain();`,
   "gpui-base": `${chain} export const v_flex = () => chain(); export const h_flex = () => chain();`,
   herdr: `const chain = () => new Proxy(function () {}, { get: () => chain(), apply: () => chain() });
-    export const exec = async () => ({ stdout: "" }), run = () => {}, props = () => ({}), panes = () => [], focused = () => null, readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {};
+    export const exec = async (c, a) => (globalThis.__exec ? globalThis.__exec(c, a) : { code: 0, stdout: "", stderr: "" }), run = () => {}, props = () => ({}), panes = () => [], focused = () => null, readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {};
     export const terminals = () => globalThis.__terms ?? [], theme = () => new Proxy({}, { get: () => "#000" });`,
 };
 const hooks = `export const resolve = (s, c, next) => ({ ${Object.keys(mods).map((k) => `"${k}": 1`).join(", ")} })[s] ? { url: "stub:" + s, shortCircuit: true } : next(s, c);
@@ -173,4 +173,71 @@ test("render: stacked at wide and narrow widths: the lanes, then the open ask wi
     if (width === 900) for (const l of ["ONE KEY", "YOUR HANDS", "NOT READY"]) assert.ok(at(l) >= 0 && at(l) < ask, `${l} listed above the ask`);
     else has(d, "ONE KEY 1 · YOUR HANDS 1 · NOT READY 1");
   }
+});
+
+// ---- every key says at once that it was taken (kuchbhi#1115): pressed, then confirmed or failed, in the open ask, with the call's exit code and stderr kept
+const kcx = { notify() {}, stop_propagation() {} };
+const calls = [];
+const execWith = (fn) => { calls.length = 0; globalThis.__exec = async (c, a) => { calls.push([c, ...a]); return fn(c, a); }; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const press = (v, k) => v.key({ keystroke: k }, kcx);
+const typed = (v, text) => { for (const ch of text) press(v, ch); };
+const NEVER = () => new Promise(() => {});
+const OLD = { code: 2, stdout: "", stderr: "usage: ask.sh ask <card> --file <question.md> ..." };
+
+const answered = (id, ago) => ({ ts: iso(ago), event: "answered", id, card: `o/r#${id.replace(/\D/g, "")}`, text: "Redis", key: "other", by: "owner", via: "screen" });
+const KEYS = [
+  { name: "a letter", asks: [ASK("a-1")], keys: ["a"], pressed: /^sending your pick: a…$/, ok: /^picked a: sent to the agent$/, argv: ["ask", "answer", "a-1"] },
+  { name: "Enter", asks: [ASK("a-1")], keys: ["enter"], pressed: /^sending your pick: a…$/, ok: /^picked a: sent to the agent$/, argv: ["ask", "answer", "a-1"] },
+  { name: "o, your own idea", asks: [ASK("a-1")], keys: ["o", ..."Valkey".split(""), "enter"], pressed: /^sending your idea…$/, ok: /^your idea sent: the agent applies it or replies below$/, argv: ["ask", "answer", "a-1"] },
+  { name: "v, a picture", asks: [ASK("a-1")], keys: ["v"], pressed: /^asking the agent for a picture…$/, ok: /^picture requested: /, argv: ["ask", "visual", "a-1"] },
+  { name: "/, a message", asks: [ASK("a-1")], keys: ["/", "h", "i", "enter"], pressed: /^sending your message…$/, ok: /^message sent: delivered when the terminal is free$/, argv: ["ask", "message", "a-1"] },
+  { name: "x, do it yourself", asks: [ASK("a-9", { kind: "you", batch_key: "hands:o/r#1", options: [], body: "Do it.\n" })], keys: ["x"], pressed: /^marking it done…$/, ok: /^marked done$/, argv: ["ask", "answer", "a-9"] },
+  { name: "r, a replacement", asks: [ASK("a-8", { terminal: "card-gone" }), { ts: iso(9), event: "visual_requested", id: "a-8" }], keys: ["r"], pressed: /^starting a replacement…$/, ok: /^replacement started$/, argv: ["ask", "replace", "a-8"] },
+  { name: ". a nudge", asks: [ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)], answeredRow: "answered:a-5", keys: ["."], pressed: /^nudging the asker…$/, ok: /^nudged: the asker has a reminder$/, argv: ["ask", "nudge", "a-5"] },
+];
+const start = (c) => { const v = draw({ asksText: lines(...c.asks), showRun: true }); select(v, c.answeredRow ?? keyOf(v, "batch")); return v; };
+const drive = (v, c) => { for (const k of c.keys) press(v, k); return v; };
+
+for (const c of KEYS) {
+  test(`key ${c.name}: the line says it was taken in the same redraw`, () => {
+    execWith(NEVER); const v = drive(start(c), c);
+    has(paint(v), c.pressed);
+    assert.deepEqual(calls[0]?.slice(1, 1 + c.argv.length), c.argv);
+  });
+  test(`key ${c.name}: the confirmed line when the call exits 0`, async () => {
+    execWith(async () => ({ code: 0, stdout: "", stderr: "" })); const v = drive(start(c), c); await tick();
+    const d = paint(v); has(d, c.ok); lacks(d, c.pressed); assert.equal(v.last.code, 0);
+  });
+  test(`key ${c.name}: an older plugin is named, with the way out; the exit code and stderr are kept`, async () => {
+    execWith(async () => OLD); const v = drive(start(c), c); await tick();
+    has(paint(v), /your plugin is older than this panel .*run \/plugin update/);
+    assert.equal(v.last.code, 2); assert.match(v.last.stderr, /^usage: ask\.sh/); assert.equal(v.last.argv[0], "ask");
+  });
+  test(`key ${c.name}: a work that cannot run is said, never silent`, async () => {
+    execWith(async () => { throw new Error("work: no such script"); }); const v = drive(start(c), c); await tick();
+    has(paint(v), /did not run \(work: no such script\): is the work plugin installed\? run \/plugin update/);
+    assert.equal(v.last.code, null); assert.match(v.last.stderr, /no such script/);
+  });
+  test(`key ${c.name}: a busy or gone agent is said, with what to do`, async () => {
+    execWith(async () => ({ code: 1, stdout: "", stderr: "send: card-r-1 did not take it (busy or gone)" })); const v = drive(start(c), c); await tick();
+    has(paint(v), /the agent is busy or gone; try again in a moment, or press r to start a replacement/); assert.equal(v.last.code, 1);
+  });
+}
+
+test("key .: an answer that is not overdue says so and runs nothing", async () => {
+  execWith(async () => ({ code: 0, stdout: "", stderr: "" }));
+  const v = draw({ asksText: lines(ASK("a-6", { card: "o/r#6" }), answered("a-6", 2)), showRun: true }); select(v, "answered:a-6"); press(v, "."); await tick();
+  has(paint(v), /^that answer is not overdue yet: a reminder works once it has waited 10 minutes$/); assert.equal(calls.length, 0);
+});
+test("key .: the nudge refused by the script (too soon) says so in words", async () => {
+  execWith(async () => ({ code: 2, stdout: "", stderr: "ask: a-5 was answered less than 10 minutes ago: nudge in 3 minute(s)" }));
+  const v = draw({ asksText: lines(ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)), showRun: true }); select(v, "answered:a-5"); press(v, "."); await tick();
+  has(paint(v), /^too soon to nudge: a-5 was answered less than 10 minutes ago: nudge in 3 minute\(s\)$/);
+});
+test("key: the status shows under the answered row's states and on the desk thread", async () => {
+  execWith(async () => ({ code: 0, stdout: "", stderr: "" }));
+  const v = draw({ asksText: lines(ASK("a-5", { card: "o/r#5" }), answered("a-5", 40)), showRun: true });
+  select(v, "answered:a-5"); press(v, "."); await tick(); const a = paint(v); has(a, /^nudged: /); has(a, /^sent ✓ · received – · done –$/);
+  select(v, "desk"); press(v, "/"); typed(v, "hello"); press(v, "enter"); await tick(); has(paint(v), /^message sent: /);
 });
