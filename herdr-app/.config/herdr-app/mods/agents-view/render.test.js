@@ -21,7 +21,8 @@ register(stub(hooks));
 const { default: AgentsView } = await import(process.env.AV_MAIN ?? "./main.js");
 
 const iso = (min) => new Date(Date.now() - min * 60_000).toISOString();
-const asks = [1, 2].map((n) => JSON.stringify({ ts: iso(5), event: "ask", id: `a-${n}`, card: `o/r#${n}`, epic: "o/r#1", from: "worker", question: "Which?", body: "Which?\n\n1. Which?\n   a) A => a\n   b) B => b\n", options: [{ q: 1, key: "a", label: "A", then: "a" }, { q: 1, key: "b", label: "B", then: "b" }], kind: "decide", title: "Pick one" })).join("\n");
+const asks = [1, 2].map((n) => JSON.stringify({ ts: iso(5), event: "ask", id: `a-${n}`, card: `o/r#${n + 2}`, epic: `o/r#${n * 10}`, from: "worker", question: "Which?", body: "Which?\n\n1. Which?\n   a) A => a\n   b) B => b\n", options: [{ q: 1, key: "a", label: "A", then: "a" }, { q: 1, key: "b", label: "B", then: "b" }], kind: "decide", title: "Pick one" })).join("\n");
+const stuck = JSON.stringify([{ terminal: "card-r-3", card: "o/r#3", kind: "blocked", since: iso(60) }]);
 const term = (o) => ({ address: "t1", name: "card-r-3", live: true, labels: { card: "o/r#3", role: "worker" }, state: "working", kind: null, msg: null, statusMs: null, where: null, ...o });
 const terms = [term({}), term({ address: "t2", name: "lead-r-1", labels: { role: "lead", epic: "o/r#1" } }), term({ address: "t3", name: "desk", labels: { role: "desk" } })];
 
@@ -29,7 +30,7 @@ const draw = ({ asksText, showRun, terminals = terms }) => {
   globalThis.__terms = terminals;
   const v = new AgentsView();
   v.init({}, { focus_handle: () => ({ focus() {} }), timer: { every() {} }, notify() {} });
-  v.files = { asks: asksText, events: "", usage: null, upNext: null, settings: null, closed: null, stuck: null };
+  v.files = { asks: asksText, events: "", usage: null, upNext: null, settings: null, closed: null, stuck: terminals.length ? stuck : null };
   v.showRun = showRun;
   assert.doesNotThrow(() => v.render({ notify() {} }));
   return v;
