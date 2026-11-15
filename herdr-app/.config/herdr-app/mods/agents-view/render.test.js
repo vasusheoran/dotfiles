@@ -81,3 +81,10 @@ test("render: an answered ask shows sent, received, done and not picked up", () 
   assert.equal(v.model().vm.answered.length, 2);
   assert.deepEqual(v.model().vm.answered.map((a) => [a.id, a.sent, a.received, a.done, a.notPickedUp]), [["a-5", true, false, false, true], ["a-6", true, true, false, false]]);
 });
+
+// AV_ASKS=<asks.jsonl> node --test render.test.js: renders a real run file, every row selected, narrow and wide
+test("render: the run file named by AV_ASKS", { skip: !process.env.AV_ASKS }, async () => {
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(process.env.AV_ASKS, "utf8");
+  for (const width of [null, 300]) for (const showRun of [false, true]) { const v = draw({ asksText: text, showRun }); v.width = width; eachRow(v, `file ${width} ${showRun}`); }
+});
