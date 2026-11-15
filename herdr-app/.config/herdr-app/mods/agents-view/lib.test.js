@@ -238,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], askGroups: [], runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -499,7 +499,7 @@ test("askKeyAction: in a 2-question ask the letter picks within the selected que
   assert.deepEqual(askKeyAction(a, "a", null, NOW), { type: "pick", q: 1, text: "1a: yes" });
   assert.deepEqual(askKeyAction(a, "a", null, NOW, 2), { type: "pick", q: 2, text: "2a: now" });
   assert.deepEqual(askKeyAction(a, "b", null, NOW, 2), { type: "pick", q: 2, text: "2b: later" });
-  assert.deepEqual(askKeyAction(a, "x", null, NOW), { type: "post", text: "Done." });
+  assert.equal(askKeyAction(a, "x", null, NOW), null); // never a bare Done. on an ask with options (kuchbhi#1115)
   assert.equal(askKeyAction(a, "c", null, NOW, 2), null);
 });
 
@@ -806,7 +806,7 @@ test("acceptRecommended: a merge ask arms first, the second Enter posts", () => 
 
 test("acceptRecommended: a many-question ask posts one line per question once each has a recommendation", () => {
   const o = [{ q: 1, key: "a", label: "yes (Recommended)" }, { q: 1, key: "b", label: "no" }, { q: 2, key: "a", label: "now" }, { q: 2, key: "b", label: "later (Recommended)" }];
-  assert.deepEqual(acceptRecommended(recAsk({ options: o }), null, NOW), { type: "post", text: "1a: yes (Recommended)\n2b: later (Recommended)" });
+  assert.deepEqual(acceptRecommended(recAsk({ options: o }), null, NOW), { type: "post", text: "1a: yes (Recommended)\n2b: later (Recommended)", key: "1a,2b" });
   assert.equal(acceptRecommended(recAsk({ options: o.slice(0, 3) }), null, NOW), null);
 });
 

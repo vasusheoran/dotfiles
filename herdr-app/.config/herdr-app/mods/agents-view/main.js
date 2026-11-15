@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint } from "./lib.js";
+import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -76,7 +76,7 @@ export default class AgentsView extends View {
       const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
       const text = composeAnswer(a, picks);
       if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
-      r = { type: "post", text };
+      r = { type: "post", text, key: composeKey(a, picks) };
     }
     if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
     else if (r.type === "open") perform(r, { run, exec, pane: null });
@@ -93,6 +93,13 @@ export default class AgentsView extends View {
       if (x?.code === 0) { this.note = `answered ${shortCard(a.card)}`; this.kept.delete(a.id); this.checklist = null; } else { this.hidden.delete(a.id); this.note = "answer failed"; }
       cx.notify();
     });
+  }
+
+  // one reminder to the asker of an answer not applied 10 minutes after it was sent; never on a timer
+  nudge(a, cx) {
+    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
+    if (!a.notPickedUp) { this.note = "answer is not overdue"; return cx.notify(); }
+    perform({ type: "post", argv: nudgeArgv(a) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? "reminder sent" : "asker busy or gone: nothing sent"; cx.notify(); });
   }
 
   // a note alone: recorded and sent to the asker, the ask stays open
@@ -134,6 +141,9 @@ export default class AgentsView extends View {
     const cur = rows[this.selIdx];
     if ((this.noteBox || this.checklist) && cur?.section === "asks" && cur.id === (this.noteBox ?? this.checklist).id) { cx.stop_propagation(); return this.modal(cur.row, k, cx); }
     this.noteBox = null; this.checklist = null;
+    if (cur?.section === "answered") { // an answer the asker has not picked up: the owner's key sends one reminder
+      if (k === ".") { cx.stop_propagation(); return this.nudge(cur.row, cx); }
+    }
     if (k === "enter" && cur?.section === "asks") {
       cx.stop_propagation(); this.note = "";
       return this.act(cur.row, acceptRecommended(cur.row, this.armed, Date.now()), cx);
@@ -183,13 +193,16 @@ export default class AgentsView extends View {
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
         .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
     if (!sel) return el;
-    // title, then the options, then the plan or PR link, then the body
-    return el      .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
+    // title, what is true today and after, the options with what each does next, then the plan or PR link, then the body
+    return el
+      .children(v.evidence.map(([k, text]) => h_flex().w_full().gap(8).items_baseline().pt(2).child(sans(11, t.dim, k).w(56).flex_none()).child(sans(12, t.muted, text).flex_1().min_w(0))))
+      .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
         .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
         .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
           .bg(o.armed ? t.accent : t.raised).when(o.picked, (e) => e.border_1().border_color(t.accent))
           .on_click((_e, cx) => { this.q = q.q; this.askKey(a, o.key, cx); })
-          .child(this.keycap(t, o.key)).child(sans(13, o.armed ? t.background : t.foreground, o.label).flex_1().min_w(0).truncate())
+          .child(this.keycap(t, o.key)).child(sans(13, o.armed ? t.background : t.foreground, o.label).when(!o.then, (e) => e.flex_1()).min_w(0).truncate())
+          .when(!!o.then, (e) => e.child(sans(11, o.armed ? t.background : t.dim, `→ ${o.then}`).flex_1().min_w(0).truncate()))
           .when(o.rec && !o.armed, (e) => e.child(sans(11, t.done, "↵").flex_none()))
           .when(o.armed, (e) => e.child(sans(11, t.background, "press again to send")))))))
       .when(this.checklist?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
@@ -205,6 +218,17 @@ export default class AgentsView extends View {
         .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
       .when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
       .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
+  }
+
+  // an answered ask until it is applied: sent, received, done; ten minutes unapplied reads "not picked up" and the . key nudges
+  answered(t, r) {
+    const a = r.row, sel = r.key === this.sel, mark = (on) => (on ? "✓" : "–");
+    return v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
+      .on_click(() => this.select(r))
+      .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, shortCard(a.card))).child(sans(13, t.foreground, a.title).flex_1().min_w(0).truncate()).child(mono(12, t.muted, ageText(a.ageMs))))
+      .child(h_flex().w_full().gap(10).items_baseline().child(sans(12, t.muted, `sent ${mark(a.sent)} · received ${mark(a.received)} · done ${mark(a.done)}`))
+        .when(a.notPickedUp, (e) => e.child(sans(12, t.blocked, "not picked up")).when(sel, (e2) => e2.child(this.keycap(t, ".")))))
+      .when(sel, (e) => e.child(sans(12, t.dim, `You answered: ${String(a.pick).split("\n").join(" · ")}`)));
   }
 
   // one epic with asks, as one line: counts by kind and the oldest age; the open epic lists its asks under it
@@ -266,7 +290,9 @@ export default class AgentsView extends View {
     ];
     const body = [
       this.section(t, "Needs you", vm.asks.length, vm.asksOld),
-      ...(waiting ? [...asksBody, this.summary(t, byKey.get("summary:running"))] : [this.empty(t, "No questions waiting")]),
+      ...(waiting ? asksBody : [this.empty(t, "No questions waiting")]),
+      ...(vm.answered.length ? [this.label(t, "Answered, not applied yet"), ...vm.answered.map((a) => this.answered(t, byKey.get(`answered:${a.id}`)))] : []),
+      ...(waiting ? [this.summary(t, byKey.get("summary:running"))] : []),
       ...(!waiting || this.showRun ? runBody : []),
       ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
     ];

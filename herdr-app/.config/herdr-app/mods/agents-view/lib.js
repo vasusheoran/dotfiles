@@ -23,12 +23,38 @@ const sameTarget = (a, b) => String(a.target?.repo ?? "").toLowerCase() === Stri
 // the question's first line without markup or numbering: the title of a row from before --title
 export const plainTitle = (q) => firstLine(q, 200).replace(/[*_`#]/g, "").replace(/^\s*\d+\.\s+/, "").replace(/^\s*In plain words:\s*/, "").trim();
 
+// kuchbhi#1115: a lane from the kind alone, as asks.jq's `lane` has it (decide and money included; no kind means decide)
+export const laneOf = (kind) => ({ merge: "key", you: "hands", roll: "hands", money: "hands", groom: "groom" })[kind ?? "decide"] ?? "look";
+const END_EVENTS = new Set(["answered", "applied", "resumed", "closed"]);
+const NOT_PICKED_UP_MS = 10 * 60_000;
+
+// Asks that were answered and not applied or closed, oldest answer first: what the owner sent (the pick), whether the asker received it
+// (a `delivered` event), and whether it is done (applied, which drops it). Answered 10 minutes ago and not applied: notPickedUp.
+export function answeredAsks(lines, nowMs) {
+  const asks = new Map(), ev = new Map();
+  for (const l of lines) {
+    const k = askKey(l);
+    if (k == null) continue;
+    if (l.event === "ask") { if (!asks.has(k)) asks.set(k, l); }
+    else ev.set(k, [...(ev.get(k) ?? []), l]);
+  }
+  const out = [];
+  for (const [k, a] of asks) {
+    const x = ev.get(k) ?? [], an = x.find((e) => e.event === "answered");
+    if (!an || x.some((e) => e.event === "applied" || e.event === "resumed" || e.event === "closed") || (a.batch != null && a.batch !== k)) continue;
+    const at = Date.parse(an.ts);
+    out.push({ id: k, card: a.card, epic: a.epic ?? null, title: a.title ?? plainTitle(a.question), pick: an.text, key: an.key ?? null, answeredAt: an.ts, ageMs: nowMs - at,
+      sent: true, received: x.some((e) => e.event === "delivered"), done: false, notPickedUp: nowMs - at > NOT_PICKED_UP_MS, lane: laneOf(a.kind), kind: a.kind ?? "decide", from: roleOf(a) });
+  }
+  return out.sort((a, b) => Date.parse(a.answeredAt) - Date.parse(b.answeredAt));
+}
+
 export function openAsks(lines, nowMs, closed = []) {
   const open = new Map(), seq = [], noted = new Set();
   for (const l of lines) {
     const k = askKey(l);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
-    else if (k != null && (l.event === "answered" || l.event === "applied" || l.event === "resumed")) { open.delete(k); noted.delete(k); }
+    else if (k != null && END_EVENTS.has(l.event)) { open.delete(k); noted.delete(k); }
     else if (k != null && l.event === "noted") noted.add(k);
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
@@ -43,7 +69,8 @@ export function openAsks(lines, nowMs, closed = []) {
         id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
         ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: roleOf(l),
         options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : Array.isArray(l.options) ? l.options : [],
-        kind: l.kind ?? "decide", plan: l.plan ?? null, body: l.body ?? "", targets, noteSent: noted.has(askKey(l)),
+        kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: l.body ?? "", targets,
+        today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
       };
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -57,7 +84,7 @@ const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null, pick = false, okey = null;
-  if (key === "x" && ask.kind === "you") text = "Done."; // x is reserved for you asks; elsewhere it is an option key
+  if (key === "x" && ask.kind === "you" && !ask.options.length) text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
   else if (key === "b" && ask.targets?.length > 1) return { type: "checklist" }; // a batched merge ask: b picks which PRs
   else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; okey = o.key; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
@@ -67,6 +94,9 @@ export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   if (armed && armed.id === ask.id && armed.key === key && armed.q === q && nowMs - armed.at <= DOUBLE_PRESS_MS) return done;
   return { type: "arm", armed: { id: ask.id, key, q, at: nowMs }, body: ask.body };
 }
+
+// The `--key` of a composed answer: one <q><key> per question, joined by commas; null until every question has a pick.
+export const composeKey = (ask, picks) => { const qs = questionsOf(ask); return qs.length && qs.every((q) => picks[q]) ? qs.map((q) => picks[q].split(":")[0]).join(",") : null; };
 
 const questionsOf = (ask) => [...new Set(ask.options.map((o) => o.q))].sort((a, b) => a - b);
 
@@ -87,7 +117,7 @@ export function acceptRecommended(ask, armed, nowMs) {
   if (NEEDS_SECOND_KEY.has(ask.kind) && !(armed && armed.id === ask.id && armed.key === "enter" && nowMs - armed.at <= DOUBLE_PRESS_MS)) {
     return { type: "arm", armed: { id: ask.id, key: "enter", q: 0, at: nowMs }, body: ask.body };
   }
-  return { type: "post", text: qs.map((q) => `${q}${rec[q]}: ${ask.options.find((o) => o.q === q && o.key === rec[q]).label}`).join("\n") };
+  return { type: "post", text: qs.map((q) => `${q}${rec[q]}: ${ask.options.find((o) => o.q === q && o.key === rec[q]).label}`).join("\n"), key: qs.map((q) => `${q}${rec[q]}`).join(",") };
 }
 
 // The checklist of a batched merge ask: state { cur, chosen: [target ids] }. j k move, space toggles, enter sends, escape cancels.
@@ -139,6 +169,8 @@ export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].include
 const askId = (ask) => (/^(a|legacy)-/.test(ask.id) ? ask.id : `legacy-${String(ask.url ?? ask.id).match(/(\d+)$/)?.[1] ?? ""}`);
 export const answerArgv = (ask, text, { key, note, only } = {}) => ["ask", "answer", askId(ask), "--text", text, "--via", "screen",
   ...(key ? ["--key", key] : []), ...(note ? ["--note", note] : []), ...(only?.length ? ["--only", only.join(",")] : [])];
+// The owner's reminder to an asker that has not picked its answer up.
+export const nudgeArgv = (ask) => ["ask", "nudge", askId(ask)];
 // A note alone: no text, no key, so it answers nothing.
 export const noteArgv = (ask, text) => ["ask", "answer", askId(ask), "--note", text, "--via", "screen"];
 
@@ -179,6 +211,7 @@ export function askView(ask, picks, armed) {
   const titles = questionTitles(ask.body);
   const qs = questionsOf(ask);
   return {
+    evidence: [["Today", ask.today], ["After", ask.after], ["Checked", ask.checked], ["Why you", ask.whyYou]].filter(([, v]) => v),
     card: shortCard(ask.card), kind: ask.kind, age: ageText(ask.ageMs), old: ask.ageMs > OLD_ASK_MS, title: ask.title, noteSent: ask.noteSent,
     // with a title of its own, the whole question is body; without one the first line is the title and the rest is body
     body: [ask.titled && ask.question.trim() !== ask.title ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
@@ -186,7 +219,7 @@ export function askView(ask, picks, armed) {
     targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}` })),
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
-      key: o.key, label: o.label, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
+      key: o.key, label: o.label, then: o.then ?? null, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
       armed: !!armed && armed.id === ask.id && armed.q === q && armed.key === o.key,
     })) })),
     status: qs.length > 1 ? `${qs.filter((q) => picks?.[q]).length} of ${qs.length} picked` : "",
@@ -329,7 +362,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, askGroups: askGroups(asks, titles), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
@@ -358,9 +391,11 @@ export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.r
 // `showRun` is set. A terminal in STUCK and in its epic group is selectable in both.
 export function flatRows(vm, { openEpic, showRun } = {}) {
   const groups = vm.askGroups ?? [], open = groups.find((g) => g.key === openEpic) ?? groups[0], waiting = vm.asks.length > 0;
+  const answered = (vm.answered ?? []).map((a) => ({ key: `answered:${a.id}`, section: "answered", address: null, id: a.id, row: a }));
   return [
     ...groups.flatMap((g) => [{ key: `epic:${g.key}`, section: "epic", address: null, id: null, row: g },
       ...(g === open ? g.asks.map((a) => ({ key: `ask:${a.id}`, section: "asks", address: null, id: a.id, row: a })) : [])]),
+    ...answered,
     ...(waiting ? [{ key: "summary:running", section: "summary", address: null, id: null, row: { line: runSummary(vm) } }] : []),
     ...(waiting && !showRun ? [] : [
       ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, id: null, row: r }))),
@@ -373,7 +408,7 @@ export function flatRows(vm, { openEpic, showRun } = {}) {
 }
 
 // The header's key hint for the selected row.
-export const footerHint = (section) => ({ asks: "↵ accept recommended · n note · v open", epic: "↵ open epic · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
+export const footerHint = (section) => ({ asks: "↵ accept recommended · n note · v open", answered: ". nudge an answer not picked up · j k move", epic: "↵ open epic · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
 // Enter on a row: show its terminal in the right-hand pane, or start the desk when there is none. Asks are not shown.
 export function selectTarget(r, cwd) {
