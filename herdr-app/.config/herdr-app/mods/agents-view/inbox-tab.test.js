@@ -182,8 +182,8 @@ test("lanesLine: the four lanes on one line, zeros included", () => {
   assert.equal(lanesLine(lanes.map((l) => ({ ...l, count: 0 }))), "One key 0 · Look 0 · Hands 0 · Not ready 0");
 });
 test("phoneBar: Picture, Own idea, Open; Open only with an agent behind the ask", () => {
-  assert.deepEqual(phoneBar(true).map((b) => [b.key, b.label]), [["v", "Picture"], ["o", "Own idea"], ["b", "Board"], ["g", "Open"]]);
-  assert.deepEqual(phoneBar(false).map((b) => b.key), ["v", "o", "b"]);
+  assert.deepEqual(phoneBar(true).map((b) => [b.key, b.label]), [["v", "Picture"], ["o", "Own idea"], ["B", "Board"], ["g", "Open"]]);
+  assert.deepEqual(phoneBar(false).map((b) => b.key), ["v", "o", "B"]);
 });
 
 // ---- the lower pane: one pane, kept; what is attached in it is swapped

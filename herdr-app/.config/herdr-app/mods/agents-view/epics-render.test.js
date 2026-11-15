@@ -141,14 +141,14 @@ test("the Inbox pane takes the keyboard once when its tab becomes active, never 
   globalThis.__props = {}; globalThis.__panes = []; globalThis.__focused = null;
 });
 const bOnly = () => lines({ ts: iso(2), event: "lead_status", epic: "o/r#2", text: "Waiting on CI" });
-test("b goes to the board: with none open the receipt says so and nothing runs (an ask with an option b keeps b for the option)", () => {
+test("capital B goes to the board: with none open the receipt says so and nothing runs", () => {
   globalThis.__runs = []; globalThis.__panes = []; globalThis.__spaces = [];
-  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "b");
+  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "B");
   has(paint(v), "no board open · ctrl-b b opens it"); assert.equal(globalThis.__runs.length, 0);
 });
 test("b with the board open: its space and tab are selected and the epic is handed over", () => {
   globalThis.__runs = []; globalThis.__panes = [{ pane: "pb", tab: "tb", mod: "zaksha-board" }]; globalThis.__spaces = [{ id: "sb", name: "Board", tabs: [{ id: "tb" }] }];
-  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "b");
+  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "B");
   assert.deepEqual(globalThis.__runs, [["space.select", { id: "sb" }], ["tab.select", { id: "tb" }]]); assert.equal(globalThis.__shared["zaksha-board.epic"], "o/r#2");
   globalThis.__panes = []; globalThis.__spaces = [];
 });
@@ -166,4 +166,25 @@ test("an epic with no ask: its overview, and a message goes to the epic thread",
 });
 test("every row selected in turn draws without throwing", () => {
   const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }), PART("a-1", 2, "Show prices?"), { ts: iso(2), event: "lead_status", epic: "o/r#2", text: "x" })); v.unfolded = true; eachRow(v, "epics");
+});
+
+test("B goes to the board even on an epic whose ask has a b option; the letter b stays an option", () => {
+  globalThis.__runs = []; globalThis.__panes = [{ pane: "pb", tab: "tb", mod: "zaksha-board" }]; globalThis.__spaces = [{ id: "sb", name: "Board", tabs: [{ id: "tb" }] }];
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); press(v, "b"); assert.deepEqual(globalThis.__runs, [], "b marks the part"); has(paint(v), "1b · 2 – · 3 –");
+  press(v, "B"); assert.deepEqual(globalThis.__runs, [["space.select", { id: "sb" }], ["tab.select", { id: "tb" }]]); has(v.drawn.length ? paint(v) : [], /B board/);
+  globalThis.__panes = []; globalThis.__spaces = [];
+});
+test("n adds a note to the current part; the submit carries one note per part", async () => {
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); execWith(() => ({ code: 0, stdout: "", stderr: "" }));
+  press(v, "n"); typed(v, "check the ads"); press(v, "enter"); assert.equal(calls.length, 0, "a part's note is kept, not sent"); has(paint(v), /Note on this part: check the ads/);
+  press(v, "a"); press(v, "n"); typed(v, "later"); press(v, "enter"); press(v, "left"); has(paint(v), /Note on this part: check the ads/);
+  press(v, "ctrl-enter"); await tick();
+  assert.equal(calls[0][calls[0].indexOf("--note") + 1], "1: check the ads · 2: later"); assert.equal(calls[0][calls[0].indexOf("--key") + 1], "1a,2a,3a");
+});
+test("o gives an own idea for the current part: it marks the part, nothing is sent, the submit sends it with key other", async () => {
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); execWith(() => ({ code: 0, stdout: "", stderr: "" }));
+  press(v, "right"); press(v, "o"); typed(v, "one strip"); press(v, "enter"); assert.equal(calls.length, 0);
+  const d = paint(v); has(d, "1 – · 2o · 3 –"); has(d, "question 3 of 3 ‹ ›");
+  press(v, "ctrl-enter"); await tick();
+  assert.equal(calls[0][calls[0].indexOf("--key") + 1], "other"); assert.match(calls[0][calls[0].indexOf("--text") + 1], /2 own idea: one strip/); assert.match(calls[0][calls[0].indexOf("--text") + 1], /^1a: /);
 });

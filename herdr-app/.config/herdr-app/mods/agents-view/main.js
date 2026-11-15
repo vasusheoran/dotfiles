@@ -7,7 +7,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
 import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
-  answerLine, boardStep, listWindow, partStep, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
+  answerLine, boardStep, listWindow, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
 const MONO = "JetBrains Mono";
@@ -33,7 +33,7 @@ export default class AgentsView extends View {
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
-    this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
+    this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
     this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
@@ -131,11 +131,11 @@ export default class AgentsView extends View {
   // a key on an open ask: post the answer, open its plan, or arm a merge/roll/money answer for its second key
   askKey(a, k, cx) {
     this.note = "";
-    if (k === "n" && !a.options.some((o) => o.key === "n")) { this.input = { mode: "note", id: a.id, text: this.kept.get(a.id) ?? "" }; return cx.notify(); }
+    if (k === "n" && !a.options.some((o) => o.key === "n")) { this.input = { mode: "note", id: a.id, q: this.q, text: (questionsOfAsk(a).length > 1 ? this.notes.get(a.id)?.[this.q] : this.kept.get(a.id)) ?? "" }; return cx.notify(); }
     if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.qSet = true; this.armed = null; return cx.notify(); }
     const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
     if (r && ["post", "arm", "pick"].includes(r.type) && a.options.some((o) => o.key === k)) this.flashOn(a, k, cx);
-    if (r?.type === "other") { this.input = { mode: "other", id: a.id, text: "" }; return cx.notify(); }
+    if (r?.type === "other") { this.input = { mode: "other", id: a.id, q: this.q, text: "" }; return cx.notify(); }
     return this.act(a, r, cx);
   }
 
@@ -153,7 +153,7 @@ export default class AgentsView extends View {
       if (nx.q) this.q = nx.q; // marked: on to the next part
       this.say(a.id, "ok", marked === total ? `marked ${marked} of ${total} · ↵ sends the answer` : `marked ${marked} of ${total} · ctrl-↵ takes the recommended for the rest`); return cx.notify();
     }
-    if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx, r.text === "Done." && a.kind === "you" ? "done" : "pick", r.text === "Done." ? "" : r.key ?? "");
+    if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: questionsOfAsk(a).length > 1 ? partNotes(a, this.notes.get(a.id)) || undefined : this.kept.get(a.id) }), cx, r.text === "Done." && a.kind === "you" ? "done" : "pick", r.text === "Done." ? "" : r.key ?? "");
     else if (r.type === "open") { this.say(a.id, "pending", "opening it…"); perform(r, { run, exec, pane: null }).then((x) => { this.last = { argv: ["open", r.target], code: x?.code, stderr: x?.stderr }; this.say(a.id, x?.code === 0 ? "ok" : "fail", x?.code === 0 ? "opened" : `could not open it${x?.stderr ? `: ${String(x.stderr).trim().split("\n")[0]}` : ""}`); cx.notify(); }, (e) => { this.last = { argv: ["open", r.target], code: null, stderr: String(e?.message ?? e) }; this.say(a.id, "fail", `could not open it: ${e?.message ?? e}`); cx.notify(); }); }
     else if (r.type === "arm") this.say(a.id, "pending", `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`);
     cx.notify();
@@ -198,17 +198,26 @@ export default class AgentsView extends View {
   // a message to the agent behind an ask (its thread) or to the desk; the run files take it first, then it is delivered
   sendMessage(thread, text, cx, to = null) { this.call(thread, "message", "", messageArgv(thread, text, to), cx, () => this.read(cx)); }
 
+  // a note or an own idea on one part of a several-part question: kept in the panel until the answer is submitted
+  keepPart(a, i, text, cx) {
+    if (i.mode === "note") { this.notes.set(a.id, { ...this.notes.get(a.id), [i.q]: text }); this.say(a.id, "ok", `note kept for part ${i.q}: it goes with the answer`); return cx.notify(); }
+    const picks = { ...this.picks.get(a.id), [i.q]: `${i.q}other: ${text}` }; this.picks.set(a.id, picks);
+    const qs = questionsOfAsk(a), nx = partStep(a, i.q, "right"); if (nx.q) this.q = nx.q;
+    this.say(a.id, "ok", `marked ${qs.filter((q) => picks[q]).length} of ${qs.length} · your own idea for part ${i.q}`); return cx.notify();
+  }
+
   // while the text input or the batch checklist is open, every key goes to it
   modal(a, k, cx) {
     if (this.input) {
       const i = this.input, r = inputStep(i, k);
       if (r.type === "send") {
         this.input = null;
+        if (i.mode !== "message" && questionsOfAsk(a).length > 1) return this.keepPart(a, i, r.text, cx);
         if (i.mode === "note") this.sendNote(a, r.text, cx);
         else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx, "other");
         else this.sendMessage(i.thread, r.text, cx, i.to);
       }
-      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.input = null; this.say(a.id, "ok", "note kept: it goes with your pick"); }
+      else if (r.type === "keep") { this.input = null; if (i.mode !== "message" && questionsOfAsk(a).length > 1) return this.keepPart(a, i, r.text, cx); this.kept.set(a.id, r.text); this.say(a.id, "ok", "note kept: it goes with your pick"); }
       else if (r.type === "cancel") this.input = null;
       else this.input = r.input;
     } else {
@@ -242,9 +251,9 @@ export default class AgentsView extends View {
     if (open && ask && open.id === ask.id) { cx.stop_propagation(); return this.modal(ask, k, cx); }
     this.input = null; this.checklist = null;
     const own = (kk) => !!ask?.options.some((o) => o.key === kk), tab = this.tab(), agent = this.agentFor(cur, ask, vm);
-    const app = (kk) => k === kk && !own(kk); // b and f are the panel's keys unless the open ask has an option with that letter (a letter marks the part)
+    const app = (kk) => k === kk && !own(kk); // f is the panel's key unless the open ask has an option f; option letters always mean options, so the board is capital B
     if (app("f")) { cx.stop_propagation(); this.filter ??= ""; this.typing = true; return cx.notify(); }
-    if (app("b") && cur?.section === "epic") { cx.stop_propagation(); return this.board(cur, vm, cx); }
+    if ((k === "B" || k === "shift-b") && cur?.section === "epic") { cx.stop_propagation(); return this.board(cur, vm, cx); }
     if (k === "space" && cur?.section === "fold") { cx.stop_propagation(); this.unfolded = !this.unfolded; return cx.notify(); }
     if (k === "escape" && this.filter != null) { cx.stop_propagation(); this.filter = null; this.touched = false; return cx.notify(); }
     if (k === "t" && tab && !own("t")) { cx.stop_propagation(); return this.togglePane(cx); }
@@ -385,6 +394,8 @@ export default class AgentsView extends View {
           .when(!!o.then, (e) => e.child(sans(11, o.armed ? t.background : t.dim, `→ ${o.then}`).flex_1().min_w(0).truncate()))
           .when(o.rec && !o.armed, (e) => e.child(sans(11, t.done, "↵").flex_none()))
           .when(o.armed, (e) => e.child(sans(11, t.background, "press again to send")))))))
+      .when(!!this.notes.get(a.id)?.[cur], (e) => e.child(sans(12, t.muted, `Note on this part: ${this.notes.get(a.id)[cur]}`).pt(4)))
+      .when(!!this.picks.get(a.id)?.[cur]?.startsWith(`${cur}other`), (e) => e.child(sans(12, t.foreground, `Your own idea: ${this.picks.get(a.id)[cur].slice(this.picks.get(a.id)[cur].indexOf(":") + 1).trim()}`).pt(4)))
       .when(v.questions.length > 0 && a.targets.length < 2, (e) => e.child(h_flex().w_full().gap(8).items_baseline().pt(6).child(sans(12, t.dim, "Your answer")).child(mono(13, t.foreground, answerLine(a, this.picks.get(a.id) ?? {})))
         .child(sans(11, t.dim, "↵ send all recommended · 1-9 then a letter changes one · o own idea").flex_1().min_w(0).truncate())))
       .when(!!st, (e) => e.child(this.statusLine(t, st)))

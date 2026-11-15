@@ -123,7 +123,7 @@ test("the first epic is selected until the owner moves; the header counts epics"
   assert.equal(defaultKey(flatRows(m, {})), "epic:o/r#1");
   assert.deepEqual(headerLine(m), { inbox: "1 epic needs you", run: "0 working · 0 stuck" });
   assert.equal(headerLine(vm({})).inbox, "Nothing needs you");
-  assert.match(footerHint("epic"), /f filter/); assert.match(footerHint("epic"), /b board/); assert.match(footerHint("fold"), /space/);
+  assert.match(footerHint("epic"), /f filter/); assert.match(footerHint("epic"), /B board/); assert.match(footerHint("fold"), /space/);
 });
 
 test("the agent pane follows the epic's lead, never the worker whose ask it is", () => {

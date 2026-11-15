@@ -138,18 +138,25 @@ export function acceptRecommended(ask, armed, nowMs, picks = {}) {
   if (NEEDS_SECOND_KEY.has(ask.kind) && !(armed && armed.id === ask.id && armed.key === "enter" && nowMs - armed.at <= DOUBLE_PRESS_MS)) {
     return { type: "arm", armed: { id: ask.id, key: "enter", q: 0, at: nowMs }, body: ask.body };
   }
+  if (qs.some((q) => eff[q] === "other")) return { type: "post", text: "", key: "other" }; // submitAnswer words it
   return { type: "post", text: qs.map((q) => `${q}${eff[q]}: ${ask.options.find((o) => o.q === q && o.key === eff[q]).label}`).join("\n"), key: qs.map((q) => `${q}${eff[q]}`).join(",") };
 }
 // The option that goes with each question: the owner's pick ("1b: label"), else the recommended one: { q: key }.
 const effective = (ask, picks = {}) => { const rec = recommended(ask), out = {}; for (const q of questionsOf(ask)) out[q] = picks[q] ? picks[q].split(":")[0].slice(String(q).length) : rec[q]; return out; };
 // The line under the question: the marks so far, one `<q><key>` per marked question and `<q> –` where none is made yet.
-export const answerLine = (ask, picks = {}) => questionsOf(ask).map((q) => (picks[q] ? picks[q].split(":")[0] : `${q} –`)).join(" · ");
+export const answerLine = (ask, picks = {}) => questionsOf(ask).map((q) => (picks[q] ? picks[q].split(":")[0].replace("other", "o") : `${q} –`)).join(" · ");
 // Enter submits when every part is marked ({type:"incomplete", marked, total} otherwise); `all` (ctrl-Enter) takes the recommended option for the parts left unmarked.
+// A part marked with an own idea ("<q>other: <text>") makes the answer `--key other` with one line per part as the text.
 export function submitAnswer(ask, armed, nowMs, picks = {}, all = false) {
   const qs = questionsOf(ask), marked = qs.filter((q) => picks[q]).length;
   if (qs.length > 1 && !all && marked < qs.length) return { type: "incomplete", marked, total: qs.length };
-  return acceptRecommended(ask, armed, nowMs, picks);
+  const r = acceptRecommended(ask, armed, nowMs, picks);
+  if (r?.type !== "post" || !qs.some((q) => picks[q]?.startsWith(`${q}other`))) return r;
+  const eff = effective(ask, picks);
+  return { type: "post", key: "other", text: qs.map((q) => (eff[q] === "other" ? `${q} own idea: ${picks[q].slice(picks[q].indexOf(":") + 1).trim()}` : `${q}${eff[q]}: ${ask.options.find((o) => o.q === q && o.key === eff[q]).label}`)).join("\n") };
 }
+// The notes of the parts as one line for `--note`: `<q>: <text>` per part with a note, in order.
+export const partNotes = (ask, notes = {}) => questionsOf(ask).filter((q) => (notes[q] ?? "").trim()).map((q) => `${q}: ${notes[q].trim()}`).join(" · ");
 
 // The checklist of a batched merge ask: state { cur, chosen: [target ids] }. j k move, space toggles, enter sends, escape cancels.
 // A step that changes the list returns the new state; enter returns { type: "send", key, only, text }, escape { type: "cancel" }.
@@ -563,7 +570,7 @@ export function flatRows(vm, { showRun, filter = "", unfolded = false } = {}) {
 }
 
 // The header's key hint for the selected row.
-export const footerHint = (section) => ({ epic: "↑ ↓ epic · ↵ send recommended · 1-9 then a letter changes one · o own idea · ← → ask · f filter · b board · t lead's terminal · / message the lead", fold: "space shows or hides the finished · ↑ ↓ move", batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", answered: ". nudge an answer not picked up · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
+export const footerHint = (section) => ({ epic: "↑ ↓ epic · ↵ send recommended · 1-9 then a letter changes one · o own idea · ← → ask · f filter · B board · t lead's terminal · / message the lead", fold: "space shows or hides the finished · ↑ ↓ move", batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · v picture · p plan · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", answered: ". nudge an answer not picked up · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
 // Enter on a row: show its terminal in the right-hand pane. The desk, when it is not running, starts only on this owner key,
 // through spawn.sh, for the project the settings name (desk_project). Batches are not shown.
@@ -670,7 +677,7 @@ export function pickerStep(p, key, n) {
 export const goStep = (terminal, phone) => [phone ? "terminal.peek" : "agent.focus", { terminal }];
 const SHORT_LANE = { key: "One key", look: "Look", hands: "Hands", groom: "Not ready" };
 export const lanesLine = (lanes) => lanes.map((l) => `${SHORT_LANE[l.lane]} ${l.count}`).join(" · ");
-export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, { key: "b", label: "Board" }, ...(agent ? [{ key: "g", label: "Open" }] : [])];
+export const phoneBar = (agent) => [{ key: "v", label: "Picture" }, { key: "o", label: "Own idea" }, { key: "B", label: "Board" }, ...(agent ? [{ key: "g", label: "Open" }] : [])];
 
 // Why / What / How for one ask, from what the runner stored per card (closed-cards.json origin). A card with nothing stored shows only the epic: nothing is invented.
 export function originView(ask, vm, hasAgent) {
