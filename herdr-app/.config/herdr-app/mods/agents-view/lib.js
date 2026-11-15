@@ -81,7 +81,7 @@ export const DOUBLE_PRESS_MS = 10_000;
 const NEEDS_SECOND_KEY = new Set(["merge", "roll", "money"]);
 
 // What a key does on an open ask. `armed` is the pending first press ({ id, key, q, at }) or null.
-// Returns { type: "post", text } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
+// Returns { type: "post", text, key? } | { type: "arm", armed, body } | { type: "open", target } | { type: "cancel" } | null.
 // `q` is the selected question of the ask (default 1); a letter picks an option within it.
 export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   let text = null, pick = false, okey = null;
@@ -180,9 +180,9 @@ export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.
 
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
-  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json` }; }
+  if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json`, stuck: `${d}/stuck.json` }; }
   const d = `${home}/handoffs/run`;
-  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json` };
+  return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${home}/.claude/.usage-cache.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json`, stuck: `${d}/stuck.json` };
 }
 
 export function firstLine(text, max) {
@@ -288,6 +288,21 @@ export function stuckRows(terminals, events, asks, nowMs) {
   return rows;
 }
 
+// stuck.json is the watchdog's list ([{terminal, card, kind, since}]). One row per terminal; it wins over stuckRows for the same terminal.
+const FLAG_TEXT = { blocked: "blocked 30m+", gone: "terminal gone 30m+", "no-status": "no status 5m after start", undelivered: "first message not delivered", "idle-open": "idle, card still open", silent: "no output for 30m" };
+export function watchdogRows(json, terminals, nowMs) {
+  const flags = parse(json);
+  if (!Array.isArray(flags)) return [];
+  const rows = new Map();
+  for (const f of flags) {
+    if (!f || typeof f.terminal !== "string" || typeof f.kind !== "string" || rows.has(f.terminal)) continue;
+    const since = Date.parse(f.since);
+    rows.set(f.terminal, { kind: f.kind, name: f.terminal, text: FLAG_TEXT[f.kind] ?? f.kind, ageMs: Number.isNaN(since) ? null : nowMs - since,
+      address: terminals.find((t) => t.live && t.name === f.terminal)?.address ?? null });
+  }
+  return [...rows.values()];
+}
+
 const ROLE_ORDER = { lead: 0, worker: 1 };
 const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -354,7 +369,9 @@ export function runnerLine(text) {
 const othersLine = (n) => (n ? `+${n} other session${n === 1 ? "" : "s"}` : "");
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, nowMs, hiddenIds }) {
+const mergeStuck = (own, flagged) => [...own.filter((r) => !flagged.some((f) => f.name === r.name)), ...flagged];
+
+export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, stuckJson, nowMs, hiddenIds }) {
   const ts = (terminals ?? []).map(normalize);
   const cc = parse(closedJson);
   const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
@@ -363,7 +380,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), stuck: mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with

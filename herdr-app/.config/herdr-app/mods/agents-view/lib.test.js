@@ -256,6 +256,41 @@ test("viewModel: raw terminals and file text in", () => {
   assert.deepEqual(vm.others, []);
 });
 
+const rawLead = { address: "tL", name: "lead-app-10", state: "live", labels: { role: "lead", epic: EPIC }, status: "working" };
+const rawWorker = (status) => ({ address: "tW", name: "card-app-12", state: "live", labels: { role: "worker", epic: EPIC, card: "acme/app#12" }, status });
+const flag = (terminal, kind, agoMs, card = "acme/app#12") => ({ terminal, card, kind, since: iso(agoMs) });
+
+test("viewModel: stuck.json adds one Stuck row per flagged terminal, aged from since", () => {
+  const vm = viewModel({ terminals: [lead()], stuckJson: JSON.stringify([flag("card-app-12", "idle-open", 40 * MIN)]), nowMs: NOW });
+  assert.equal(vm.stuck.length, 1);
+  assert.deepEqual([vm.stuck[0].kind, vm.stuck[0].name, vm.stuck[0].ageMs], ["idle-open", "card-app-12", 40 * MIN]);
+  assert.match(vm.stuck[0].text, /idle/);
+});
+
+test("viewModel: a flagged live terminal keeps its address, and the file wins over the view's own rule for it", () => {
+  const vm = viewModel({ terminals: [rawLead, rawWorker("blocked")], stuckJson: JSON.stringify([flag("card-app-12", "blocked", 31 * MIN)]), nowMs: NOW });
+  assert.equal(vm.stuck.length, 1);
+  assert.equal(vm.stuck[0].kind, "blocked");
+  assert.equal(vm.stuck[0].ageMs, 31 * MIN);
+  assert.equal(vm.stuck[0].address, "tW");
+});
+
+test("viewModel: the view's own rows for other terminals stay beside the file's", () => {
+  const vm = viewModel({ terminals: [rawLead, rawWorker("blocked")], stuckJson: JSON.stringify([flag("card-app-99", "silent", HOUR)]), nowMs: NOW });
+  assert.deepEqual(vm.stuck.map((s) => s.name).sort(), ["card-app-12", "card-app-99"]);
+});
+
+test("viewModel: a missing, broken or oddly shaped stuck.json adds nothing", () => {
+  for (const stuckJson of [undefined, null, "{broken", "{}", "[1,null,{\"kind\":\"x\"}]"]) {
+    assert.deepEqual(viewModel({ terminals: [lead()], stuckJson, nowMs: NOW }).stuck, [], String(stuckJson));
+  }
+});
+
+test("flatRows: a file row is selectable like any stuck row", () => {
+  const vm = viewModel({ terminals: [lead()], stuckJson: JSON.stringify([flag("card-app-12", "gone", HOUR)]), nowMs: NOW });
+  assert.ok(flatRows(vm).some((r) => r.key === "stuck:gone:card-app-12"));
+});
+
 test("flatRows: asks, each group, the desk, stuck, others, in display order; stuck terminal selectable twice", () => {
   const vm = viewModel({
     terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "blocked" }, { address: "tO", name: "me", status: "idle" }],
@@ -384,6 +419,16 @@ test("askKeyAction: x on a merge ask is its option key, a second-key action, nev
 
 test("answerArgv: work ask answer <id> --text <text> --via screen", () => {
   assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: x"), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: x", "--via", "screen"]);
+});
+
+test("answerArgv: a picked option's key goes as --key, so the hook can tell a Merge from free text", () => {
+  assert.deepEqual(answerArgv({ id: "a-20261114080000-1a2b3c" }, "1a: Merge", { key: "a" }), ["ask", "answer", "a-20261114080000-1a2b3c", "--text", "1a: Merge", "--via", "screen", "--key", "a"]);
+  assert.ok(!answerArgv({ id: "a-20261114080000-1a2b3c" }, "x", {}).includes("--key"));
+});
+
+test("askKeyAction: a pick in a many-question ask carries no key (the answer is composed from several picks)", () => {
+  const [a] = openAsks([rich()], NOW);
+  assert.equal("key" in askKeyAction({ ...a, options: [...a.options, { q: 2, key: "a", label: "now" }] }, "a", null, NOW), false);
 });
 
 test("answerArgv: a legacy row without an id answers as legacy-<comment id>", () => {
@@ -543,8 +588,8 @@ test("picksText: shows each question's pick or a question mark", () => {
 // ---- side panel (kuchbhi#1058) ----
 
 test("runFiles: live files by default, the fixture folder's five files when it is in use", () => {
-  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", closed: "/h/handoffs/run/closed-cards.json" });
-  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", closed: "/h/.config/herdr-app/agents-view-fixture/closed-cards.json" });
+  assert.deepEqual(runFiles("/h", false), { asks: "/h/handoffs/run/asks.jsonl", events: "/h/handoffs/run/events.jsonl", usage: "/h/.claude/.usage-cache.json", upNext: "/h/handoffs/run/up-next.json", settings: "/h/handoffs/run/settings.json", closed: "/h/handoffs/run/closed-cards.json", stuck: "/h/handoffs/run/stuck.json" });
+  assert.deepEqual(runFiles("/h", true), { asks: "/h/.config/herdr-app/agents-view-fixture/asks.jsonl", events: "/h/.config/herdr-app/agents-view-fixture/events.jsonl", usage: "/h/.config/herdr-app/agents-view-fixture/usage.json", upNext: "/h/.config/herdr-app/agents-view-fixture/up-next.json", settings: "/h/.config/herdr-app/agents-view-fixture/settings.json", closed: "/h/.config/herdr-app/agents-view-fixture/closed-cards.json", stuck: "/h/.config/herdr-app/agents-view-fixture/stuck.json" });
 });
 
 test("firstLine: the first non-empty line, cut with an ellipsis past the width", () => {
