@@ -86,28 +86,70 @@ test("f opens the filter: typing narrows by title, number or area, esc clears it
   press(v, "backspace"); press(v, "backspace"); press(v, "backspace"); press(v, "backspace"); typed(v, "gtm"); has(paint(v), "Marketing site"); lacks(paint(v), "Hooks and security");
   press(v, "escape"); const e = paint(v); has(e, "Marketing site"); has(e, "Hooks and security"); assert.equal(v.filter, null);
 });
-test("a bundled question: each part with its title, why and options, and the answer line", () => {
-  const v = drawE(lines(ASK("a-1", { epic: "o/r#1", body: "Q\n\n1. Hero line?\n   a) A (Recommended) => a\n   b) B => b\n" }), PART("a-1", 2, "Show prices?"), PART("a-1", 3, "Hindi now?")));
-  select(v, epicKey(v, 1)); const d = paint(v);
-  has(d, "1 · Hero line?"); has(d, "2 · Show prices?"); has(d, "3 · Hindi now?"); has(d, "why 2"); has(d, "→ then 3b");
-  has(d, /Your answer/); has(d, "1a · 2a · 3a");
+const THREE = () => lines(ASK("a-1", { epic: "o/r#1", body: "Q\n\n1. Hero line?\n   a) A (Recommended) => a\n   b) B => b\n" }), PART("a-1", 2, "Show prices?"), PART("a-1", 3, "Hindi now?"));
+test("a bundled question shows one part at a time: question n of 3, ← → move, the answer line shows the marks", () => {
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); let d = paint(v);
+  has(d, "question 1 of 3 ‹ ›"); has(d, "1 · Hero line?"); lacks(d, "2 · Show prices?"); has(d, /Your answer/); has(d, "1 – · 2 – · 3 –");
+  press(v, "right"); d = paint(v); has(d, "question 2 of 3 ‹ ›"); has(d, "2 · Show prices?"); has(d, "why 2"); has(d, "→ then 2b"); lacks(d, "1 · Hero line?");
+  press(v, "right"); has(paint(v), "question 3 of 3 ‹ ›"); press(v, "left"); has(paint(v), "question 2 of 3 ‹ ›");
 });
-test("1 then b changes one part; Enter sends every part", async () => {
-  const v = drawE(lines(ASK("a-1", { epic: "o/r#1", body: "Q\n\n1. Hero line?\n   a) A (Recommended) => a\n   b) B => b\n" }), PART("a-1", 2, "Show prices?"), PART("a-1", 3, "Hindi now?")));
-  select(v, epicKey(v, 1)); execWith(() => ({ code: 0, stdout: "", stderr: "" }));
-  press(v, "3"); press(v, "b"); has(paint(v), "1a · 2a · 3b"); assert.equal(calls.length, 0, "a pick sends nothing");
-  press(v, "enter"); await tick();
-  assert.deepEqual(calls[0].slice(0, 3), ["work", "ask", "answer"]); assert.equal(calls[0][calls[0].indexOf("--key") + 1], "1a,2a,3b");
+test("← past the first part and → past the last step to the epic's other ask", () => {
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }), PART("a-1", 2, "Show prices?"), ASK("a-9", { epic: "o/r#1", kind: "merge", batch_key: "merge:o/r#1", target: { repo: "o/r", pr: 5, head: "a".repeat(40) }, options: [{ q: 1, key: "a", label: "Land" }] })));
+  select(v, epicKey(v, 1)); press(v, "right"); press(v, "right"); has(paint(v), "ask 2 of 2 ‹ ›"); press(v, "left"); has(paint(v), "question 2 of 2 ‹ ›");
 });
-test("b alone goes to the board: with none open the receipt says so and nothing runs", () => {
+test("a letter marks the part and moves on; nothing is sent; the receipt counts the marks; ↵ needs every part, ctrl-↵ takes the recommended", async () => {
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); execWith(() => ({ code: 0, stdout: "", stderr: "" }));
+  press(v, "b"); const d = paint(v);
+  has(d, "question 2 of 3 ‹ ›"); has(d, "1b · 2 – · 3 –"); has(d, "marked 1 of 3 · ctrl-↵ takes the recommended for the rest"); assert.equal(calls.length, 0);
+  press(v, "enter"); has(paint(v), "marked 1 of 3: mark the rest, or ctrl-↵ takes the recommended for them"); await tick(); assert.equal(calls.length, 0);
+  press(v, "ctrl-enter"); await tick(); assert.equal(calls[0][calls[0].indexOf("--key") + 1], "1b,2a,3a");
+});
+test("every part marked: ↵ sends the marks", async () => {
+  const v = drawE(THREE()); select(v, epicKey(v, 1)); execWith(() => ({ code: 0, stdout: "", stderr: "" }));
+  for (const k of ["a", "b", "a"]) press(v, k); has(paint(v), "marked 3 of 3 · ↵ sends the answer"); press(v, "enter"); await tick();
+  assert.equal(calls[0][calls[0].indexOf("--key") + 1], "1a,2b,3a");
+});
+test("marks are kept per ask when the owner goes to another epic and back; a part added meanwhile keeps them", () => {
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }), PART("a-1", 2, "Show prices?"), ASK("a-2", { epic: "o/r#2" })));
+  select(v, epicKey(v, 1)); for (const k of ["1", "b"]) press(v, k);
+  select(v, epicKey(v, 2)); paint(v); select(v, epicKey(v, 1)); has(paint(v), "1b · 2 –");
+  v.files.asks = lines(ASK("a-1", { epic: "o/r#1" }), PART("a-1", 2, "Show prices?"), PART("a-1", 3, "Hindi now?"), ASK("a-2", { epic: "o/r#2" })); has(paint(v), "1b · 2 – · 3 –");
+});
+test("links in the ask: URLs, issue refs and paths are underlined links, the lead's name opens its tab", () => {
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1", today: "see https://x.test/a and o/r#12 at /Users/v/p/post.md" })));
+  select(v, epicKey(v, 1)); const d = paint(v); has(d, "https://x.test/a"); has(d, "o/r#12"); has(d, "/Users/v/p/post.md"); has(d, "lead-r-1"); has(d, "agent:t2");
+});
+test("a list longer than the pane shows a window: the selection a third of the way down, the rest moves past it", () => {
+  const n = 20, titles = Object.fromEntries(Array.from({ length: n }, (_, i) => [`o/r#${i + 1}`, `Epic number ${String(i + 1).padStart(2, "0")}`]));
+  const v = drawE(lines(...Array.from({ length: n }, (_, i) => ASK(`a-${i + 1}`, { epic: `o/r#${i + 1}`, card: `o/r#${i + 100}` }))), { closed: [], titles, areas: {} }, terms);
+  const names = (d) => d.filter((s) => /^Epic number/.test(s)).filter((s, i, all) => all.indexOf(s) === i), titleOf = (k) => v.model().rows.find((r) => r.key === k).row.title;
+  let d = paint(v); assert.equal(d.filter((s) => /^epic:o\/r#/.test(s)).length, 8, "the window holds 9 items: a group head and 8 epics"); has(d, /▼ \d+ below/); lacks(d, /▲/);
+  const keys = v.model().rows.filter((r) => r.section === "epic").map((r) => r.key);
+  d = select(v, keys[12]); has(d, /▲ \d+ above/); assert.equal(d.filter((s) => /^epic:o\/r#/.test(s)).indexOf(keys[12]), 3, "the selected row stays at the anchor, a third of the way down");
+  d = select(v, keys[19]); lacks(d, /▼/); has(d, titleOf(keys[19]));
+});
+test("the Inbox pane takes the keyboard once when its tab becomes active, never from the agent pane", () => {
+  globalThis.__runs = []; globalThis.__props = { inbox: true };
+  globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p2", tab: "tab-i", terminal: "t1" }];
+  globalThis.__focused = { space: "s0", tab: "tab-other", pane: "px" };
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" })));
+  v.focusWatch(); assert.deepEqual(globalThis.__runs, [], "another tab is active: nothing");
+  globalThis.__focused = { space: "s1", tab: "tab-i", pane: "px" }; v.focusWatch(); assert.deepEqual(globalThis.__runs, [["pane.focus", { pane: "p1" }]]);
+  v.focusWatch(); assert.equal(globalThis.__runs.length, 1, "once per activation");
+  globalThis.__focused = { space: "s0", tab: "tab-other", pane: "px" }; v.focusWatch(); globalThis.__focused = { space: "s1", tab: "tab-i", pane: "p2" }; v.focusWatch();
+  assert.equal(globalThis.__runs.length, 1, "the owner is in the agent pane");
+  globalThis.__props = {}; globalThis.__panes = []; globalThis.__focused = null;
+});
+const bOnly = () => lines({ ts: iso(2), event: "lead_status", epic: "o/r#2", text: "Waiting on CI" });
+test("b goes to the board: with none open the receipt says so and nothing runs (an ask with an option b keeps b for the option)", () => {
   globalThis.__runs = []; globalThis.__panes = []; globalThis.__spaces = [];
-  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); select(v, epicKey(v, 1)); press(v, "b");
+  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "b");
   has(paint(v), "no board open · ctrl-b b opens it"); assert.equal(globalThis.__runs.length, 0);
 });
 test("b with the board open: its space and tab are selected and the epic is handed over", () => {
   globalThis.__runs = []; globalThis.__panes = [{ pane: "pb", tab: "tb", mod: "zaksha-board" }]; globalThis.__spaces = [{ id: "sb", name: "Board", tabs: [{ id: "tb" }] }];
-  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" }))); select(v, epicKey(v, 1)); press(v, "b");
-  assert.deepEqual(globalThis.__runs, [["space.select", { id: "sb" }], ["tab.select", { id: "tb" }]]); assert.equal(globalThis.__shared["zaksha-board.epic"], "o/r#1");
+  const v = drawE(bOnly()); select(v, epicKey(v, 2)); press(v, "b");
+  assert.deepEqual(globalThis.__runs, [["space.select", { id: "sb" }], ["tab.select", { id: "tb" }]]); assert.equal(globalThis.__shared["zaksha-board.epic"], "o/r#2");
   globalThis.__panes = []; globalThis.__spaces = [];
 });
 test("the message box and / go to the epic's lead, never the worker whose ask it is", async () => {

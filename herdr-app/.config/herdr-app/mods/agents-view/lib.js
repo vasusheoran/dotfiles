@@ -142,8 +142,14 @@ export function acceptRecommended(ask, armed, nowMs, picks = {}) {
 }
 // The option that goes with each question: the owner's pick ("1b: label"), else the recommended one: { q: key }.
 const effective = (ask, picks = {}) => { const rec = recommended(ask), out = {}; for (const q of questionsOf(ask)) out[q] = picks[q] ? picks[q].split(":")[0].slice(String(q).length) : rec[q]; return out; };
-// The line under the question: what Enter would send, one `<q><key>` per question, `<q> ?` where nothing is recommended or picked.
-export const answerLine = (ask, picks = {}) => { const eff = effective(ask, picks); return questionsOf(ask).map((q) => (eff[q] ? `${q}${eff[q]}` : `${q} ?`)).join(" · "); };
+// The line under the question: the marks so far, one `<q><key>` per marked question and `<q> –` where none is made yet.
+export const answerLine = (ask, picks = {}) => questionsOf(ask).map((q) => (picks[q] ? picks[q].split(":")[0] : `${q} –`)).join(" · ");
+// Enter submits when every part is marked ({type:"incomplete", marked, total} otherwise); `all` (ctrl-Enter) takes the recommended option for the parts left unmarked.
+export function submitAnswer(ask, armed, nowMs, picks = {}, all = false) {
+  const qs = questionsOf(ask), marked = qs.filter((q) => picks[q]).length;
+  if (qs.length > 1 && !all && marked < qs.length) return { type: "incomplete", marked, total: qs.length };
+  return acceptRecommended(ask, armed, nowMs, picks);
+}
 
 // The checklist of a batched merge ask: state { cur, chosen: [target ids] }. j k move, space toggles, enter sends, escape cancels.
 // A step that changes the list returns the new state; enter returns { type: "send", key, only, text }, escape { type: "cancel" }.
@@ -265,7 +271,7 @@ export function inboxBatches(asks, titles = {}) {
   }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
 }
 // Enter on an ask: open its ready picture while the picture row has focus (tab moves focus to the options), else accept the recommended option.
-export const enterAction = (ask, armed, nowMs, onPicture, picks = {}) => (onPicture && ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : acceptRecommended(ask, armed, nowMs, picks));
+export const enterAction = (ask, armed, nowMs, onPicture, picks = {}, all = false) => (onPicture && ask.visual === "ready" ? { type: "open", target: ask.visualUrl } : submitAnswer(ask, armed, nowMs, picks, all));
 export const laneSummary = (batches) => LANE_ORDER.map((lane) => {
   const bs = batches.filter((b) => b.lane === lane);
   return { lane, label: LANE_LABELS[lane], count: bs.reduce((n, b) => n + b.count, 0), batches: bs };
@@ -625,7 +631,7 @@ export function bottomPlan({ pane, vm, pinned, last, shown, bottom, bottomTermin
   const keyOf = (a) => `${a.address}:attach`;
   const show = (a) => {
     if (!own || !SAFE_ADDR.test(a.address) || !SAFE_ADDR.test(own) || keyOf(a) === shown) return [];
-    const file = paneFile(own), write = ["write", { file, text: a.address }], split = ["pane.split", { pane: own, direction: "down", argv: loopArgv(file) }];
+    const file = paneFile(own), write = ["write", { file, text: a.address }], split = ["pane.split", { pane: own, direction: "right", argv: loopArgv(file) }];
     if (!bottom) return [write, split];
     if (!String(shown ?? "").endsWith(":attach")) return [["pane.close", { pane: bottom }], write, split]; // a pane we did not make: start clean
     return [write, ...(bottomTerminal ? [["detach", { terminal: bottomTerminal }]] : [])];
@@ -767,3 +773,33 @@ export function boardStep({ spaces, panes, epic }) {
   if (!board || !sp) return { steps: [], share: null, receipt: "no board open · ctrl-b b opens it" };
   return { steps: [["space.select", { id: sp.id }], ["tab.select", { id: board.tab }]], share: epic, receipt: "" };
 }
+
+// The list window (kuchbhi#1115, feedback 1): the selected row sits about a third of the way down while the entries move past it; at the top and the bottom the
+// window stops and the selection moves instead. Returns the index of the first item shown.
+export const listWindow = (n, sel, size) => Math.max(0, Math.min(Math.max(0, n - size), sel - Math.floor(size / 3)));
+
+// ← / →: the previous or next part of the ask (question numbers); past the ends the epic's next or previous ask ({ step }).
+export function partStep(ask, q, dir) {
+  const qs = questionsOf(ask), i = qs.indexOf(q) + (dir === "right" ? 1 : -1);
+  return i >= 0 && i < qs.length ? { q: qs[i] } : { step: dir };
+}
+
+// Links in text: URLs, owner/repo#N, #N (in the epic's repo) and absolute paths become { text, link: url | issue | path }; the rest is { text }.
+const LINK_RE = /(https?:\/\/[^\s<>"')]+[^\s<>"').,;:!?])|([\w.-]+\/[\w.-]+#\d+)|(#\d+)\b|((?:^|(?<=[\s(]))\/(?:[\w.@+~-]+\/)*[\w@+~-]+(?:\.[\w@+~-]+)*)/g;
+export function linkSegments(text, repo) {
+  const out = []; let at = 0;
+  for (const m of String(text ?? "").matchAll(LINK_RE)) {
+    if (m.index > at) out.push({ text: text.slice(at, m.index) });
+    out.push({ text: m[0], link: m[1] ? "url" : m[4] ? "path" : "issue" }); at = m.index + m[0].length;
+  }
+  if (at < String(text ?? "").length) out.push({ text: text.slice(at) });
+  return out;
+}
+export function linkTarget(seg, repo) {
+  if (seg.link === "url" || seg.link === "path") return { open: seg.text };
+  if (seg.link === "issue") { const m = /^(?:([\w.-]+\/[\w.-]+))?#(\d+)$/.exec(seg.text); return m ? { open: `https://github.com/${m[1] ?? repo}/issues/${m[2]}` } : null; }
+  return null;
+}
+
+// The Inbox pane takes the keyboard once when its tab becomes active (any route), unless the owner is already in its agent pane. Returns { focus: pane | null, was }.
+export const focusStep = ({ inTab, was, focusedPane, own, bottom }) => ({ focus: inTab && !was && own && focusedPane !== own && !(bottom && focusedPane === bottom) ? own : null, was: !!inTab });

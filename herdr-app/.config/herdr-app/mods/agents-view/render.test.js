@@ -276,7 +276,7 @@ test("panel (not the tab): the same order, no pane below, and the key to open th
 });
 const FILE = "/tmp/herdr-agents-view-p1.addr";
 const LOOP = ["sh", "-c", `f=${FILE}; while a=$(cat "$f" 2>/dev/null); [ -n "$a" ]; do hc attach "$a" || sleep 1; done`];
-const SPLIT = ["pane.split", { pane: "p1", direction: "down", argv: LOOP }];
+const SPLIT = ["pane.split", { pane: "p1", direction: "right", argv: LOOP }];
 const written = () => calls.filter((c) => c[0] === "sh" && /printf %s/.test(c[2] ?? "")).map((c) => c[2]);
 const detached = () => calls.filter((c) => c[0] === "hc" && c[1] === "keys").map((c) => c.slice(2));
 const upAll = (v) => { flush(); globalThis.__panes = [{ pane: "p1", tab: "tab-i", mod: "agents-view" }, { pane: "p2", tab: "tab-i", terminal: "t9" }]; paint(v); flush(); runs().length = 0; calls.length = 0; };

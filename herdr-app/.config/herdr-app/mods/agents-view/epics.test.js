@@ -85,12 +85,11 @@ test("the filter narrows epics by title, number or area; none match is empty", (
 
 test("the answer line: picks over recommended; Enter sends every recommended option, a pick changes one", () => {
   const [a] = openAsks(parseJsonl(J(ASK("a-1", "o/r#1"), PART("a-1", 2), PART("a-1", 3))), NOW);
-  assert.equal(answerLine(a, {}), "1a · 2a · 3a");
-  assert.equal(answerLine(a, { 3: "3b: No" }), "1a · 2a · 3b");
+  assert.equal(answerLine(a, {}), "1 – · 2 – · 3 –");
+  assert.equal(answerLine(a, { 3: "3b: No" }), "1 – · 2 – · 3b");
   assert.equal(acceptRecommended(a, null, NOW, {}).key, "1a,2a,3a");
   assert.equal(acceptRecommended(a, null, NOW, { 3: "3b: No" }).key, "1a,2a,3b");
-  assert.equal(answerLine({ ...a, options: a.options.map((o) => ({ ...o, label: o.label.replace(" (Recommended)", "") })) }, {}), "1 ? · 2 ? · 3 ?");
-});
+  });
 
 test("b: the board is selected where it is open; none open says so", () => {
   const spaces = [{ id: "s1", name: "Work", tabs: [{ id: "tab1", name: "Shell" }] }, { id: "s2", name: "Board", tabs: [{ id: "tab2", name: "Board" }] }];

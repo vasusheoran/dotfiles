@@ -40,7 +40,7 @@ test("follow: the highlighted ask's own terminal is shown, with its status and t
   const vm = vmOf([ask("a-3")]);
   const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1", on: true });
   assert.equal(p.mode, "follow"); assert.equal(p.address, "t1");
-  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]], "a pane we did not make is replaced once");
+  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "right", argv: loopArgv(FILE) }]], "a pane we did not make is replaced once");
   assert.equal(p.key, "t1:attach");
   assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "ctrl-b t closes · g open its tab"); assert.equal(p.dim, false);
 });
@@ -88,7 +88,7 @@ test("pinned: a pinned agent that has gone away is dropped and the pane follows 
 });
 test("no lower pane yet: the first attach only splits (nothing to close); with no mod pane to split from, nothing runs", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1", on: true }).steps, [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1", on: true }).steps, [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "right", argv: loopArgv(FILE) }]]);
   assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: null, on: true }).steps, []);
 });
 test("picker: j k move within the list, Enter picks the index, esc cancels, the cursor stays inside", () => {
@@ -198,7 +198,7 @@ test("attach: the pane runs a small loop that attaches to the address in a file,
 test("open: the address is written first, then one pane is split below the mod running the loop", () => {
   const vm = vmOf([ask("a-3")]);
   assert.deepEqual(bottomPlan(base(vm, { shown: "off", bottom: null, bottomTerminal: null })).steps,
-    [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]]);
+    [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "right", argv: loopArgv(FILE) }]]);
 });
 test("another agent: the pane is kept (no close, no split); the new address is written and the attach in it is detached so the loop attaches the new one", () => {
   const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
