@@ -715,7 +715,7 @@ test("openAsks: the shared open rule: superseded, answered and applied asks are 
 
 test("openAsks: a batch entry carries its targets, in order, and the all / pick options", () => {
   const b = openAsks(FIX, AFTER).find((a) => a.id === "a-6");
-  assert.deepEqual(b.targets, [{ id: "a-6", repo: "o/r", pr: 1, head: "h1" }, { id: "a-7", repo: "o/r", pr: 2, head: "h2" }]);
+  assert.deepEqual(b.targets, [{ id: "a-6", repo: "o/r", pr: 1, head: "h1", landed: false }, { id: "a-7", repo: "o/r", pr: 2, head: "h2", landed: false }]);
   assert.deepEqual(b.options.map((o) => [o.q, o.key]), [[1, "a"], [1, "b"]]);
   assert.match(b.options[0].label, /all 2/i);
   assert.match(b.options[0].label, /\(Recommended\)/);
