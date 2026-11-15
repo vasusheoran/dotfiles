@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  inboxTabSteps, inTab, liveAgents, bottomPlan, attachArgv, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
+  inboxTabSteps, inTab, liveAgents, bottomPlan, attachArgv, loopArgv, paneFile, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, askKeyAction, askView, isAskKey, viewModel,
 } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z");
@@ -40,7 +40,7 @@ test("follow: the highlighted ask's own terminal is shown, with its status and t
   const vm = vmOf([ask("a-3")]);
   const p = bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: "p2", own: "p1", on: true });
   assert.equal(p.mode, "follow"); assert.equal(p.address, "t1");
-  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t1") }]]);
+  assert.deepEqual(p.steps, [["pane.close", { pane: "p2" }], ["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]], "a pane we did not make is replaced once");
   assert.equal(p.key, "t1:attach");
   assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "ctrl-b t closes · g open its tab"); assert.equal(p.dim, false);
 });
@@ -51,7 +51,7 @@ test("follow: no second terminal.show while the same agent is shown", () => {
 test("follow: moving to an ask of another agent shows that one", () => {
   const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
   const p = bottomPlan({ pane: paneOf(vm, 1), vm, pinned: null, last: { address: "t1", name: "card-r-3" }, shown: "t1:attach", bottom: "p2", own: "p1", on: true });
-  assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t2") }]); assert.equal(p.head, "lead-r-1 · idle");
+  assert.deepEqual(p.steps, [["write", { file: FILE, text: "t2" }]]); assert.equal(p.head, "lead-r-1 · idle");
 });
 test("follow: the desk row shows the desk", () => {
   const vm = vmOf([]);
@@ -78,7 +78,7 @@ test("follow: with nothing shown before and no agent behind the ask, it falls ba
 test("pinned: the picked agent stays while the highlight moves, with the pinned header and the way back", () => {
   const vm = vmOf([ask("a-3")]);
   const p = bottomPlan({ pane: paneOf(vm), vm, pinned: "t2", last: null, shown: "t1:attach", bottom: "p2", own: "p1", on: true });
-  assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[1], ["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t2") }]);
+  assert.equal(p.mode, "pinned"); assert.deepEqual(p.steps[0], ["write", { file: FILE, text: "t2" }]);
   assert.equal(p.head, "lead-r-1 · idle · pinned"); assert.equal(p.hint, "ctrl-b t closes · esc follow the highlight · s switch");
 });
 test("pinned: a pinned agent that has gone away is dropped and the pane follows again", () => {
@@ -88,7 +88,7 @@ test("pinned: a pinned agent that has gone away is dropped and the pane follows 
 });
 test("no lower pane yet: the first attach only splits (nothing to close); with no mod pane to split from, nothing runs", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1", on: true }).steps, [["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t1") }]]);
+  assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: "p1", on: true }).steps, [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]]);
   assert.deepEqual(bottomPlan({ pane: paneOf(vm), vm, pinned: null, last: null, shown: null, bottom: null, own: null, on: true }).steps, []);
 });
 test("picker: j k move within the list, Enter picks the index, esc cancels, the cursor stays inside", () => {
@@ -186,14 +186,32 @@ test("phoneBar: Picture, Own idea, Go to agent; Go to agent only with an agent b
   assert.deepEqual(phoneBar(false).map((b) => b.key), ["v", "o"]);
 });
 
-// ---- the lower pane is a real hc attach, opened with t
-const base = (vm, o = {}) => ({ pane: paneOf(vm), vm, pinned: null, last: null, bottom: "p2", own: "p1", on: true, ...o });
-test("attach: the agent is attached with hc attach, never a read loop", () => {
+// ---- the lower pane: one pane, kept; what is attached in it is swapped
+const base = (vm, o = {}) => ({ pane: paneOf(vm), vm, pinned: null, last: null, bottom: "p2", bottomTerminal: "t9", own: "p1", on: true, ...o });
+const FILE = paneFile("p1");
+test("attach: the pane runs a small loop that attaches to the address in a file, never a read loop", () => {
+  assert.equal(FILE, "/tmp/herdr-agents-view-p1.addr");
+  const a = loopArgv(FILE).join(" ");
+  assert.match(a, /hc attach/); assert.match(a, /herdr-agents-view-p1\.addr/); assert.doesNotMatch(a, /hc read/);
   assert.deepEqual(attachArgv("t7r"), ["hc", "attach", "t7r"]);
-  const vm = vmOf([ask("a-3")]);
-  assert.doesNotMatch(JSON.stringify(bottomPlan(base(vm, { shown: null, bottom: null }))), /hc read|sleep/);
 });
-test("attach: an address with shell characters starts nothing", () => {
+test("open: the address is written first, then one pane is split below the mod running the loop", () => {
+  const vm = vmOf([ask("a-3")]);
+  assert.deepEqual(bottomPlan(base(vm, { shown: "off", bottom: null, bottomTerminal: null })).steps,
+    [["write", { file: FILE, text: "t1" }], ["pane.split", { pane: "p1", direction: "down", argv: loopArgv(FILE) }]]);
+});
+test("another agent: the pane is kept (no close, no split); the new address is written and the attach in it is detached so the loop attaches the new one", () => {
+  const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
+  const p = bottomPlan(base(vm, { pane: paneOf(vm, 1), shown: "t1:attach" }));
+  assert.deepEqual(p.steps, [["write", { file: FILE, text: "t2" }], ["detach", { terminal: "t9" }]]);
+  assert.ok(!p.steps.some((s) => s[0] === "pane.close" || s[0] === "pane.split"), "the pane keeps its size");
+  assert.deepEqual(bottomPlan(base(vm, { shown: "t1:attach" })).steps, [], "the same agent changes nothing");
+});
+test("another agent with no known terminal in the pane yet: the address is written and nothing is detached", () => {
+  const vm = vmOf([ask("a-4", { terminal: "lead-r-1", card: "o/r#4" })]);
+  assert.deepEqual(bottomPlan(base(vm, { shown: "t1:attach", bottomTerminal: null })).steps, [["write", { file: FILE, text: "t2" }]]);
+});
+test("an address with shell characters starts nothing", () => {
   const vm = vmOf([ask("a-3")], [term({ address: "t1;boom" }), TERMS[2]]);
   assert.deepEqual(bottomPlan(base(vm, { shown: null, bottom: null })).steps, []);
 });
@@ -201,18 +219,24 @@ test("toggle: off, there is no pane and nothing is split; the header says how to
   const vm = vmOf([ask("a-3")]), p = bottomPlan(base(vm, { on: false, bottom: null, shown: null }));
   assert.deepEqual(p.steps, []); assert.equal(p.mode, "off"); assert.equal(p.head, "agent pane closed"); assert.match(p.hint, /^t opens it/);
 });
-test("toggle: on, the agent is attached; turning it off closes the pane once", () => {
+test("toggle: turning it off closes the pane once", () => {
   const vm = vmOf([ask("a-3")]);
-  assert.deepEqual(bottomPlan(base(vm, { shown: "off", bottom: null })).steps, [["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t1") }]]);
   assert.deepEqual(bottomPlan(base(vm, { shown: "t1:attach", on: false })).steps, [["pane.close", { pane: "p2" }]]);
   assert.deepEqual(bottomPlan(base(vm, { shown: "off", on: false })).steps, [], "closed once, not on every render");
-});
-test("attach: another agent closes the old pane and attaches the new one; the same agent changes nothing", () => {
-  const vm = vmOf([ask("a-3", { batch_key: "k1" }), ask("a-4", { terminal: "lead-r-1", card: "o/r#4", batch_key: "k2" })]);
-  assert.deepEqual(bottomPlan(base(vm, { pane: paneOf(vm, 1), shown: "t1:attach" })).steps, [["pane.close", { pane: "p2" }], ["pane.split", { pane: "p1", direction: "down", argv: attachArgv("t2") }]]);
-  assert.deepEqual(bottomPlan(base(vm, { shown: "t1:attach" })).steps, []);
 });
 test("headers: the agent and its status, with the key that closes the pane", () => {
   const vm = vmOf([ask("a-3")]), p = bottomPlan(base(vm, { shown: null }));
   assert.equal(p.head, "card-r-3 · working"); assert.equal(p.hint, "ctrl-b t closes · g open its tab");
+});
+
+// ---- a card is in one batch only
+test("one batch per card: asks of one card in two lanes are different asks (a decide and a second kind, or two roles); the rule that supersedes is per card, role and kind", () => {
+  const tg = (n) => ({ repo: "o/r", pr: n, head: String(n).repeat(40).slice(0, 40) });
+  // the shape of epic kuchbhi#162: the epic has look asks on cards A and B, and a hands batch that includes the epic card itself: no card is in two batches
+  const vm = vmOf([ask("a-1", { kind: "look", batch_key: "look:o/r#162", epic: "o/r#162", card: "o/r#1081" }), ask("a-2", { kind: "look", batch_key: "look:o/r#162", epic: "o/r#162", card: "o/r#329" }),
+    ask("a-3", { kind: "you", batch_key: "hands:o/r#162", epic: "o/r#162", card: "o/r#1024" }), ask("a-4", { kind: "you", batch_key: "hands:o/r#162", epic: "o/r#162", card: "o/r#162" }),
+    ask("m-1", { kind: "merge", batch_key: "merge:o/r#162", batch: "m-1", epic: "o/r#162", card: "o/r#72", target: tg(1) }), ask("m-2", { kind: "merge", batch_key: "merge:o/r#162", batch: "m-1", epic: "o/r#162", card: "o/r#72", target: tg(2) })]);
+  const seen = new Map();
+  for (const b of vm.batches) for (const a of b.asks) seen.set(a.card, [...(seen.get(a.card) ?? []), b.key]);
+  for (const [card, keys] of seen) assert.equal(new Set(keys).size, 1, `${card} is in one batch`);
 });

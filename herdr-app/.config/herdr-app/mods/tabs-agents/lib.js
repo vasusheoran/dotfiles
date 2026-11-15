@@ -10,5 +10,5 @@ export function agentsToggle({ panes, focused, back }) {
     return { steps: [there ? ["tab.select", { id: back }] : ["tab.prev"]], back: null };
   }
   const from = focused?.tab ?? null;
-  return { steps: [inbox ? ["tab.select", { id: inbox.tab }] : ["tab.new", { name: "Inbox", mod: "agents-view", props: { inbox: true } }]], back: from };
+  return { steps: inbox ? [["tab.select", { id: inbox.tab }], ["pane.focus", { pane: inbox.pane }]] : [["tab.new", { name: "Inbox", mod: "agents-view", props: { inbox: true } }]], back: from }; // the keyboard goes to the Inbox pane, not to the agent pane below it
 }

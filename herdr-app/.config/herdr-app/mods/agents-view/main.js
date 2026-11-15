@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
+import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
   inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
@@ -14,6 +14,7 @@ const MONO = "JetBrains Mono";
 const SANS = "Geist";
 const REFRESH_MS = 5000;
 const POPUP_BODY_H = 560;
+const ASK_MAX_H = 360;
 const ROW = 28;
 
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
@@ -69,19 +70,34 @@ export default class AgentsView extends View {
 
   // the pane below the mod: split once, then show the agent behind the highlighted ask (or the pinned one). Deferred, never run inside the render.
   syncTab(tab, vm, pane, cx) {
-    const bottom = rightPaneId(panes(), tab.tab);
-    if (bottom) this.sawBottom = true;
-    else if (this.sawBottom) { this.sawBottom = false; this.bottomShown = null; } // it was there and is gone (closed by hand, or its program ended): show again; until it first appears, the split is on its way
-    if (this.paneOn && !this.wasOn) this.focusNew = true; // opened with t or ctrl-b t: the keyboard goes to the new pane (a re-attach on moving does not take it)
+    const bp = rightPane(panes(), tab.tab), bottom = bp?.pane ?? null;
+    if (bottom) { this.sawBottom = true; this.missingSince = null; }
+    else if (this.sawBottom) { // it was there and is gone: closed by hand, or its program ended, or panes() blinked while tabs changed. Split again only when it stays gone for 3s, so a blink never makes a second pane
+      this.missingSince ??= Date.now();
+      if (Date.now() - this.missingSince > 3000) { this.sawBottom = false; this.bottomShown = null; this.missingSince = null; }
+    }
+    if (this.paneOn && !this.wasOn) this.focusNew = true; // opened with t or ctrl-b t: the keyboard goes to the new pane (moving to another ask does not take it)
     if (!this.paneOn) this.focusNew = false;
     this.wasOn = this.paneOn;
     if (this.focusNew && bottom && bottom !== this.bottomWas) { this.focusNew = false; cx.timer.after(0, () => run("pane.focus", { pane: bottom })); }
-    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom, own: tab.pane, on: this.paneOn });
+    const plan = bottomPlan({ pane, vm, pinned: this.pinned, last: this.lastAgent, shown: this.bottomShown, bottom, bottomTerminal: bp?.terminal ?? null, own: tab.pane, on: this.paneOn });
     if (plan.unpin) this.pinned = null;
     if (plan.address && (plan.mode === "follow" || plan.mode === "pinned")) this.lastAgent = { address: plan.address, name: plan.name };
-    if (plan.steps.length) { this.bottomShown = plan.key; this.bottomWas = bottom; cx.timer.after(0, () => plan.steps.forEach((st) => run(...st))); }
+    if (plan.steps.length) {
+      this.bottomShown = plan.key; this.bottomWas = bottom;
+      // a split takes the keyboard: give it back to the Inbox pane unless this is the toggle opening the agent pane
+      const refocus = plan.steps.some((st) => st[0] === "pane.split") && !this.focusNew;
+      cx.timer.after(0, async () => { for (const st of plan.steps) await this.step(st); if (refocus) run("pane.focus", { pane: tab.pane }); });
+    }
     this.plan = plan;
     return plan;
+  }
+
+  // one step of a plan: the address file, the detach of the attach in the kept pane, or a pane command
+  async step([name, a]) {
+    if (name === "write") return exec("sh", ["-c", `printf %s '${a.text}' > ${a.file}`]);
+    if (name === "detach") return exec("hc", ["keys", a.terminal, "ctrl+\\"]);
+    return run(name, a);
   }
 
   // the running agent behind the highlighted row: its ask's terminal, or the desk
@@ -441,7 +457,8 @@ export default class AgentsView extends View {
               ? [v_flex().w_full().px(14).py(24).child(sans(12, t.dim, "↵ shows the terminal · ↑ ↓ back to a batch"))]
               : [v_flex().w_full().px(14).py(24).gap(4).child(sans(16, t.foreground, "Nothing needs you.")).child(sans(12, t.dim, "Type below to message the desk."))])]);
     // stacked at every width: the batch list on top, the open ask below it at full width; the message box is the bar under the scrolling body
-    const asksBody = [rightEl(), this.chatBar(t, pane, vm), leftEl()];
+    // the open ask scrolls inside its own box, so a long one never moves the message box or the lanes, and the pane keeps its size
+    const asksBody = [div().id("ask-scroll").w_full().flex_none().max_h(ASK_MAX_H).overflow_y_scrollbar().child(rightEl()), this.chatBar(t, pane, vm), leftEl()];
     // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
     const runBody = () => [
       this.section(t, "Running", runCount, false),

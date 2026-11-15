@@ -9,7 +9,7 @@ test("agents toggle: no Inbox tab yet: opens it, and remembers the tab it left",
   assert.deepEqual(agentsToggle({ panes: [{ pane: "p9", tab: "tab-a", terminal: "t1" }], focused: { tab: "tab-a" }, back: null }), { steps: [NEW], back: "tab-a" });
 });
 test("agents toggle: an Inbox tab that is open elsewhere is selected, not opened twice", () => {
-  assert.deepEqual(agentsToggle({ panes: [mod], focused: { tab: "tab-a" }, back: null }), { steps: [["tab.select", { id: "tab-i" }]], back: "tab-a" });
+  assert.deepEqual(agentsToggle({ panes: [mod, { pane: "p2", tab: "tab-i", terminal: "t1" }], focused: { tab: "tab-a" }, back: null }), { steps: [["tab.select", { id: "tab-i" }], ["pane.focus", { pane: "p1" }]], back: "tab-a" }, "the keyboard goes to the Inbox pane, not the agent pane below it");
 });
 test("agents toggle: pressed on the Inbox tab, it goes back to the tab it came from", () => {
   const panes = [mod, { pane: "p9", tab: "tab-a", terminal: "t1" }];

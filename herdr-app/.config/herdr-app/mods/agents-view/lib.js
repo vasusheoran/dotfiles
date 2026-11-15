@@ -67,7 +67,7 @@ export function openAsks(lines, nowMs, closed = []) {
     else if (k != null && l.event === "groomed") groomed.set(k, { ...groomed.get(k), [l.member]: l }); // newest event per card
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
-    && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))));
+    && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))))
   const groups = new Map();
   for (const l of live) groups.set(batchOf(l), [...(groups.get(batchOf(l)) ?? []), l]);
   return [...groups.values()]
@@ -294,6 +294,7 @@ export function headerLine(vm) {
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
+export const rightPane = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal) ?? null;
 
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
@@ -598,18 +599,27 @@ export function liveAgents(vm) {
     ...vm.groups.flatMap((g) => g.rows.map((r) => row(r.name, r.address, r.state, r.role))), ...vm.sides.map((s) => row(s.name, s.address, s.state, "side"))];
 }
 // The lower pane is a real `hc attach` to the agent (typeable), opened with t or ctrl-b t and closed the same way; it sizes the agent's terminal to the pane
-// while it is open. There is no pane until t. terminal.show only jumps to an agent that has a pane of its own, so it is not used.
+// while it is open. There is no pane until t. The pane runs a small loop that attaches to the address in a file; moving to another agent writes the new
+// address and detaches (ctrl+\) the attach in it, so the loop attaches the new one in the SAME pane: it is split once and keeps its size.
+// terminal.show only jumps to an agent that has a pane of its own, so it is not used.
 const SAFE_ADDR = /^[A-Za-z0-9/_.-]+$/;
 export const attachArgv = (addr) => ["hc", "attach", addr];
-// What the pane below shows once it is on: follows the highlighted ask's own terminal, or the pinned agent (a change closes the old pane and attaches the new
-// agent). An ask with no agent behind it, or a gone one, keeps the last terminal (the desk when there was none), dimmed with the reason. steps close the old
-// lower pane and split a new one; none while that agent is already attached. `shown` is the key of what is there now. Off: the pane is closed, once.
-export function bottomPlan({ pane, vm, pinned, last, shown, bottom, own, on = false }) {
+export const paneFile = (own) => `/tmp/herdr-agents-view-${own}.addr`;
+export const loopArgv = (file) => ["sh", "-c", `f=${file}; while a=$(cat "$f" 2>/dev/null); [ -n "$a" ]; do hc attach "$a" || sleep 1; done`];
+// What the pane below shows once it is on: follows the highlighted ask's own terminal, or the pinned agent. An ask with no agent behind it, or a gone one,
+// keeps the last terminal (the desk when there was none), dimmed with the reason. steps: ["write", {file, text}] the address, ["detach", {terminal}] the attach
+// in the kept pane, ["pane.split", ...] the one split, ["pane.close", ...]; none while that agent is already attached. `shown` is the key of what is there now.
+export function bottomPlan({ pane, vm, pinned, last, shown, bottom, bottomTerminal = null, own, on = false }) {
   if (!on) return { mode: "off", dim: true, address: null, name: null, key: "off", steps: bottom && shown !== "off" ? [["pane.close", { pane: bottom }]] : [], head: "agent pane closed", hint: "t opens it · ctrl-b t from anywhere" };
   const agents = liveAgents(vm), by = (addr) => agents.find((a) => a.address === addr) ?? null, byName = (n) => agents.find((a) => a.name === n) ?? null;
   const keyOf = (a) => `${a.address}:attach`;
-  const show = (a) => (own && SAFE_ADDR.test(a.address) && keyOf(a) !== shown
-    ? [...(bottom ? [["pane.close", { pane: bottom }]] : []), ["pane.split", { pane: own, direction: "down", argv: attachArgv(a.address) }]] : []);
+  const show = (a) => {
+    if (!own || !SAFE_ADDR.test(a.address) || !SAFE_ADDR.test(own) || keyOf(a) === shown) return [];
+    const file = paneFile(own), write = ["write", { file, text: a.address }], split = ["pane.split", { pane: own, direction: "down", argv: loopArgv(file) }];
+    if (!bottom) return [write, split];
+    if (!String(shown ?? "").endsWith(":attach")) return [["pane.close", { pane: bottom }], write, split]; // a pane we did not make: start clean
+    return [write, ...(bottomTerminal ? [["detach", { terminal: bottomTerminal }]] : [])];
+  };
   const showing = (a, extra) => ({ address: a.address, name: a.name, key: keyOf(a), ...extra, steps: show(a) });
   const pin = pinned ? by(pinned) : null;
   if (pin) return showing(pin, { mode: "pinned", dim: false, head: `${pin.name} · ${pin.state ?? "starting"} · pinned`, hint: "ctrl-b t closes · esc follow the highlight · s switch" });
