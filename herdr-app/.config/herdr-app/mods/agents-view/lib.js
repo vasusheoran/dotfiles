@@ -88,7 +88,11 @@ export function askKeyAction(ask, key, armed, nowMs, q = 1) {
   if (key === "x" && ask.kind === "you" && !ask.options.length) text = "Done."; // x is reserved for you asks; elsewhere it is an option key
   else if (key === "v") return ask.plan ? { type: "open", target: ask.plan } : null;
   else if (key === "b" && ask.targets?.length > 1) return { type: "checklist" }; // a batched merge ask: b picks which PRs
-  else { const o = ask.options.find((o) => o.q === q && o.key === key); if (o) { text = `${o.q}${o.key}: ${o.label}`; okey = o.key; pick = new Set(ask.options.map((o) => o.q)).size > 1; } }
+  else {
+    const o = ask.options.find((o) => o.q === q && o.key === key);
+    if (o) { text = `${o.q}${o.key}: ${o.label}`; okey = o.key; pick = new Set(ask.options.map((o) => o.q)).size > 1; }
+    else if (key === "o" && ask.kind !== "merge") return { type: "other" }; // free text, answered with pick other (ask.sh refuses it on a merge ask)
+  }
   if (text == null) return armed ? { type: "cancel" } : null;
   const done = pick ? { type: "pick", q, text } : { type: "post", text, ...(okey ? { key: okey } : {}) };
   if (!NEEDS_SECOND_KEY.has(ask.kind)) return done;
@@ -163,7 +167,7 @@ export const picksText = (ask, picks) => questionsOf(ask).map((q) => (picks[q] ?
 // Whether a key belongs to the selected ask: option letters, x (you asks), v, n (a note), a question digit, or any single key while an
 // answer is armed (it cancels). j, k and the arrows always navigate, so they never count.
 export const isAskKey = (ask, k, armed) => k.length === 1 && !["j", "k"].includes(k)
-  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || ask.options.some((o) => String(o.q) === k) || !!armed);
+  && (ask.options.some((o) => o.key === k) || (k === "x" && ask.kind === "you") || k === "v" || k === "n" || (k === "o" && ask.kind !== "merge") || ask.options.some((o) => String(o.q) === k) || !!armed);
 
 // The `work` arguments that answer an ask. A row from before ids has only its url: its id is legacy-<comment id>.
 // { key } is the picked option (single-question asks: merge-green reads it), { note } rides with the pick, { only } is a batch's chosen PR numbers.
@@ -174,6 +178,59 @@ export const answerArgv = (ask, text, { key, note, only } = {}) => ["ask", "answ
 export const nudgeArgv = (ask) => ["ask", "nudge", askId(ask)];
 // A note alone: no text, no key, so it answers nothing.
 export const noteArgv = (ask, text) => ["ask", "answer", askId(ask), "--note", text, "--via", "screen"];
+
+// An answer of the owner's own words: recorded with pick other; the asker applies it or replies in the ask's thread.
+export const otherArgv = (ask, text) => answerArgv(ask, text, { key: "other" });
+
+// ---- messages (kuchbhi#1116): `message` and `message_delivered` events of asks.jsonl, grouped by thread (an ask id, or `desk`)
+// Returns { thread: [{ mid, from, to, text, ts, received }] }, oldest first. Sent = the message line; received = a message_delivered line,
+// or any line from an agent (it was written by the one who received the conversation).
+export function threadsOf(lines) {
+  const got = new Set(lines.filter((l) => l.event === "message_delivered").map((l) => l.mid));
+  const out = {};
+  for (const l of lines) {
+    if (l.event !== "message" || !l.thread || !l.mid) continue;
+    (out[l.thread] ??= []).push({ mid: l.mid, from: l.from, to: l.to ?? null, text: String(l.text ?? ""), ts: l.ts, received: l.from !== "owner" || got.has(l.mid) });
+  }
+  for (const k of Object.keys(out)) out[k].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  return out;
+}
+export const messageState = (m) => (m.from !== "owner" ? "received" : m.received ? "sent · received" : "sent · waiting: terminal busy or gone");
+// The last `max` messages and how many earlier ones are not shown.
+export const threadView = (msgs, max = 6) => ({ hidden: Math.max(0, msgs.length - max), shown: msgs.slice(-max) });
+export const messageArgv = (thread, text) => ["ask", "message", thread, "--text", text, "--by", "owner"];
+// With an ask open the message goes to the agent behind it (the ask's thread); with none open, to the desk.
+export const messageTarget = (ask) => (ask ? askId(ask) : "desk");
+
+// ---- batches in four lanes (kuchbhi#1116)
+export const LANE_LABELS = { key: "ONE KEY", look: "NEEDS A LOOK", hands: "YOUR HANDS", groom: "NOT READY" };
+const LANE_ORDER = ["key", "look", "hands", "groom"];
+const askCount = (a) => Math.max(1, a.targets?.length ?? 0);
+// One batch per batch key (an ask from before batch keys is batched by lane and epic), asks oldest first, batches in lane order.
+export function inboxBatches(asks) {
+  const by = new Map();
+  for (const a of asks) {
+    const key = a.batchKey ?? `${a.lane}:${a.epic ?? a.card}`;
+    if (!by.has(key)) by.set(key, { key, lane: a.lane, asks: [] });
+    by.get(key).asks.push(a);
+  }
+  return [...by.values()].map((b) => {
+    const count = b.asks.reduce((n, a) => n + askCount(a), 0), epic = b.asks[0].epic ?? b.asks[0].card;
+    return { ...b, count, epic, name: b.asks.length === 1 ? b.asks[0].title : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
+      asks: [...b.asks].sort((x, y) => Date.parse(x.ts) - Date.parse(y.ts)) };
+  }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
+}
+export const laneSummary = (batches) => LANE_ORDER.map((lane) => {
+  const bs = batches.filter((b) => b.lane === lane);
+  return { lane, label: LANE_LABELS[lane], count: bs.reduce((n, b) => n + b.count, 0), batches: bs };
+});
+
+// The place in each batch: pos = { batchKey: index }, kept when another batch is shown. A step returns the new pos.
+const clampAt = (i, n) => Math.max(0, Math.min(n - 1, i));
+export const stepAsk = (pos, batch, dir) => ({ ...pos, [batch.key]: clampAt((pos[batch.key] ?? 0) + (dir === "right" ? 1 : -1), batch.asks.length) });
+export const askAt = (pos, batch) => batch.asks[clampAt(pos[batch.key] ?? 0, batch.asks.length)];
+// Below this width the batch list sits above the ask.
+export const isNarrow = (width) => typeof width === "number" && width < 640;
 
 // The terminal pane of the tab (the right-hand one in the control-room layout), never a mod pane.
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
@@ -363,7 +420,7 @@ export function viewModel({ terminals, asksText, eventsText, usageJson, upNextJs
   const warn = up?.usage?.read && up.usage.read !== "ok" ? up.usage.warn || "usage read failed" : "";
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
-  return { usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, answered: answeredAsks(parseJsonl(asksText), nowMs).filter((a) => !closed.includes(a.card)), askGroups: askGroups(asks, titles), batches: inboxBatches(asks), lanes: laneSummary(inboxBatches(asks)), threads: threadsOf(parseJsonl(asksText)), stuck: stuckRows(ts, parseJsonl(eventsText), asks, nowMs), groups: epicGroups(ts), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
@@ -387,21 +444,20 @@ export const askLayout = (v) => [v.questions.some((q) => q.options.length) && "o
 
 export const runSummary = (vm) => [`Running ${vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length}`, `Stuck ${vm.stuck.length}`, vm.runnerOn == null ? "" : `Runner ${vm.runnerOn ? "on" : "off"}`].filter(Boolean).join(" · ");
 
-// Every selectable row in display order: one row per epic with asks (the open epic lists its asks under it), the running summary,
-// then running (epics, then side jobs), the desk and stuck, then others. While asks wait, running, the desk and stuck show only when
-// `showRun` is set. A terminal in STUCK and in its epic group is selectable in both.
-export function flatRows(vm, { openEpic, showRun } = {}) {
-  const groups = vm.askGroups ?? [], open = groups.find((g) => g.key === openEpic) ?? groups[0], waiting = vm.asks.length > 0;
+// Every selectable row in display order: the desk first (never counted), one row per batch in lane order, answered asks, the running summary,
+// then running (epics, then side jobs), stuck, then others. While asks wait, running and stuck show only when `showRun` is set.
+// A terminal in STUCK and in its epic group is selectable in both.
+export function flatRows(vm, { showRun } = {}) {
+  const waiting = vm.asks.length > 0;
   const answered = (vm.answered ?? []).map((a) => ({ key: `answered:${a.id}`, section: "answered", address: null, id: a.id, row: a }));
   return [
-    ...groups.flatMap((g) => [{ key: `epic:${g.key}`, section: "epic", address: null, id: null, row: g },
-      ...(g === open ? g.asks.map((a) => ({ key: `ask:${a.id}`, section: "asks", address: null, id: a.id, row: a })) : [])]),
+    { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
+    ...(vm.batches ?? []).map((b) => ({ key: `batch:${b.key}`, section: "batch", address: null, id: null, row: b })),
     ...answered,
     ...(waiting ? [{ key: "summary:running", section: "summary", address: null, id: null, row: { line: runSummary(vm) } }] : []),
     ...(waiting && !showRun ? [] : [
       ...vm.groups.flatMap((g) => g.rows.map((r) => ({ key: `group:${r.address}`, section: "group", address: r.address, id: null, row: r }))),
       ...vm.sides.map((s) => ({ key: `side:${s.address}`, section: "side", address: s.address, id: null, row: s })),
-      { key: "desk", section: "desk", address: vm.desk.address, id: null, row: vm.desk },
       ...vm.stuck.map((s) => ({ key: `stuck:${s.kind}:${s.name}`, section: "stuck", address: s.address, id: null, row: s })),
     ]),
     ...vm.others.map((o) => ({ key: `other:${o.address}`, section: "others", address: o.address, id: null, row: o })),
@@ -409,12 +465,13 @@ export function flatRows(vm, { openEpic, showRun } = {}) {
 }
 
 // The header's key hint for the selected row.
-export const footerHint = (section) => ({ asks: "↵ accept recommended · n note · v open", answered: ". nudge an answer not picked up · j k move", epic: "↵ open epic · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
+export const footerHint = (section) => ({ batch: "↑ ↓ batch · ← → ask · ↵ recommended · o other idea · n note · / message", desk: "/ message the desk · ↵ show terminal · ↑ ↓ move", answered: ". nudge an answer not picked up · j k move", summary: "↵ show running · j k move" }[section] ?? "j k move · ↵ show terminal");
 
-// Enter on a row: show its terminal in the right-hand pane, or start the desk when there is none. Asks are not shown.
-export function selectTarget(r, cwd) {
+// Enter on a row: show its terminal in the right-hand pane. The desk, when it is not running, starts only on this owner key,
+// through spawn.sh, for the project the settings name (desk_project). Batches are not shown.
+export function selectTarget(r, deskProject) {
   if (r.address) return { show: r.address };
-  if (r.section === "desk") return { start: ["run", "--bg", "--json", "--name", "desk", "--no-parent", "--label", "role=desk", "--cwd", cwd, "--", "claude"] };
+  if (r.section === "desk" && deskProject) return { start: ["spawn", "desk", "--project", deskProject] };
   return null;
 }
 
@@ -425,7 +482,7 @@ export async function perform(a, io) {
   if (!io.pane) return;
   if (a.type === "show") return io.run("terminal.show", { terminal: a.terminal, pane: io.pane });
   if (a.type === "start-desk") {
-    const r = await io.exec("hc", a.argv);
+    const r = await io.exec("work", a.argv);
     let address = null; try { address = JSON.parse(r.stdout).address; } catch { /* not started */ }
     if (address) io.run("terminal.show", { terminal: address, pane: io.pane });
   }

@@ -6,7 +6,8 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv } from "./lib.js";
+import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv,
+  stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState } from "./lib.js";
 
 const MONO = "JetBrains Mono";
 const SANS = "Geist";
@@ -23,7 +24,7 @@ export default class AgentsView extends View {
     this.h.focus();
     this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null };
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
-    this.openEpic = null; this.showRun = false; this.noteBox = null; this.checklist = null; this.kept = new Map(); this.sent = new Set();
+    this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.pos = {}; this.width = null;
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -44,7 +45,7 @@ export default class AgentsView extends View {
 
   model() {
     const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, nowMs: Date.now(), hiddenIds: this.hidden });
-    return { vm, rows: flatRows(vm, { openEpic: this.openEpic, showRun: this.showRun }).filter((r) => r.section !== "others") }; // other sessions show as one count line
+    return { vm, rows: flatRows(vm, { showRun: this.showRun }).filter((r) => r.section !== "others") }; // other sessions show as one count line
   }
 
   pane() { return rightPaneId(panes(), focused()?.tab); }
@@ -62,9 +63,11 @@ export default class AgentsView extends View {
   // a key on an open ask: post the answer, open its plan, or arm a merge/roll/money answer for its second key
   askKey(a, k, cx) {
     this.note = "";
-    if (k === "n" && !a.options.some((o) => o.key === "n")) { this.noteBox = { id: a.id, text: this.kept.get(a.id) ?? "" }; return cx.notify(); }
+    if (k === "n" && !a.options.some((o) => o.key === "n")) { this.input = { mode: "note", id: a.id, text: this.kept.get(a.id) ?? "" }; return cx.notify(); }
     if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.armed = null; return cx.notify(); }
-    return this.act(a, askKeyAction(a, k, this.armed, Date.now(), this.q), cx);
+    const r = askKeyAction(a, k, this.armed, Date.now(), this.q);
+    if (r?.type === "other") { this.input = { mode: "other", id: a.id, text: "" }; return cx.notify(); }
+    return this.act(a, r, cx);
   }
 
   // what a key or Enter resolved to on an ask: post, arm, open the plan, open the batch checklist, or nothing
@@ -111,14 +114,25 @@ export default class AgentsView extends View {
     });
   }
 
-  // while the note box or the batch checklist is open, every key goes to it
+  // a message to the agent behind an ask (its thread) or to the desk; the run files take it first, then it is delivered
+  sendMessage(thread, text, cx) {
+    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
+    perform({ type: "post", argv: messageArgv(thread, text) }, { run, exec, pane: null }).then((x) => { this.note = x?.code === 0 ? "message sent" : "message failed"; this.read(cx); });
+  }
+
+  // while the text input or the batch checklist is open, every key goes to it
   modal(a, k, cx) {
-    if (this.noteBox) {
-      const r = noteStep(this.noteBox.text, k);
-      if (r.type === "send") { this.noteBox = null; this.sendNote(a, r.text, cx); }
-      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.noteBox = null; this.note = "note kept for your pick"; }
-      else if (r.type === "cancel") this.noteBox = null;
-      else this.noteBox = { id: a.id, text: r.text };
+    if (this.input) {
+      const i = this.input, r = noteStep(i.text, k);
+      if (r.type === "send" || (r.type === "keep" && i.mode !== "note")) {
+        this.input = null;
+        if (i.mode === "note") this.sendNote(a, r.text, cx);
+        else if (i.mode === "other") this.send(a, otherArgv(a, r.text), cx);
+        else this.sendMessage(i.thread, r.text, cx);
+      }
+      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.input = null; this.note = "note kept for your pick"; }
+      else if (r.type === "cancel") this.input = null;
+      else this.input = { ...i, text: r.text };
     } else {
       const r = checklistStep(a, this.checklist, k);
       if (r.type === "cancel") this.checklist = null;
@@ -131,9 +145,10 @@ export default class AgentsView extends View {
   // the epic that holds the selected row stays expanded
   select(r) {
     this.touched = true; this.sel = r.key; this.q = 1;
-    if (r.section === "epic") this.openEpic = r.row.key;
-    else if (r.section === "asks") this.openEpic = r.row.epic ?? r.row.card;
   }
+
+  // the ask shown for a batch row: the place in the batch is kept in this.pos
+  askOf(r) { return r?.section === "batch" ? askAt(this.pos, r.row) : null; }
 
   key(e, cx) {
     const k = e.keystroke;

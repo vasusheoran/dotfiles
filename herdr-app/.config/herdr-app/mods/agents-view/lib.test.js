@@ -238,7 +238,7 @@ test("shortCard", () => {
 
 test("viewModel: every input missing", () => {
   const vm = viewModel({ terminals: [], asksText: null, eventsText: null, usageJson: null, nowMs: NOW });
-  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
+  assert.deepEqual(vm, { usage: "", usageWarn: false, upNext: null, runnerLine: null, asks: [], answered: [], askGroups: [], batches: [], lanes: [{ lane: "key", label: "ONE KEY", count: 0, batches: [] }, { lane: "look", label: "NEEDS A LOOK", count: 0, batches: [] }, { lane: "hands", label: "YOUR HANDS", count: 0, batches: [] }, { lane: "groom", label: "NOT READY", count: 0, batches: [] }], threads: {}, deskProject: null, runnerOn: null, stuck: [], groups: [], sides: [], desk: { name: "desk", address: null, state: "not started" }, others: [], asksOld: false, othersLine: "" });
   assert.equal(viewModel({ terminals: [], usageJson: "{broken", nowMs: NOW }).usage, "");
 });
 
@@ -263,14 +263,13 @@ test("flatRows: asks, each group, the desk, stuck, others, in display order; stu
     eventsText: "", usageJson: null, nowMs: NOW,
   });
   const rows = flatRows(vm);
-  assert.deepEqual(rows.map((r) => r.section), ["epic", "asks", "summary", "others"]); // an ask is waiting: running hides behind one line
-  assert.equal(rows[1].id, "legacy-12"); // a legacy row without an id keys on legacy-<trailing digits of its url>
-  assert.equal(rows[1].key, "ask:legacy-12");
+  assert.deepEqual(rows.map((r) => r.section), ["desk", "batch", "summary", "others"]); // the desk first; an ask is waiting: running hides behind one line
+  assert.equal(rows[1].row.asks[0].id, "legacy-12"); // a legacy row without an id keys on legacy-<trailing digits of its url>
   const full = flatRows(vm, { showRun: true });
-  assert.deepEqual(full.map((r) => r.section), ["epic", "asks", "summary", "group", "desk", "stuck", "others"]);
+  assert.deepEqual(full.map((r) => r.section), ["desk", "batch", "summary", "group", "stuck", "others"]);
   assert.equal(full[3].address, "tL");
-  assert.equal(full[5].address, "tL");
-  assert.equal(new Set(full.map((r) => r.key)).size, 7);
+  assert.equal(full[4].address, "tL");
+  assert.equal(new Set(full.map((r) => r.key)).size, 6);
   assert.deepEqual(flatRows({ asks: [], stuck: [], groups: [], sides: [], desk: { address: null }, others: [] }).map((r) => r.section), ["desk"]);
 });
 
@@ -437,22 +436,23 @@ test("viewModel: side jobs are not in the epic groups or other sessions; desk is
   assert.equal(vm.desk.address, "tD");
   assert.deepEqual(vm.others, []);
   assert.deepEqual(vm.groups.map((g) => g.epic), [EPIC]);
-  assert.deepEqual(flatRows(vm).map((r) => r.section), ["group", "side", "desk"]);
+  assert.deepEqual(flatRows(vm).map((r) => r.section), ["desk", "group", "side"]);
 });
 
 test("flatRows: sections in order asks, running (epics then side jobs), desk, stuck, others", () => {
   const side = { address: "tS", name: "card-app-9", status: "working", labels: ["role=side"] };
   const blocked = { address: "tB", name: "x", status: { state: "blocked", kind: "permission" }, labels: [] };
   const vm = viewModel({ terminals: [side, blocked, { address: "tL", name: "lead-app-10", status: "working", labels: ["role=lead", `epic=${EPIC}`] }], asksText: JSON.stringify(rich()), eventsText: "", nowMs: NOW });
-  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["epic", "asks", "summary", "group", "side", "desk", "stuck", "others"]);
+  assert.deepEqual([...new Set(flatRows(vm, { showRun: true }).map((r) => r.section))], ["desk", "batch", "summary", "group", "side", "stuck", "others"]);
 });
 
 test("selectTarget: a terminal row shows its terminal; the desk row starts one when none is live", () => {
   assert.deepEqual(selectTarget({ section: "group", address: "tL" }), { show: "tL" });
   assert.deepEqual(selectTarget({ section: "side", address: "tS" }), { show: "tS" });
   assert.deepEqual(selectTarget({ section: "desk", address: "tD" }), { show: "tD" });
-  const t = selectTarget({ section: "desk", address: null }, "/home/x");
-  assert.deepEqual(t.start, ["run", "--bg", "--json", "--name", "desk", "--no-parent", "--label", "role=desk", "--cwd", "/home/x", "--", "claude"]);
+  // an owner key starts the desk through spawn.sh, for the project the settings name; with no project there is nothing to start
+  assert.deepEqual(selectTarget({ section: "desk", address: null }, "acme/app").start, ["spawn", "desk", "--project", "acme/app"]);
+  assert.equal(selectTarget({ section: "desk", address: null }, null), null);
   assert.equal(selectTarget({ section: "asks", address: null }), null);
 });
 
@@ -473,8 +473,8 @@ test("perform: show calls terminal.show with the terminal and the right-hand pan
   assert.deepEqual(calls.pop(), ["exec", "work", ["ask", "answer", "acme/app#12", "--question", "555", "--text", "1a: x"]]);
   await perform({ type: "open", target: "https://p.test/x" }, { ...io, pane: "p1" });
   assert.deepEqual(calls.pop(), ["exec", "open", ["https://p.test/x"]]);
-  await perform({ type: "start-desk", argv: ["run", "--bg"] }, { ...io, pane: "p1" });
-  assert.deepEqual(calls, [["exec", "hc", ["run", "--bg"]], ["run", "terminal.show", { terminal: "tNew", pane: "p1" }]]);
+  await perform({ type: "start-desk", argv: ["spawn", "desk", "--project", "acme/app"] }, { ...io, pane: "p1" });
+  assert.deepEqual(calls, [["exec", "work", ["spawn", "desk", "--project", "acme/app"]], ["run", "terminal.show", { terminal: "tNew", pane: "p1" }]]);
   const none = []; await perform({ type: "show", terminal: "tL" }, { run: (...a) => none.push(a), exec: io.exec, pane: null });
   assert.deepEqual(none, [], "no right-hand pane: nothing is called");
 });
@@ -765,17 +765,16 @@ test("askGroups: an ask with no epic groups under its own card; none gives no gr
   assert.deepEqual(askGroups([]), []);
 });
 
-test("flatRows: an epic is one row; only the open epic lists its asks; running hides behind one summary row while asks wait", () => {
+test("flatRows: running hides behind one summary row while asks wait, and comes back in full when nothing needs you", () => {
   const vm = viewModel({
     terminals: [{ address: "tL", name: "lead-app-10", labels: { role: "lead", epic: EPIC }, status: "working" }],
-    asksText: [FIX[7], FIX[8], { ...FIX[1], id: "a-9", card: "p/q#4", epic: "p/q#2", ts: "2030-01-01T05:30:00Z" }].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: AFTER,
+    asksText: [FIX[7], FIX[8]].map((l) => JSON.stringify(l)).join("\n"), eventsText: "", nowMs: AFTER,
   });
   const keys = (o) => flatRows(vm, o).map((r) => r.key);
-  assert.deepEqual(keys({}).filter((k) => /^(epic|ask|summary)/.test(k)), ["epic:o/r#1", "ask:a-6", "epic:p/q#2", "summary:running"]); // default: the first epic open
-  assert.deepEqual(keys({ openEpic: "p/q#2" }).filter((k) => /^(epic|ask)/.test(k)), ["epic:o/r#1", "epic:p/q#2", "ask:a-9"]);
-  assert.ok(!keys({}).some((k) => k.startsWith("group:") || k === "desk")); // hidden behind the summary
+  assert.ok(keys({}).includes("summary:running"));
+  assert.ok(!keys({}).some((k) => k.startsWith("group:")));
   assert.ok(keys({ showRun: true }).some((k) => k.startsWith("group:")));
-  assert.ok(flatRows({ ...vm, asks: [], askGroups: [] }).some((r) => r.key === "desk")); // nothing needs you: running comes back in full
+  assert.ok(!flatRows({ ...vm, asks: [], batches: [] }).some((r) => r.key === "summary:running"));
 });
 
 test("runSummary: one line for running, stuck and the runner", () => {
@@ -877,8 +876,7 @@ test("isAskKey: n opens a note on any ask, never an option key", () => {
 });
 
 test("footerHint: asks say how to accept, note and open; other rows say how to show the terminal", () => {
-  assert.equal(footerHint("asks"), "↵ accept recommended · n note · v open");
-  assert.equal(footerHint("epic"), "↵ open epic · j k move");
+  assert.match(footerHint("batch"), /↵ recommended/);
   assert.equal(footerHint("summary"), "↵ show running · j k move");
   assert.equal(footerHint("group"), "j k move · ↵ show terminal");
 });
@@ -958,4 +956,9 @@ test("openAsks: an id-less ask is answered by legacy-<trailing comment id>, and 
 test("openAsks: a missing role means worker and a missing kind means decide, and a cardless ask is never superseded", () => {
   const plain = FIX3.filter((l) => ["a-10", "a-11", "a-12", "a-13"].includes(l.id));
   assert.deepEqual(openAsks(plain, AFTER2).map((a) => a.id), ["a-11", "a-12", "a-13"]);
+});
+
+test("viewModel: the desk's project is the settings' desk_project", () => {
+  assert.equal(viewModel({ terminals: [], settingsJson: JSON.stringify({ desk_project: "acme/app" }), nowMs: NOW }).deskProject, "acme/app");
+  assert.equal(viewModel({ terminals: [], settingsJson: "{}", nowMs: NOW }).deskProject, null);
 });
