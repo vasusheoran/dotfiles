@@ -50,7 +50,7 @@ export function answeredAsks(lines, nowMs) {
 }
 
 export function openAsks(lines, nowMs, closed = []) {
-  const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map();
+  const open = new Map(), seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map(), groomed = new Map();
   for (const l of lines) {
     const k = askKey(l);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); } }
@@ -61,6 +61,7 @@ export function openAsks(lines, nowMs, closed = []) {
     else if (k != null && l.event === "visual_ready" && asked.has(k) && l.url) urls.set(k, l.url); // a picture nobody asked for does not count
     else if (k != null && l.event === "replaced") replaced.set(k, (replaced.get(k) ?? 0) + 1);
     else if (k != null && l.event === "replace_failed") replaced.set(k, (replaced.get(k) ?? 0) - 1); // the claim given back
+    else if (k != null && l.event === "groomed") groomed.set(k, { ...groomed.get(k), [l.member]: l }); // newest event per card
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
     && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))));
@@ -78,6 +79,8 @@ export function openAsks(lines, nowMs, closed = []) {
         today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
         visual: urls.has(askKey(l)) ? "ready" : asked.has(askKey(l)) ? "coming" : "none", visualUrl: urls.get(askKey(l)) ?? null,
         terminal: l.terminal ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
+        // a groom batch: its cards that are still not ready, with their open choices (kuchbhi#1119)
+        cards: Object.values(groomed.get(askKey(l)) ?? {}).filter((g) => !g.ready).map((g) => ({ card: g.member, choices: g.choices ?? [] })),
       };
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -235,7 +238,7 @@ export const messageTarget = (ask) => (ask ? askId(ask) : "desk");
 // ---- batches in four lanes (kuchbhi#1116)
 export const LANE_LABELS = { key: "ONE KEY", look: "NEEDS A LOOK", hands: "YOUR HANDS", groom: "NOT READY" };
 const LANE_ORDER = ["key", "look", "hands", "groom"];
-const askCount = (a) => Math.max(1, a.targets?.length ?? 0);
+const askCount = (a) => Math.max(1, a.targets?.length ?? 0, a.lane === "groom" ? a.cards?.length ?? 0 : 0); // a groom batch counts its cards
 // One batch per batch key (an ask from before batch keys is batched by lane and epic), asks oldest first, batches in lane order.
 export function inboxBatches(asks) {
   const by = new Map();
@@ -246,7 +249,7 @@ export function inboxBatches(asks) {
   }
   return [...by.values()].map((b) => {
     const count = b.asks.reduce((n, a) => n + askCount(a), 0), epic = b.asks[0].epic ?? b.asks[0].card;
-    return { ...b, count, epic, name: b.asks.length === 1 ? b.asks[0].title : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
+    return { ...b, count, epic, name: b.asks.length === 1 && b.lane !== "groom" ? b.asks[0].title : `${shortCard(epic)} · ${count} ${{ key: "merges", look: "to look at", hands: "for your hands", groom: "to groom" }[b.lane]}`,
       coming: b.asks.filter((a) => a.visual === "coming").length,
       asks: [...b.asks].sort((x, y) => (y.visual === "ready") - (x.visual === "ready") || Date.parse(x.ts) - Date.parse(y.ts)) }; // a ready picture goes to the top
   }).sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) || Date.parse(a.asks[0].ts) - Date.parse(b.asks[0].ts));
@@ -329,6 +332,7 @@ export function askView(ask, picks, armed) {
     body: [ask.titled && ask.question.trim() !== ask.title ? ask.question : ask.question.split("\n").slice(1).join("\n"), qs.length ? ask.body.replace(/^\s*\d+\..*$/gm, "").replace(/^\s+[a-z]\).*$/gm, "") : ask.body]
       .map((x) => x.trim()).filter(Boolean).join("\n"),
     targets: ask.targets.map((t) => ({ id: t.id, label: `${shortCard(t.repo)}#${t.pr}${t.landed ? " (landed)" : ""}` })),
+    cards: (ask.cards ?? []).map((c) => ({ label: shortCard(c.card), choices: c.choices })),
     plan: planRef(ask.plan), marker: { plan: "plan", pr: "PR" }[planRef(ask.plan)?.kind] ?? "",
     questions: qs.map((q) => ({ q, title: titles[q] ?? "", options: ask.options.filter((o) => o.q === q).map((o) => ({
       key: o.key, label: o.label, then: o.then ?? null, rec: recommended(ask)[q] === o.key, picked: picks?.[q]?.startsWith(`${q}${o.key}:`) ?? false,
