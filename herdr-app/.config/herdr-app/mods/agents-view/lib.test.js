@@ -524,13 +524,13 @@ test("perform: show calls terminal.show with the terminal and the right-hand pan
   assert.deepEqual(none, [], "no right-hand pane: nothing is called");
 });
 
-test("main-agents layout: agents-view is a child of the panel-body stack, the tab bar is tabs-agents, control-room is gone", async () => {
+test("main-agents layout: no agents-view column (Agents is the Inbox tab), the tab bar is tabs-agents, control-room is gone", async () => {
   const { readFileSync, existsSync } = await import("node:fs");
   const l = JSON.parse(readFileSync(new URL("../../layouts/main-agents.json", import.meta.url), "utf8"));
   const find = (n, f) => (f(n) ? [n] : (n.children ?? []).flatMap((c) => find(c, f)));
   const [stack] = find(l, (n) => n.id === "panel-body");
   assert.deepEqual(stack.children.map((c) => c.id).slice(0, 2), ["files", "changes"]);
-  assert.ok(stack.children.some((c) => c.id === "agents-view" && c.content.mod === "agents-view"), "the panel block id matches the tab-bar button");
+  assert.equal(find(l, (n) => n.content?.mod === "agents-view").length, 0, "the Inbox is a tab, not a column on the right");
   assert.equal(find(l, (n) => n.id === "tabs")[0].content.mod, "tabs-agents");
   const ids = find(l, () => true).map((n) => n.id);
   assert.equal(new Set(ids).size, ids.length, "block ids are unique (a clash drew the view in the sidebar)");
