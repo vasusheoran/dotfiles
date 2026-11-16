@@ -721,3 +721,7 @@ export function pushHistory(history, focused) {
 
 // The start dialog's mode as given; work when missing or unknown.
 export const startMode = (m) => (m === "quick" || m === "brief" ? m : "work");
+
+// The Inbox (agents-view) asks the board to show an epic by writing its ref to the shared flag EPIC_REQUEST; the board takes it once. A ref that is not owner/repo#N is ignored.
+export const EPIC_REQUEST = "zaksha-board.epic";
+export const epicRequest = (v) => (typeof v === "string" && /^[\w.-]+\/[\w.-]+#\d+$/.test(v) ? v : null);

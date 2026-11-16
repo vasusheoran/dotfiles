@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
+import { toggleStep, LIST_FOCUS, LIST_HAS_FOCUS } from "./lib.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -12,15 +13,17 @@ function find(node, id) {
 }
 
 // Fork of the shipped tabs mod (kuchbhi#1058): adds an Agents panel button and the `toggle` command (ctrl-b a in keys.json).
-// Toggle shows or hides the panel with the Agents panel selected, like clicking its button.
+// Toggle (cmd-shift-a) is three steps: show the list and focus it, focus it, hide it: see lib.js. The Agents button only shows or hides the panel.
 export default class Tabs extends View {
   init(_props, cx) {
     cx.spawn(async () => {
       for (;;) {
         if (await nextCommand() !== "toggle") continue;
         const panel = find(layout(), "panel"), body = find(layout(), "panel-body");
-        if (panel && !panel.hidden && body?.active === "agents-view") run("layout.hide", { id: "panel" });
-        else { run("layout.select", { stack: "panel-body", child: "agents-view" }); run("layout.show", { id: "panel" }); }
+        const step = toggleStep({ shown: !!panel && !panel.hidden && body?.active === "agents-view", focused: !!shared(LIST_HAS_FOCUS) });
+        if (step.hide) run("layout.hide", { id: "panel" });
+        if (step.show) { run("layout.select", { stack: "panel-body", child: "agents-view" }); run("layout.show", { id: "panel" }); }
+        if (step.focus) setShared(LIST_FOCUS, Date.now()); // the list takes the keyboard on its next tick
       }
     });
     this.pressed = null;

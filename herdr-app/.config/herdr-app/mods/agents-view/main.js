@@ -1,283 +1,132 @@
-// Agents view: leads, workers, questions waiting on the owner, and what is stuck. Reads terminals(), asks.jsonl,
-// events.jsonl, the runner's up-next.json and the usage file; no network. The logic is in lib.js (tested with node --test); this file reads, draws and handles keys.
-// A side panel (the `agents-view` block of layouts/main-agents.json, opened by the Agents button of the tabs-agents mod): Enter shows the
-// selected terminal in the main pane (terminal.show) and a key on an ask posts the answer through `work ask answer`.
-// When ~/.config/herdr-app/agents-view-fixture/ exists it is read instead of the live run files (screenshots only).
+// The leads side list (kuchbhi#1115, 16 Nov direction): one row per lead, grouped Waiting on you / Stuck / Working, the rest folded. Selecting a lead switches the
+// main area to that lead's own tab (agent.focus), where the owner reads and answers; this list never answers anything. The logic is in lib.js (leadRows).
+// Reads asks.jsonl, closed-cards.json, stuck.json and each lead's last screen lines (hc read, at most every 30s per lead); no network.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, props, terminals, panes, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint } from "./lib.js";
+import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home } from "herdr";
+import { viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
-const MONO = "JetBrains Mono";
-const SANS = "Geist";
-const REFRESH_MS = 5000;
-const POPUP_BODY_H = 560;
-const ROW = 28;
-
+const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
+const MONO = "JetBrains Mono", SANS = "Geist";
+const REFRESH_MS = 5000, SCREEN_MS = 30_000;
+const LIST_ITEMS = 12; // rows shown at once (group heads count); the selected one sits a third of the way down
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
 const sans = (size, color, text) => div().font_family(SANS).text_size(size).text_color(color).child(text);
 
-export default class AgentsView extends View {
+export default class LeadsList extends View {
   init(_props, cx) {
-    this.h = cx.focus_handle();
-    this.h.focus();
-    this.files = { asks: null, events: null, usage: null, upNext: null, settings: null, closed: null, stuck: null };
-    this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
-    this.openEpic = null; this.showRun = false; this.noteBox = null; this.checklist = null; this.kept = new Map(); this.sent = new Set();
+    this.h = cx.focus_handle(); this.h.focus();
+    this.files = { asks: null, events: null, closed: null, stuck: null };
+    this.sel = null; this.selIdx = 0; this.unfolded = false; this.flash = ""; this.memo = null;
+    this.waits = {}; this.lastLines = {}; this.screenAt = {};
+    cx.timer.every(250, () => this.watchFocus());
     this.read(cx);
-    cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
+    cx.timer.every(REFRESH_MS, (c) => this.read(c));
+  }
+
+  // cmd-shift-a (tabs-agents.toggle) asks for the keyboard through a shared flag; this publishes whether the list holds it, so the toggle knows to hide it next
+  watchFocus() {
+    const on = this.h.is_focused(), asked = shared(LIST_FOCUS);
+    // the request is a timestamp: while the panel was hidden this instance could not take the keyboard, so it keeps asking until it holds it, for 2s at most
+    if (asked) { if (on || Date.now() - asked > 2000) setShared(LIST_FOCUS, null); else this.h.focus(); }
+    if (shared(LIST_HAS_FOCUS) !== on) setShared(LIST_HAS_FOCUS, on);
   }
 
   async read(cx) {
-    // the fixture folder wins when it holds any of the four files; one read of each, no subprocess
-    const read1 = (p) => readTextFile(p).catch(() => null);
-    let f = runFiles(home(), true), got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed, f.stuck].map(read1));
-    this.fixture = got.some((x) => x != null);
-    if (!this.fixture) { f = runFiles(home(), false); got = await Promise.all([f.asks, f.events, f.usage, f.upNext, f.settings, f.closed, f.stuck].map(read1)); }
-    const [asks, events, usage, upNext, settings, closed, stuck] = got;
-    this.files = { asks, events, usage, upNext, settings, closed, stuck };
-    if (this.armed && Date.now() - this.armed.at > 10_000) this.armed = null;
-    this.note = ""; // a note lasts one refresh, so the usage warning comes back
-    this.deskIfGone();
+    const read1 = (p) => readTextFile(p).catch(() => null), f = runFiles(home(), false);
+    const [asks, events, closed, stuck] = await Promise.all([f.asks, f.events, f.closed, f.stuck].map(read1));
+    this.files = { asks, events, closed, stuck };
+    cx.notify();
+    this.readScreens(cx);
+  }
+
+  // each lead's last 15 screen lines, at most every 30s per lead: its last line, and whether it ends with a question for the owner. The regexes run here, never in render:
+  // the engine interrupts a slow render
+  async readScreens(cx) {
+    const now = Date.now(), due = this.model().all.filter((r) => now - (this.screenAt[r.address] ?? 0) >= SCREEN_MS);
+    if (!due.length) return;
+    for (const r of due) this.screenAt[r.address] = now;
+    const got = await Promise.all(due.map((r) => exec("hc", ["read", r.address, "--lines", "15"]).then((x) => (x?.code === 0 ? String(x.stdout ?? "") : ""), () => "")));
+    due.forEach((r, i) => { this.waits[r.address] = waitingLines(got[i]); this.lastLines[r.address] = lastScreenLine(got[i]); });
     cx.notify();
   }
 
+  // the rows are rebuilt only when an input changed (or every 30s for the ages): the run file is big and the engine interrupts a slow render
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden });
-    return { vm, rows: flatRows(vm, { openEpic: this.openEpic, showRun: this.showRun }).filter((r) => r.section !== "others") }; // other sessions show as one count line
-  }
-
-  pane() { return rightPaneId(panes(), focused()?.tab); }
-
-  // when the shown terminal exits, the right-hand pane goes back to the desk
-  deskIfGone() {
-    if (!this.shown || terminals().some((t) => t.address === this.shown && (t.state == null || t.state === "live"))) return;
-    this.shown = null;
-    const desk = this.model().vm.desk;
-    if (desk.address) this.show(desk.address);
-  }
-
-  show(address) { this.shown = address; return perform({ type: "show", terminal: address }, { run, exec, pane: this.pane() }); }
-
-  // a key on an open ask: post the answer, open its plan, or arm a merge/roll/money answer for its second key
-  askKey(a, k, cx) {
-    this.note = "";
-    if (k === "n" && !a.options.some((o) => o.key === "n")) { this.noteBox = { id: a.id, text: this.kept.get(a.id) ?? "" }; return cx.notify(); }
-    if (/^[1-9]$/.test(k) && a.options.some((o) => String(o.q) === k)) { this.q = Number(k); this.armed = null; return cx.notify(); }
-    return this.act(a, askKeyAction(a, k, this.armed, Date.now(), this.q), cx);
-  }
-
-  // what a key or Enter resolved to on an ask: post, arm, open the plan, open the batch checklist, or nothing
-  act(a, r, cx) {
-    if (!r) { this.note = "nothing recommended: press an option letter"; return cx.notify(); }
-    this.armed = r.type === "arm" ? r.armed : null;
-    if (r.type === "checklist") { this.checklist = { id: a.id, cur: 0, chosen: [] }; return cx.notify(); }
-    if (r.type === "pick") { // kept by id, so a refreshed row keeps its picks
-      const picks = { ...this.picks.get(a.id), [r.q]: r.text }; this.picks.set(a.id, picks);
-      const text = composeAnswer(a, picks);
-      if (text == null) { this.note = `picked ${r.text.split(":")[0]}`; return cx.notify(); }
-      r = { type: "post", text }; // composed from several picks: no key
+    const f = this.files, key = [f.asks, f.events, f.closed, f.stuck, JSON.stringify(terminals()), JSON.stringify(this.waits), JSON.stringify(this.lastLines), Math.floor(Date.now() / 30_000)];
+    if (!this.memo || key.some((k, i) => k !== this.memo.key[i])) {
+      const vm = viewModel({ terminals: terminals(), asksText: f.asks, eventsText: f.events, closedJson: f.closed, stuckJson: f.stuck, nowMs: Date.now() });
+      const list = leadRows({ terminals: terminals(), asks: vm.asks, stuck: vm.stuck, statuses: leadStatuses(parseJsonl(f.asks)), titles: vm.titles, waits: this.waits, lastLines: this.lastLines, nowMs: Date.now() });
+      this.memo = { key, list, vm };
     }
-    if (r.type === "post") this.send(a, answerArgv(a, r.text, { key: r.key, note: this.kept.get(a.id) }), cx);
-    else if (r.type === "open") perform(r, { run, exec, pane: null });
-    else if (r.type === "arm") this.note = `${r.body || "no details"} · press ${r.armed.key === "enter" ? "↵" : r.armed.key} again within 10s to send`;
-    cx.notify();
+    const { list } = this.memo, rows = this.unfolded ? [...list.rows, ...list.fold.rows] : list.rows;
+    return { list, rows, all: [...list.rows, ...list.fold.rows] };
   }
 
-  // answers go through `work ask answer`; one in flight per ask
-  send(a, argv, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); } // screenshots never answer a real ask
-    if (this.hidden.has(a.id)) return; // a post for this ask is in flight or done
-    this.hidden.add(a.id);
-    perform({ type: "post", argv }, { run, exec, pane: null }).then((x) => {
-      if (x?.code === 0) { this.note = `answered ${shortCard(a.card)}`; this.kept.delete(a.id); this.checklist = null; } else { this.hidden.delete(a.id); this.note = "answer failed"; }
-      cx.notify();
-    });
-  }
-
-  // a note alone: recorded and sent to the asker, the ask stays open
-  sendNote(a, text, cx) {
-    if (this.fixture) { this.note = "fixture data: nothing sent"; return cx.notify(); }
-    perform({ type: "post", argv: noteArgv(a, text) }, { run, exec, pane: null }).then((x) => {
-      if (x?.code === 0) { this.sent.add(a.id); this.note = "note sent"; } else this.note = "note failed";
-      cx.notify();
-    });
-  }
-
-  // while the note box or the batch checklist is open, every key goes to it
-  modal(a, k, cx) {
-    if (this.noteBox) {
-      const r = noteStep(this.noteBox.text, k);
-      if (r.type === "send") { this.noteBox = null; this.sendNote(a, r.text, cx); }
-      else if (r.type === "keep") { this.kept.set(a.id, r.text); this.noteBox = null; this.note = "note kept for your pick"; }
-      else if (r.type === "cancel") this.noteBox = null;
-      else this.noteBox = { id: a.id, text: r.text };
-    } else {
-      const r = checklistStep(a, this.checklist, k);
-      if (r.type === "cancel") this.checklist = null;
-      else if (r.type === "send") this.send(a, answerArgv(a, r.text, { key: r.key, only: r.only, note: this.kept.get(a.id) }), cx);
-      else this.checklist = { ...r, id: a.id };
-    }
-    cx.notify();
-  }
-
-  // the epic that holds the selected row stays expanded
-  select(r) {
-    this.touched = true; this.sel = r.key; this.q = 1;
-    if (r.section === "epic") this.openEpic = r.row.key;
-    else if (r.section === "asks") this.openEpic = r.row.epic ?? r.row.card;
+  select(i, rows, cx) {
+    this.selIdx = Math.max(0, Math.min(rows.length - 1, i)); const r = rows[this.selIdx];
+    if (!r) return;
+    this.sel = r.key; this.flash = "";
+    // the main area switches to the lead's own tab. tab.select leaves the keyboard on the list (agent.focus takes it), so the next arrow key still lands here;
+    // only ↵ moves it into the tab (it has to be taken back: see below). A lead without its tab's id (no herdr.tab label) falls back to agent.focus.
+    if (!r.tab) return run("agent.focus", { terminal: r.address });
+    if (r.space && r.space !== spaces().find((s) => s.active)?.id) run("space.select", { id: r.space });
+    run("tab.select", { id: r.tab });
+    cx.timer.after(0, () => this.h.focus()); // checked live: tab.select also hands the keyboard to the new tab's pane, so the list takes it back
   }
 
   key(e, cx) {
-    const k = e.keystroke;
-    const { rows } = this.model();
-    const cur = rows[this.selIdx];
-    if ((this.noteBox || this.checklist) && cur?.section === "asks" && cur.id === (this.noteBox ?? this.checklist).id) { cx.stop_propagation(); return this.modal(cur.row, k, cx); }
-    this.noteBox = null; this.checklist = null;
-    if (k === "enter" && cur?.section === "asks") {
-      cx.stop_propagation(); this.note = "";
-      return this.act(cur.row, acceptRecommended(cur.row, this.armed, Date.now()), cx);
-    }
-    if (cur?.section === "asks" && isAskKey(cur.row, k, this.armed)) { cx.stop_propagation(); return this.askKey(cur.row, k, cx); }
-    this.armed = null; // navigation cancels an armed answer and still moves
-    if (!["escape", "enter", "down", "up", "j", "k"].includes(k)) return;
-    cx.stop_propagation();
-    if (k === "escape") return props()?.overlay ? closeOverlay(props()?.overlay) : undefined;
-    if (k === "enter") { this.open(rows[this.selIdx]); return cx.notify(); }
-    this.selIdx = Math.max(0, Math.min(rows.length - 1, this.selIdx + (k === "down" || k === "j" ? 1 : -1)));
-    if (rows[this.selIdx]) this.select(rows[this.selIdx]);
+    const k = e.keystroke, { rows } = this.model(), cur = rows[this.selIdx];
+    if (k === "down" || k === "j") this.select(this.selIdx + 1, rows, cx);
+    else if (k === "up" || k === "k") this.select(this.selIdx - 1, rows, cx);
+    else if (k === "enter" && cur) { const p = panes().find((x) => x.terminal === cur.address); if (p) run("pane.focus", { pane: p.pane }); } // the keyboard goes into the lead's tab
+    else if (k === "B" && cur?.epic) this.board(cur);
+    else if (k === "space") this.unfolded = !this.unfolded;
     cx.notify();
   }
 
-  open(r) {
-    if (r?.section === "epic") { const first = this.model().rows.find((x) => x.section === "asks" && (x.row.epic ?? x.row.card) === r.row.key); if (first) this.select(first); return; }
-    if (r?.section === "summary") { this.showRun = !this.showRun; return; }
-    if (!r || r.section === "asks" || this.fixture) return; // fixture rows are not real terminals
-    const t = selectTarget(r, `${home()}/workspace/vasu`);
-    if (t?.show) this.show(t.show);
-    else if (t?.start) perform({ type: "start-desk", argv: t.start }, { run, exec, pane: this.pane() });
+  // B: the board where it is already open, at this lead's epic; none open says so. Never opens a board.
+  board(cur) {
+    const r = boardStep({ spaces: spaces(), panes: panes(), epic: cur.epic });
+    if (r.share) setShared(BOARD_EPIC, r.share);
+    for (const st of r.steps) run(...st);
+    this.flash = r.receipt || `board: showing ${cur.title}`;
   }
 
-  section(t, label, count, red) {
-    return h_flex().w_full().flex_none().px(14).pt(16).pb(4).gap(8).items_baseline()
-      .child(div().text_size(12).text_color(t.muted).child(label)).child(mono(11, red ? t.blocked : t.dim, String(count)));
+  // the last line, with its links (URLs, #N, paths) clickable
+  line(t, text, repo, key) {
+    const segs = linkSegments(text, repo);
+    if (!segs.some((x) => x.link)) return sans(12, t.muted, text).w_full().min_w(0).max_h(34).overflow_hidden();
+    return h_flex().w_full().flex_wrap().items_baseline().max_h(34).overflow_hidden().children(segs.map((x, i) => (x.link
+      ? div().id(`${key}:l${i}`).font_family(SANS).text_size(12).text_color(t.accent).underline().cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); const g = linkTarget(x, repo); if (g) perform({ type: "open", target: g.open }, { run, exec, pane: null }); }).child(x.text)
+      : div().font_family(SANS).text_size(12).text_color(t.muted).child(x.text))));
   }
 
-  empty(t, text) { return div().w_full().flex_none().px(14).py(4).text_size(13).text_color(t.dim).child(text); }
-
-  label(t, text) { return div().w_full().flex_none().px(14).pt(8).text_size(12).text_color(t.dim).child(text); }
-
-  keycap(t, k) {
-    return div().min_w(18).h(18).px(4).flex_none().flex().items_center().justify_center().rounded(4).border_1().border_color(t.border).font_family(MONO).text_size(11).text_color(t.muted).child(k);
-  }
-
-  // an ask: card, kind and age over the first line of the question; selected, it opens in place with its options as buttons
-  ask(t, r) {
-    const a = r.row, sel = r.key === this.sel;
-    const v = askView(a, this.picks.get(a.id) ?? {}, this.armed);
-    const el = v_flex().id(r.key).w_full().flex_none().px(14).py(8).gap(2).when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => this.select(r))
-      .child(h_flex().w_full().gap(8).items_baseline().child(mono(13, t.foreground, v.card)).child(sans(12, t.muted, v.kind))
-        .when(v.noteSent || this.sent.has(a.id), (e) => e.child(sans(11, t.done, "note sent")))
-        .child(div().flex_1()).child(mono(12, t.muted, v.age)))
-      .child(h_flex().w_full().gap(6).items_baseline().child(sans(13, t.foreground, v.title).min_w(0).when(!sel, (e) => e.flex_1().truncate()))
-        .when(!sel && !!v.marker, (e) => e.child(sans(12, t.dim, `· ${v.marker}`).flex_none())));
-    if (!sel) return el;
-    // title, then the options, then the plan or PR link, then the body
-    return el      .children(v.questions.map((q) => v_flex().w_full().gap(4).pt(8)
-        .when(!!q.title, (e) => e.child(sans(12, t.dim, `${q.q} · ${q.title}`)))
-        .children(q.options.map((o) => h_flex().id(`${r.key}:${q.q}${o.key}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6)
-          .bg(o.armed ? t.accent : t.raised).when(o.picked, (e) => e.border_1().border_color(t.accent))
-          .on_click((_e, cx) => { this.q = q.q; this.askKey(a, o.key, cx); })
-          .child(this.keycap(t, o.key)).child(sans(13, o.armed ? t.background : t.foreground, o.label).flex_1().min_w(0).truncate())
-          .when(o.rec && !o.armed, (e) => e.child(sans(11, t.done, "↵").flex_none()))
-          .when(o.armed, (e) => e.child(sans(11, t.background, "press again to send")))))))
-      .when(this.checklist?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
-        .children(v.targets.map((tg, i) => h_flex().id(`${r.key}:t${i}`).w_full().h(ROW).px(8).gap(10).items_center().rounded(6).bg(this.checklist.cur === i ? t.selected : t.raised)
-          .child(mono(12, t.foreground, this.checklist.chosen.includes(tg.id) ? "[x]" : "[ ]")).child(sans(13, t.foreground, tg.label)).child(div().flex_1())))
-        .child(sans(11, t.dim, "space toggles · ↵ sends (none = hold all) · esc cancels"))))
-      .when(this.noteBox?.id === a.id, (e) => e.child(v_flex().w_full().gap(2).pt(8)
-        .child(h_flex().w_full().h(ROW).px(8).items_center().rounded(6).bg(t.raised).border_1().border_color(t.accent).child(sans(13, t.foreground, `${this.noteBox.text}▏`)))
-        .child(sans(11, t.dim, "↵ send alone · tab keep for your pick · esc cancel"))))
-      .when(!!v.plan, (e) => e.child(v_flex().id(`${r.key}:plan`).w_full().pt(8).gap(2)
-        .on_click(() => perform({ type: "open", target: v.plan.full }, { run, exec, pane: null }))
-        .child(h_flex().gap(8).items_center().child(sans(13, t.accent, v.plan.line)).child(this.keycap(t, "v")))
-        .child(mono(11, t.dim, v.plan.full).w_full().truncate())))
-      .when(!!v.body, (e) => e.child(div().id(`${r.key}:body`).w_full().max_h(160).overflow_y_scrollbar().pt(4).child(sans(12, t.muted, v.body))))
-      .when(!!v.status, (e) => e.child(sans(12, t.muted, v.status).pt(4)));
-  }
-
-  // one epic with asks, as one line: counts by kind and the oldest age; the open epic lists its asks under it
-  epic(t, r, open) {
-    const sel = r.key === this.sel;
-    return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-        .on_click((_e, cx) => { this.select(r); cx.notify(); })
-      .child(mono(12, t.dim, open ? "▾" : "▸")).child(sans(13, t.foreground, r.row.line).flex_1().min_w(0).truncate());
-  }
-
-  // running, stuck and the runner as one line while asks wait; Enter shows or hides the lists
-  summary(t, r) {
-    const sel = r.key === this.sel;
-    return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click((_e, cx) => { this.select(r); this.showRun = !this.showRun; cx.notify(); })
-      .child(mono(12, t.dim, this.showRun ? "▾" : "▸")).child(sans(12, t.muted, r.row.line).flex_1().min_w(0).truncate());
-  }
-
-  // one running, stuck or desk row: a status dot, the name, a muted middle, a state on the right
-  line(t, r, parts, tone) {
-    const sel = r.key === this.sel;
-    return h_flex().id(r.key).w_full().h(ROW).flex_none().px(14).gap(8).items_center().when(sel, (e) => e.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click(() => { this.touched = true; this.sel = r.key; this.open(r); })
-      .child(div().size(6).flex_none().rounded(3).bg(tone ?? t.dim))
-      .child(sans(13, t.foreground, parts[0]).flex_1().min_w(72).truncate())
-      .child(mono(12, t.muted, parts[1] ?? "").flex_none())
-      .child(sans(12, t.muted, parts[2] ?? "").max_w(180).truncate());
+  row(t, r, rows) {
+    const sel = r.key === this.sel, dot = { waiting: t.accent, stuck: t.blocked, working: t.working }[r.group] ?? t.dim, repo = String(r.epic ?? "").split("#")[0];
+    return v_flex().id(r.key).w_full().flex_none().px(14).py(6).gap(2).rounded(6).when(sel, (x) => x.bg(t.selected).border_l_2().border_color(t.accent))
+      .on_click((_e, cx) => { this.select(rows.indexOf(r), rows, cx); cx.notify(); })
+      .child(h_flex().w_full().gap(8).items_center().child(div().size(7).flex_none().rounded(4).bg(dot)).child(sans(13, t.foreground, r.title).font_semibold().flex_1().min_w(0).truncate())
+        .when(r.ageMs != null, (x) => x.child(mono(11, t.muted, ageText(r.ageMs)).flex_none())))
+      .child(v_flex().w_full().pl(15).gap(1).child(this.line(t, r.last, repo, r.key)).child(mono(11, t.dim, r.meta).w_full().truncate()));
   }
 
   render(cx) {
-    const t = theme();
-    const { vm, rows } = this.model();
-    const keys = rows.map((r) => r.key);
-    if (!this.touched) this.sel = rows.find((r) => r.section === "asks")?.key ?? keys[0] ?? null; // until the owner moves, the panel rests on the first ask of the open epic
-    if (!keys.includes(this.sel)) this.sel = keys[Math.min(this.selIdx, keys.length - 1)] ?? null;
-    this.selIdx = Math.max(0, keys.indexOf(this.sel));
-    const at = (section, i) => rows.filter((r) => r.section === section)[i];
-    const tone = (s) => (s === "blocked" || s === "error" ? t.blocked : s === "working" ? t.working : s === "done" ? t.done : t.dim);
-
-    const byKey = new Map(rows.map((r) => [r.key, r]));
-    const waiting = vm.asks.length > 0, runCount = vm.groups.reduce((n, g) => n + g.rows.length, 0) + vm.sides.length;
-    const asksBody = vm.askGroups.flatMap((g) => {
-      const open = g.asks.length > 0 && byKey.has(`ask:${g.asks[0].id}`);
-      return [this.epic(t, byKey.get(`epic:${g.key}`), open), ...(open ? g.asks.map((a) => this.ask(t, byKey.get(`ask:${a.id}`))) : [])];
-    });
-    // built only when shown: while asks wait and the lists are hidden, `rows` has no running, desk or stuck rows
-    const runBody = () => [
-      this.section(t, "Running", runCount, false),
-      ...(runCount ? [] : [this.empty(t, "Nothing running")]),
-      ...vm.groups.flatMap((g) => {
-        const first = rows.findIndex((r) => r.section === "group" && r.address === g.rows[0].address);
-        return [this.label(t, g.epic), ...g.rows.map((r, i) => this.line(t, rows[first + i], [r.name, r.role === "worker" ? r.model ?? "" : "", r.state], tone(r.state)))];
-      }),
-      ...(vm.sides.length ? [this.label(t, "Side jobs"), ...vm.sides.map((s, i) => this.line(t, at("side", i), [s.name, [s.card && shortCard(s.card)].filter(Boolean).join(""), s.state], tone(s.state)))] : []),
-      this.label(t, "General"),
-      this.line(t, at("desk", 0), [vm.desk.name, "", vm.desk.state], tone(vm.desk.state)),
-      ...(vm.stuck.length ? [this.section(t, "Stuck", vm.stuck.length, true), ...vm.stuck.map((s, i) => this.line(t, at("stuck", i), [s.name, "", [s.text, s.ageMs == null ? "" : ageText(s.ageMs)].filter(Boolean).join(" · ")], t.blocked))] : []),
-      ...(vm.upNext ? [mono(12, t.muted, vm.upNext).w_full().flex_none().px(14).pt(12)] : []),
-      ...(vm.runnerLine ? [mono(12, t.muted, vm.runnerLine).w_full().flex_none().px(14).pt(vm.upNext ? 4 : 12)] : []),
+    const t = theme(), { list, rows } = this.model();
+    if (this.selIdx >= rows.length) this.selIdx = Math.max(0, rows.length - 1);
+    if (!this.sel && rows[0]) this.sel = rows[0].key; // nothing is focused until the owner moves
+    const items = [
+      ...list.groups.flatMap((g) => [{ key: `head:${g.id}`, make: () => sans(11, t.dim, g.label).w_full().flex_none().px(14).pt(10).pb(2) }, ...g.rows.map((r) => ({ key: r.key, make: () => this.row(t, r, rows) }))]),
+      ...(list.fold.count ? [{ key: "fold", make: () => h_flex().id("fold").w_full().flex_none().px(14).py(8).on_click((_e, c) => { this.unfolded = !this.unfolded; c.notify(); }).child(sans(12, t.dim, `${this.unfolded ? "▾" : "▸"} ${list.fold.label}`)) }, ...(this.unfolded ? list.fold.rows.map((r) => ({ key: r.key, make: () => this.row(t, r, rows) })) : [])] : []),
     ];
-    const body = [
-      this.section(t, "Needs you", vm.asks.length, vm.asksOld),
-      ...(waiting ? [...asksBody, this.summary(t, byKey.get("summary:running"))] : [this.empty(t, "No questions waiting")]),
-      ...(!waiting || this.showRun ? runBody() : []),
-      ...(vm.othersLine ? [sans(12, t.dim, vm.othersLine).w_full().flex_none().px(14).pt(12)] : []),
-    ];
-
-    return v_flex().id("agents-view").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
-      .track_focus(this.h).on_mouse_down("left", () => this.h.focus())
-      .on_key_down((e, cx) => this.key(e, cx))
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(sans(13, t.foreground, "Agents").font_semibold()).child(div().flex_1()).child(sans(12, t.dim, footerHint(rows[this.selIdx]?.section))))
-      .child(v_flex().id("av-body").w_full().flex_1().min_h(props()?.overlay ? POPUP_BODY_H : 0).overflow_y_scrollbar().children(body))
-      .child(div().w_full().flex_none().px(14).py(8).child(this.note ? sans(12, t.foreground, this.note) : mono(11, vm.usageWarn ? t.working : t.dim, vm.usage)));
+    const at = Math.max(0, items.findIndex((x) => x.key === this.sel)), start = listWindow(items.length, at, LIST_ITEMS);
+    const waiting = list.groups.find((g) => g.id === "waiting")?.rows.length ?? 0, working = list.groups.find((g) => g.id === "working")?.rows.length ?? 0;
+    return v_flex().id("leads").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+      .track_focus(this.h).on_mouse_down("left", () => this.h.focus()).on_key_down((e, c) => this.key(e, c))
+      .child(v_flex().w_full().flex_none().px(14).py(10).gap(2).border_b(1).border_color(t.border).child(sans(13, t.foreground, "Leads").font_semibold())
+        .child(sans(12, t.muted, [waiting ? `${waiting} waiting on you` : "", working ? `${working} working` : ""].filter(Boolean).join(" · ") || "nothing waiting")))
+      .child(v_flex().id("leads-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.slice(start, start + LIST_ITEMS).map((x) => x.make())))
+      .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)))
+      .child(div().w_full().flex_none().px(14).py(4).border_t(1).border_color(t.border).child(sans(11, t.dim, "↑ ↓ lead · ↵ type in its tab · cmd-shift-a back here · B board · space shows the idle")));
   }
 }
