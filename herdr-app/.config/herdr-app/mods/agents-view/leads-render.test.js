@@ -32,7 +32,7 @@ const lacks = (d, x) => assert.ok(!d.some((s) => (x instanceof RegExp ? x.test(s
 const draw = (terminals = TERMS, o = {}) => {
   globalThis.__terms = terminals; globalThis.__runs = []; globalThis.__panes = o.panes ?? terminals.map((t, i) => ({ pane: `p${i + 1}`, tab: `tb${i + 1}`, terminal: t.address })); globalThis.__spaces = o.spaces ?? [];
   const v = new AgentsView();
-  globalThis.__focus = 0; v.init({}, { focus_handle: () => ({ focus() { globalThis.__focus++; } }), timer: { every() {} }, spawn() {}, notify() {} });
+  globalThis.__focus = 0; v.init({}, { focus_handle: () => ({ focus() { globalThis.__focus++; }, is_focused: () => !!globalThis.__isFocused }), timer: { every() {} }, spawn() {}, notify() {} });
   v.files = { asks: o.asks ?? status, events: "", usage: null, upNext: null, settings: null, closed, stuck: null };
   v.waits = o.waits ?? {}; v.lastLines = o.lastLines ?? {};
   v.drawn = paint(v); return v;
@@ -80,4 +80,23 @@ test("tab.select hands the keyboard to the lead's pane, so the list takes it bac
   press(v, "enter"); while (timers.length) timers.shift()(tcx);
   assert.equal(globalThis.__focus, base + 1, "↵ leaves the keyboard in the tab");
   assert.deepEqual(runs().at(-1), ["pane.focus", { pane: "p2" }]);
+});
+
+// ---- cmd-shift-a: tabs-agents asks the list to take the keyboard through a shared flag, and reads back whether it holds it
+test("the list keeps asking for the keyboard until it has it (it may not be on screen yet), then clears the request; an old request is dropped", () => {
+  const v = draw(); const base = globalThis.__focus;
+  v.watchFocus(); assert.equal(globalThis.__focus, base, "no request, no focus");
+  globalThis.__shared = { ...globalThis.__shared, "agents-view.focus": Date.now() }; globalThis.__isFocused = false;
+  v.watchFocus(); v.watchFocus(); assert.equal(globalThis.__focus, base + 2, "still not focused (the panel was hidden a moment ago): it asks again");
+  assert.ok(globalThis.__shared["agents-view.focus"], "the request stays");
+  globalThis.__isFocused = true; v.watchFocus(); assert.equal(globalThis.__shared["agents-view.focus"], null, "focused: the request is done");
+  globalThis.__isFocused = false; globalThis.__shared["agents-view.focus"] = Date.now() - 5000; const n = globalThis.__focus; v.watchFocus();
+  assert.equal(globalThis.__focus, n, "a request older than 2s is dropped without focusing"); assert.equal(globalThis.__shared["agents-view.focus"], null);
+});
+test("the list publishes whether it holds the keyboard, for the toggle to read", () => {
+  const v = draw(); globalThis.__isFocused = true; v.watchFocus(); assert.equal(globalThis.__shared["agents-view.focused"], true);
+  globalThis.__isFocused = false; v.watchFocus(); assert.equal(globalThis.__shared["agents-view.focused"], false);
+});
+test("the hint line says cmd-shift-a comes back here", () => {
+  has(draw().drawn, /cmd-shift-a back here/);
 });

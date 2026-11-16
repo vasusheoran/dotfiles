@@ -3,9 +3,10 @@
 // Reads asks.jsonl, closed-cards.json, stuck.json and each lead's last screen lines (hc read, at most every 30s per lead); no network.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, setShared, terminals, panes, spaces, theme, readTextFile, home } from "herdr";
+import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home } from "herdr";
 import { viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
+const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
 const REFRESH_MS = 5000, SCREEN_MS = 30_000;
 const LIST_ITEMS = 12; // rows shown at once (group heads count); the selected one sits a third of the way down
@@ -18,8 +19,17 @@ export default class LeadsList extends View {
     this.files = { asks: null, events: null, closed: null, stuck: null };
     this.sel = null; this.selIdx = 0; this.unfolded = false; this.flash = ""; this.memo = null;
     this.waits = {}; this.lastLines = {}; this.screenAt = {};
+    cx.timer.every(250, () => this.watchFocus());
     this.read(cx);
     cx.timer.every(REFRESH_MS, (c) => this.read(c));
+  }
+
+  // cmd-shift-a (tabs-agents.toggle) asks for the keyboard through a shared flag; this publishes whether the list holds it, so the toggle knows to hide it next
+  watchFocus() {
+    const on = this.h.is_focused(), asked = shared(LIST_FOCUS);
+    // the request is a timestamp: while the panel was hidden this instance could not take the keyboard, so it keeps asking until it holds it, for 2s at most
+    if (asked) { if (on || Date.now() - asked > 2000) setShared(LIST_FOCUS, null); else this.h.focus(); }
+    if (shared(LIST_HAS_FOCUS) !== on) setShared(LIST_HAS_FOCUS, on);
   }
 
   async read(cx) {
@@ -117,6 +127,6 @@ export default class LeadsList extends View {
         .child(sans(12, t.muted, [waiting ? `${waiting} waiting on you` : "", working ? `${working} working` : ""].filter(Boolean).join(" · ") || "nothing waiting")))
       .child(v_flex().id("leads-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.slice(start, start + LIST_ITEMS).map((x) => x.make())))
       .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)))
-      .child(div().w_full().flex_none().px(14).py(4).border_t(1).border_color(t.border).child(sans(11, t.dim, "↑ ↓ lead · ↵ type in its tab · B board · space shows the idle")));
+      .child(div().w_full().flex_none().px(14).py(4).border_t(1).border_color(t.border).child(sans(11, t.dim, "↑ ↓ lead · ↵ type in its tab · cmd-shift-a back here · B board · space shows the idle")));
   }
 }
