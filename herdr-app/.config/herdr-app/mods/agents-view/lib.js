@@ -922,3 +922,40 @@ export const askState = (ask, picks = {}) => {
   const qs = questionsOf(ask), n = qs.filter((q) => picks[q]).length;
   return ask.reply ? "reply" : qs.length > 1 && n ? `marked ${n} of ${qs.length}` : "open";
 };
+
+// ---- The leads side list (kuchbhi#1115, 16 Nov direction): one row per lead; the lead's own tab is where the owner answers ----
+// The last line of a lead's screen that is its own words: not the prompt, the rules, the footer, "Worked for" or the recap.
+export function lastScreenLine(screen) {
+  const all = String(screen ?? "").split("\n"), prompt = all.findLastIndex((l) => /^❯/.test(l));
+  const body = (prompt < 0 ? all : all.slice(0, prompt)).filter((l) => l.trim() && !/^\s*─{5,}/.test(l) && !/^\s*(✻|※|⏵)/.test(l));
+  const l = body.at(-1);
+  return l ? l.replace(/^\s*⏺\s*/, "").trim() : "";
+}
+
+const GROUPS = [["waiting", "Waiting on you"], ["stuck", "Stuck"], ["working", "Working"]];
+const glyphless = (s) => String(s ?? "").replace(/^[^\p{L}\p{N}#]+/u, "").trim();
+// Rows by group, the rest folded. A lead is a terminal labelled role=lead or named lead-*: Herdr's own agent detection is not asked, because a resumed
+// session shows as zsh with no status (#1127). The epic comes from the label, else from the number in the name.
+export function leadRows({ terminals, asks, stuck, statuses, titles, waits, lastLines, nowMs }) {
+  const ts = (terminals ?? []).map((raw) => ({ ...normalize(raw), title: raw.title ?? null })).filter((t) => t.live);
+  const known = [...Object.keys(titles ?? {}), ...Object.keys(statuses ?? {}), ...(asks ?? []).map((a) => a.epic ?? a.card)].filter(Boolean);
+  const epicOf = (t) => t.labels.epic ?? known.find((k) => /\d+$/.test(t.name ?? "") && k.endsWith(`#${/(\d+)$/.exec(t.name)[1]}`)) ?? null;
+  const out = [];
+  for (const t of ts.filter((x) => x.labels.role === "lead" || /^lead-/.test(x.name ?? ""))) {
+    const epic = epicOf(t), mine = (asks ?? []).filter((a) => epic && (a.epic ?? a.card) === epic);
+    const workers = ts.filter((x) => x.labels.role === "worker" && epic && x.labels.epic === epic), own = new Set([t, ...workers].flatMap((x) => [x.address, x.name]));
+    const stucks = (stuck ?? []).filter((s) => s.kind !== "blocked" && (own.has(s.address) || own.has(s.name)));
+    const asked = mine.length > 0, quoted = (waits?.[t.address] ?? []).length > 0 && t.state !== "working";
+    const group = t.state === "blocked" || asked || quoted ? "waiting" : stucks.length ? "stuck" : t.state === "working" ? "working" : "rest";
+    const st = epic ? statuses?.[epic] : null, newest = mine.length ? Math.min(...mine.map((a) => a.ageMs)) : Infinity;
+    const last = (st && nowMs - Date.parse(st.ts) < newest ? st.text : null) ?? mine[0]?.title ?? lastLines?.[t.address] ?? glyphless(t.title);
+    const ageMs = mine.length ? Math.max(...mine.map((a) => a.ageMs)) : group === "stuck" ? stucks.find((s) => s.ageMs != null)?.ageMs ?? null : typeof t.statusMs === "number" ? nowMs - t.statusMs : null;
+    out.push({
+      key: `lead:${t.address}`, address: t.address, name: t.name ?? t.address, epic, group, ageMs, last: last ?? "", workers: workers.length,
+      title: (epic && titles?.[epic]) || shortCard(epic ?? t.name), meta: [t.name ?? t.address, workers.length ? `${workers.length} worker${workers.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
+    });
+  }
+  const groups = GROUPS.map(([id, label]) => ({ id, label, rows: out.filter((r) => r.group === id) })).filter((g) => g.rows.length);
+  const rest = out.filter((r) => r.group === "rest"), nums = rest.map((r) => Number(String(r.epic ?? "").split("#").pop())).filter(Boolean).sort((a, b) => a - b);
+  return { groups, fold: { count: rest.length, label: `${rest.length} idle or done${nums.length ? ` · Epics ${nums.join(", ")}` : ""}`, rows: rest }, rows: groups.flatMap((g) => g.rows) };
+}
