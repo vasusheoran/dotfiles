@@ -951,7 +951,7 @@ export function leadRows({ terminals, asks, stuck, statuses, titles, waits, last
     const last = (st && nowMs - Date.parse(st.ts) < newest ? st.text : null) ?? mine[0]?.title ?? lastLines?.[t.address] ?? glyphless(t.title);
     const ageMs = mine.length ? Math.max(...mine.map((a) => a.ageMs)) : group === "stuck" ? stucks.find((s) => s.ageMs != null)?.ageMs ?? null : typeof t.statusMs === "number" ? nowMs - t.statusMs : null;
     out.push({
-      key: `lead:${t.address}`, address: t.address, name: t.name ?? t.address, epic, group, ageMs, last: last ?? "", workers: workers.length,
+      key: `lead:${t.address}`, address: t.address, tab: t.labels["herdr.tab"] ?? null, space: t.labels["herdr.space"] ?? null, name: t.name ?? t.address, epic, group, ageMs, last: last ?? "", workers: workers.length,
       title: (epic && titles?.[epic]) || shortCard(epic ?? t.name), meta: [t.name ?? t.address, workers.length ? `${workers.length} worker${workers.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
     });
   }

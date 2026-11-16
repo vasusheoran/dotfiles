@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { leadRows, lastScreenLine } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z"), MIN = 60_000, iso = (ago) => new Date(NOW - ago * MIN).toISOString();
-const lead = (n, o = {}) => ({ address: `t${n}`, name: `lead-r-${n}`, state: "live", status: { state: "working" }, status_ms: NOW - 5 * MIN, labels: ["role=lead", `epic=o/r#${n}`], title: `✳ title ${n}`, ...o });
+const lead = (n, o = {}) => ({ address: `t${n}`, name: `lead-r-${n}`, state: "live", status: { state: "working" }, status_ms: NOW - 5 * MIN, labels: ["role=lead", `epic=o/r#${n}`, `herdr.tab=tb${n}`, "herdr.space=spA"], title: `✳ title ${n}`, ...o });
 const worker = (n, epic, o = {}) => ({ address: `w${n}`, name: `card-r-${n}`, state: "live", status: { state: "working" }, labels: ["role=worker", `epic=o/r#${epic}`, `card=o/r#${n + 100}`], ...o });
 const ask = (epic, o = {}) => ({ id: `a-${epic}`, epic: `o/r#${epic}`, card: `o/r#${epic}`, from: "lead", title: `Ask for ${epic}`, ts: iso(30), ageMs: 30 * MIN, options: [], ...o });
 const titles = { "o/r#1": "Epic 1: One", "o/r#2": "Epic 2: Two", "o/r#3": "Epic 3: Three", "o/r#4": "Epic 4: Four", "o/r#5": "Epic 5: Five", "o/r#6": "Epic 6: Six" };
@@ -26,7 +26,7 @@ test("groups: waiting on you (blocked, an open ask, or a question in its termina
 test("a row carries the epic's short title, the state's age, and a meta line of lead name and workers", () => {
   const r = rows({ terminals: [lead(2), worker(8, 2), worker(9, 2)], asks: [ask(2)] });
   const x = r.groups[0].rows[0];
-  assert.equal(x.title, "Epic 2: Two"); assert.equal(x.ageMs, 30 * MIN); assert.equal(x.meta, "lead-r-2 · 2 workers"); assert.equal(x.address, "t2");
+  assert.equal(x.tab, "tb2"); assert.equal(x.space, "spA"); assert.equal(x.title, "Epic 2: Two"); assert.equal(x.ageMs, 30 * MIN); assert.equal(x.meta, "lead-r-2 · 2 workers"); assert.equal(x.address, "t2");
 });
 test("the last line: the lead's status when newer than the ask, else the ask's title, else its screen", () => {
   const st = (ago) => ({ "o/r#2": { text: "Rolling stage", ts: iso(ago) } });

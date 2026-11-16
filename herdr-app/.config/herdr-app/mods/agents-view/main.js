@@ -53,17 +53,22 @@ export default class LeadsList extends View {
     return { list, rows, all: [...list.rows, ...list.fold.rows] };
   }
 
-  select(i, rows) {
+  select(i, rows, cx) {
     this.selIdx = Math.max(0, Math.min(rows.length - 1, i)); const r = rows[this.selIdx];
     if (!r) return;
     this.sel = r.key; this.flash = "";
-    run("agent.focus", { terminal: r.address }); // the main area switches to the lead's own tab: no copy, no attach
+    // the main area switches to the lead's own tab. tab.select leaves the keyboard on the list (agent.focus takes it), so the next arrow key still lands here;
+    // only ↵ moves it into the tab (it has to be taken back: see below). A lead without its tab's id (no herdr.tab label) falls back to agent.focus.
+    if (!r.tab) return run("agent.focus", { terminal: r.address });
+    if (r.space && r.space !== spaces().find((s) => s.active)?.id) run("space.select", { id: r.space });
+    run("tab.select", { id: r.tab });
+    cx.timer.after(0, () => this.h.focus()); // checked live: tab.select also hands the keyboard to the new tab's pane, so the list takes it back
   }
 
   key(e, cx) {
     const k = e.keystroke, { rows } = this.model(), cur = rows[this.selIdx];
-    if (k === "down" || k === "j") this.select(this.selIdx + 1, rows);
-    else if (k === "up" || k === "k") this.select(this.selIdx - 1, rows);
+    if (k === "down" || k === "j") this.select(this.selIdx + 1, rows, cx);
+    else if (k === "up" || k === "k") this.select(this.selIdx - 1, rows, cx);
     else if (k === "enter" && cur) { const p = panes().find((x) => x.terminal === cur.address); if (p) run("pane.focus", { pane: p.pane }); } // the keyboard goes into the lead's tab
     else if (k === "B" && cur?.epic) this.board(cur);
     else if (k === "space") this.unfolded = !this.unfolded;
@@ -90,7 +95,7 @@ export default class LeadsList extends View {
   row(t, r, rows) {
     const sel = r.key === this.sel, dot = { waiting: t.accent, stuck: t.blocked, working: t.working }[r.group] ?? t.dim, repo = String(r.epic ?? "").split("#")[0];
     return v_flex().id(r.key).w_full().flex_none().px(14).py(6).gap(2).rounded(6).when(sel, (x) => x.bg(t.selected).border_l_2().border_color(t.accent))
-      .on_click((_e, cx) => { this.select(rows.indexOf(r), rows); cx.notify(); })
+      .on_click((_e, cx) => { this.select(rows.indexOf(r), rows, cx); cx.notify(); })
       .child(h_flex().w_full().gap(8).items_center().child(div().size(7).flex_none().rounded(4).bg(dot)).child(sans(13, t.foreground, r.title).font_semibold().flex_1().min_w(0).truncate())
         .when(r.ageMs != null, (x) => x.child(mono(11, t.muted, ageText(r.ageMs)).flex_none())))
       .child(v_flex().w_full().pl(15).gap(1).child(this.line(t, r.last, repo, r.key)).child(mono(11, t.dim, r.meta).w_full().truncate()));

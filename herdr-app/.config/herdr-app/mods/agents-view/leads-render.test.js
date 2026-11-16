@@ -20,7 +20,7 @@ register(stub(hooks));
 
 const { default: AgentsView } = await import(process.env.AV_MAIN ?? "./main.js");
 const iso = (min) => new Date(Date.now() - min * 60_000).toISOString();
-const lead = (n, o = {}) => ({ address: `t${n}`, name: `lead-r-${n}`, state: "live", status: { state: "working" }, status_ms: Date.now() - 5 * 60_000, labels: ["role=lead", `epic=o/r#${n}`], title: `✳ title ${n}`, ...o });
+const lead = (n, o = {}) => ({ address: `t${n}`, name: `lead-r-${n}`, state: "live", status: { state: "working" }, status_ms: Date.now() - 5 * 60_000, labels: ["role=lead", `epic=o/r#${n}`, `herdr.tab=tb${n}`, `herdr.space=${n === 4 ? "spB" : "spA"}`], title: `✳ title ${n}`, ...o });
 const TERMS = [lead(1, { status: { state: "blocked" } }), lead(2), lead(3, { status: { state: "idle" } }), lead(4, { status: null, agent: "zsh" })];
 const closed = JSON.stringify({ at: iso(1), closed: [], titles: { "o/r#1": "Epic 1: One", "o/r#2": "Epic 2: Two", "o/r#3": "Epic 3: Three", "o/r#4": "Epic 4: Four" }, areas: {}, origin: {} });
 const status = JSON.stringify({ ts: iso(2), event: "lead_status", epic: "o/r#2", text: "Reviewing the hook tests" });
@@ -32,7 +32,7 @@ const lacks = (d, x) => assert.ok(!d.some((s) => (x instanceof RegExp ? x.test(s
 const draw = (terminals = TERMS, o = {}) => {
   globalThis.__terms = terminals; globalThis.__runs = []; globalThis.__panes = o.panes ?? terminals.map((t, i) => ({ pane: `p${i + 1}`, tab: `tb${i + 1}`, terminal: t.address })); globalThis.__spaces = o.spaces ?? [];
   const v = new AgentsView();
-  v.init({}, { focus_handle: () => ({ focus() {} }), timer: { every() {} }, spawn() {}, notify() {} });
+  globalThis.__focus = 0; v.init({}, { focus_handle: () => ({ focus() { globalThis.__focus++; } }), timer: { every() {} }, spawn() {}, notify() {} });
   v.files = { asks: o.asks ?? status, events: "", usage: null, upNext: null, settings: null, closed, stuck: null };
   v.waits = o.waits ?? {}; v.lastLines = o.lastLines ?? {};
   v.drawn = paint(v); return v;
@@ -48,10 +48,15 @@ test("draws the groups, each lead's short title, last line and meta, and the fol
 test("a lead Herdr shows as zsh with no status is still counted, by its name", () => {
   has(draw().drawn, /Epics 3, 4/);
 });
-test("↓ moves the selection and the main area follows: agent.focus on that lead's terminal", () => {
-  const v = draw(); press(v, "down");
-  assert.deepEqual(runs().at(-1), ["agent.focus", { terminal: "t2" }]);
-  press(v, "up"); assert.deepEqual(runs().at(-1), ["agent.focus", { terminal: "t1" }]);
+test("↓ moves the selection and the main area follows with tab.select, never agent.focus (it takes the keyboard from the list)", () => {
+  const v = draw(TERMS, { spaces: [{ id: "spA", active: true, tabs: [] }, { id: "spB", active: false, tabs: [] }] }); press(v, "down");
+  assert.deepEqual(runs(), [["tab.select", { id: "tb2" }]], "same space: only the tab");
+  press(v, "up"); assert.deepEqual(runs().at(-1), ["tab.select", { id: "tb1" }]);
+  assert.equal(runs().some((r) => r[0] === "agent.focus" || r[0] === "pane.focus"), false);
+});
+test("a lead in another space: space.select first, then its tab; a second selection still works", () => {
+  const v = draw(TERMS, { spaces: [{ id: "spA", active: true, tabs: [] }, { id: "spB", active: false, tabs: [] }] }); press(v, "space"); press(v, "down"); press(v, "down"); press(v, "down");
+  assert.deepEqual(runs().slice(-4), [["tab.select", { id: "tb2" }], ["tab.select", { id: "tb3" }], ["space.select", { id: "spB" }], ["tab.select", { id: "tb4" }]]);
 });
 test("↵ moves the keyboard into the lead's tab: pane.focus on its pane", () => {
   const v = draw(); press(v, "down"); press(v, "enter");
@@ -66,4 +71,13 @@ test("B opens the board at the lead's epic; with no board open it says so", () =
 test("the list never answers: no answer key does anything", () => {
   const v = draw(); for (const k of ["a", "b", "1", "n", "p"]) press(v, k);
   assert.deepEqual(runs(), []);
+});
+test("tab.select hands the keyboard to the lead's pane, so the list takes it back after each selection; ↵ is what leaves it in the tab", () => {
+  const v = draw(); const base = globalThis.__focus; timers.length = 0;
+  press(v, "down"); assert.equal(globalThis.__focus, base, "not before tab.select has run");
+  while (timers.length) timers.shift()(tcx);
+  assert.equal(globalThis.__focus, base + 1, "the list focuses itself again once the tab switch has landed");
+  press(v, "enter"); while (timers.length) timers.shift()(tcx);
+  assert.equal(globalThis.__focus, base + 1, "↵ leaves the keyboard in the tab");
+  assert.deepEqual(runs().at(-1), ["pane.focus", { pane: "p2" }]);
 });
