@@ -303,3 +303,30 @@ test("the expanded epics are remembered across reloads", () => {
   const x = drawE(FAM()); select(x, epicKey(x, 2)); has(paint(x), "Title a-3");
   delete globalThis.localStorage;
 });
+
+// ---- a lead asking only in its terminal (kuchbhi#1115, round 4)
+const SCREEN = `⏺ To finish the check:\n  1. Save the token.\n  2. Say go.\n\n✻ Worked for 9s\n\n${"─".repeat(80)}\n❯ \n${"─".repeat(80)}\n  ⏵⏵ auto mode on\n`;
+test("an idle lead's question shows on its epic, quoted, above its older ask; the screen is read at most every 30s per lead", async () => {
+  const reads = []; globalThis.__exec = async (c, a) => { reads.push([c, ...a]); return { code: 0, stdout: SCREEN, stderr: "" }; };
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" })), twoEpics, EPIC_TERMS.map((t) => (t.name === "lead-r-1" ? { ...t, status: { state: "idle" } } : t)));
+  await v.readScreens(kcx); await v.readScreens(kcx);
+  assert.deepEqual(reads, [["hc", "read", "t2", "--lines", "15"]], "one read of the idle lead, none of the working ones, none again inside 30s");
+  const p = paint(v);
+  has(p, "Lead is waiting in its terminal"); has(v.model().rows.length ? p : [], "Title a-1");
+  select(v, epicKey(v, 1)); const sel = paint(v);
+  has(sel, "lead-r-1 says, in its terminal"); has(sel, "  2. Say go."); has(sel, /older ask/);
+  has(paint(v), "older");
+});
+test("a lead that is working is never read", async () => {
+  const reads = []; globalThis.__exec = async (c, a) => { reads.push(a); return { code: 0, stdout: SCREEN, stderr: "" }; };
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" })));
+  await v.readScreens(kcx); assert.deepEqual(reads, []);
+});
+
+// ---- the view model is built once per change, not once per render: the engine interrupts a slow render (seen live against a 375KB run file)
+test("the view model is rebuilt only when an input changes", () => {
+  const v = drawE(lines(ASK("a-1", { epic: "o/r#1" })));
+  const a = v.model().vm; assert.equal(v.model().vm, a, "same inputs, same model");
+  v.files.asks = lines(ASK("a-1", { epic: "o/r#1" }), ASK("a-2", { epic: "o/r#2" })); assert.notEqual(v.model().vm, a, "a changed run file rebuilds it");
+  const b = v.model().vm; v.hidden.add("a-2"); assert.notEqual(v.model().vm, b, "a hidden ask rebuilds it");
+});

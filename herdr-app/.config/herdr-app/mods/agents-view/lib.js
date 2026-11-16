@@ -306,7 +306,7 @@ export const isNarrow = (width) => typeof width === "number" && width < 640;
 // thread (where the asker's reply to an other idea shows), or nothing.
 export function paneFor(row, vm, pos) {
   if (row?.section === "desk") return { kind: "desk", thread: "desk" };
-  if (row?.section === "epic") { const e = row.row; if (!e.asks.length) return { kind: "epic", epic: e, thread: `epic:${e.ref}` }; const ask = askAt(pos, e); return { kind: "ask", ask, batch: e, epic: e, thread: ask.id }; }
+  if (row?.section === "epic") { const e = row.row; if (!e.asks.length || e.waiting) return { kind: "epic", epic: e, thread: `epic:${e.ref}` }; const ask = askAt(pos, e); return { kind: "ask", ask, batch: e, epic: e, thread: ask.id }; }
   if (row?.section === "sub" || row?.section === "subpart") { const { epic, ask, q } = row.row; return { kind: "ask", ask, batch: epic, epic, thread: ask.id, ...(q ? { q } : {}) }; }
   if (row?.section === "fold") return { kind: "fold", fold: row.row, thread: null };
   if (row?.section === "batch") { const ask = askAt(pos, row.row); return { kind: "ask", ask, batch: row.row, thread: ask.id }; }
@@ -533,7 +533,7 @@ export const sentList = (answered, outbox, open, closed) => {
   const newest = new Map([...answered, ...outbox].map((a) => [a.id, a])); for (const a of [...answered, ...outbox]) if (Date.parse(a.answeredAt) >= Date.parse(newest.get(a.id).answeredAt)) newest.set(a.id, a);
   return [...newest.values()].filter((a) => !closed.includes(a.card) && !back.has(a.id)).sort((a, b) => Date.parse(b.answeredAt) - Date.parse(a.answeredAt)).slice(0, SENT_MAX);
 };
-export function viewModel({ outbox = [], terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, stuckJson, nowMs, hiddenIds }) {
+export function viewModel({ outbox = [], terminals, asksText, eventsText, usageJson, upNextJson, settingsJson, closedJson, stuckJson, nowMs, hiddenIds, waits = {} }) {
   const ts = (terminals ?? []).map(normalize), asksLines = parseJsonl(asksText); // parsed once: the run file is big and the view redraws often
   const cc = parse(closedJson);
   const closed = Array.isArray(cc?.closed) ? cc.closed : [], titles = cc?.titles && typeof cc.titles === "object" ? cc.titles : {};
@@ -544,7 +544,7 @@ export function viewModel({ outbox = [], terminals, asksText, eventsText, usageJ
   const usage = [warn, usageText(parse(usageJson))].filter(Boolean).join(" · ");
   const settings = parse(settingsJson);
   const stuck = mergeStuck(stuckRows(ts, parseJsonl(eventsText), asks, nowMs), watchdogRows(stuckJson, ts, nowMs)), groups = epicGroups(ts);
-  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, sent: sentList(answeredAsks(asksLines, nowMs, true), outbox, asks, closed), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(asksLines), stuck, groups, epics: buildEpics({ asks, groups, stuck, closed, titles, areas: cc?.areas && typeof cc.areas === "object" ? cc.areas : {}, origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, statuses: leadStatuses(asksLines), nowMs }), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
+  return { origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, titles, deskProject: typeof settings?.desk_project === "string" && settings.desk_project ? settings.desk_project : null, usage, usageWarn: !!warn, upNext: upNextLine(up, nowMs), runnerLine: runnerLine(settingsJson), runnerOn: settings && typeof settings === "object" && !Array.isArray(settings) ? !!settings.runner : null, asks, sent: sentList(answeredAsks(asksLines, nowMs, true), outbox, asks, closed), askGroups: askGroups(asks, titles), batches: inboxBatches(asks, titles), lanes: laneSummary(inboxBatches(asks, titles)), threads: threadsOf(asksLines), stuck, groups, epics: buildEpics({ asks, groups, stuck, closed, titles, areas: cc?.areas && typeof cc.areas === "object" ? cc.areas : {}, origin: cc?.origin && typeof cc.origin === "object" ? cc.origin : {}, statuses: leadStatuses(asksLines), waits, nowMs }), sides: sideJobs(ts), desk: deskRow(ts), others: otherSessions(ts), asksOld: asks.some((a) => a.ageMs > OLD_ASK_MS), othersLine: othersLine(otherSessions(ts).length) };
 }
 
 // The asks by epic, one group each: merges first, then decisions, then do-this-yourself, oldest first within a kind; the group with
@@ -751,12 +751,27 @@ export const AREA_NAMES = { agents: "Agent tooling", gtm: "Marketing", pwa: "Par
 const repoOf = (epic) => String(epic).split("#")[0].split("/").pop();
 export const groupName = (area, epic) => (area ? AREA_NAMES[String(area).toLowerCase()] ?? `${String(area)[0].toUpperCase()}${String(area).slice(1)}` : repoOf(epic));
 
+// A lead sitting at its prompt with a question or steps for the owner that were never raised as an ask: the last lines of its screen, or null.
+// Working (a spinner line "· Doing… (12s"), no prompt, or nothing for the owner in the last answer: null. The lead's footer, recap and "Worked for" lines are left out.
+export function waitingLines(screen) {
+  const all = String(screen ?? "").split("\n");
+  if (all.some((l) => /^\s*\S\s+\S.*…\s*\(\d+[smh]\b|esc to interrupt/.test(l))) return null;
+  const prompt = all.findLastIndex((l) => /^❯/.test(l));
+  if (prompt < 0) return null;
+  let text = all.slice(0, prompt).filter((l) => !/^─{5,}/.test(l));
+  const done = text.findIndex((l) => /^(✻|※)/.test(l)); // "Worked for…" and the recap close the answer
+  if (done >= 0) text = text.slice(0, done);
+  const bullet = text.findLastIndex((l) => /^⏺/.test(l)), mine = text.slice(Math.max(bullet, 0)).filter((l) => l.trim());
+  if (!/\?|\bsay go\b|^\s*\d+\.\s/im.test(mine.join("\n"))) return null;
+  return mine.slice(-8).map((l) => l.replace(/^⏺\s*/, "").trimEnd());
+}
+
 const STATE_RANK = { needs: 0, stuck: 1, working: 2, done: 3 };
 const lastOf = (a) => (Array.isArray(a) && a.length ? a[a.length - 1] : null);
 
 // One row per epic: those with an open ask, a running terminal or a status line. state: needs (an open ask), stuck, working, done (the epic is closed and nothing waits).
 // line: the lead's status, else the open ask's title, else what is stuck, else the last /work phase of its cards. prs: the badges, deduplicated by number.
-export function buildEpics({ asks, groups, stuck, closed, titles, areas, origin, statuses, nowMs }) {
+export function buildEpics({ asks, groups, stuck, closed, titles, areas, origin, statuses, waits, nowMs }) {
   const keys = new Set([...asks.map((a) => a.epic ?? a.card), ...groups.map((g) => g.epic), ...Object.keys(statuses ?? {})]);
   const closedSet = new Set(closed ?? []);
   return [...keys].map((key) => {
@@ -766,18 +781,22 @@ export function buildEpics({ asks, groups, stuck, closed, titles, areas, origin,
     const mineRows = new Set(rows.flatMap((r) => [r.address, r.name]));
     const stucks = (stuck ?? []).filter((s) => mineRows.has(s.address) || mineRows.has(s.name));
     const st = statuses?.[key] ?? null;
-    const state = mine.length ? "needs" : closedSet.has(key) ? "done" : stucks.length ? "stuck" : "working";
+    // the lead's screen: idle at a prompt with a question for the owner that no open ask carries (the lines name no open ask's id or title)
+    const lines = lead ? waits?.[lead.address] ?? null : null, text = (lines ?? []).join("\n");
+    const waiting = lines && !mine.some((a) => text.includes(a.id) || (a.title && text.includes(a.title))) ? { lines } : null;
+    const state = mine.length || waiting ? "needs" : closedSet.has(key) ? "done" : stucks.length ? "stuck" : "working";
     const prs = [];
     const addPr = (pr, state2) => { if (pr == null) return; const at = prs.findIndex((p) => p.pr === pr); if (at < 0) prs.push({ pr, state: state2 }); else if (state2 === "merged") prs[at].state = "merged"; };
     for (const a of mine) { for (const t of a.targets ?? []) addPr(t.pr, t.landed ? "merged" : "waiting"); if (!(a.targets ?? []).length && a.target?.pr != null) addPr(a.target.pr, a.landed ? "merged" : "waiting"); }
     for (const a of mine) for (const p of origin?.[a.card]?.trail ?? []) { const m = /^PR #(\d+)/.exec(p); if (m) addPr(Number(m[1]), "waiting"); }
     const phase = lastOf(origin?.[key]?.trail) ?? mine.map((a) => lastOf(origin?.[a.card]?.trail)).find(Boolean) ?? null;
-    const words = st?.text ?? mine[0]?.title ?? stucks[0]?.text ?? phase ?? (state === "done" ? "finished" : ""), line = mine.some((a) => openLinks(a).length) ? ["Needs a look", words].filter(Boolean).join(" · ") : words;
+    const newest = mine.length ? Math.min(...mine.map((a) => a.ageMs)) : Infinity, stAge = st?.ts ? nowMs - Date.parse(st.ts) : Infinity;
+    const words = (st && stAge < newest ? st.text : null) ?? mine[0]?.title ?? st?.text ?? stucks[0]?.text ?? phase ?? (state === "done" ? "finished" : ""), line = waiting ? "Lead is waiting in its terminal" : mine.some((a) => openLinks(a).length) ? ["Needs a look", words].filter(Boolean).join(" · ") : words;
     const area = areas?.[key] ?? null;
     return {
       key: `epic:${key}`, ref: key, num: Number(String(key).split("#").pop()), title: titles?.[key] || shortCard(key), area, group: groupName(area, key),
       state, line, prs, ageMs: mine.length ? Math.max(...mine.map((a) => a.ageMs)) : st?.ts ? nowMs - Date.parse(st.ts) : null,
-      asks: mine, lead: lead ? { name: lead.name, address: lead.address } : null, workers, stuck: stucks, origin: origin?.[mine[0]?.card] ?? origin?.[key] ?? null,
+      asks: waiting ? mine.map((a) => ({ ...a, older: true })) : mine, waiting, lead: lead ? { name: lead.name, address: lead.address } : null, workers, stuck: stucks, origin: origin?.[mine[0]?.card] ?? origin?.[key] ?? null,
     };
   });
 }
@@ -859,7 +878,13 @@ export function sentReceipt(a) {
 // Anything to look at before answering, as open lines in this order: the plan, a mockup, a preview, a stage URL, a manual check. Found in the ask's own plan field and in its text
 // (old asks too): canvas/ or .html paths, /plans/, a `/work · Plan` comment URL, pages.dev, a stage host; a URL in a do-this-yourself ask is its check. Each target once.
 const LOOK_ORDER = ["plan", "mockup", "preview", "stage", "check"];
+const linkMemo = new Map(); // the same ask is scanned on every render; its text rarely changes
 export function openLinks(ask) {
+  const key = [ask.plan, ask.kind, ask.question, ask.body, ask.today, ask.after, ask.checked, ask.whyYou, ...(ask.parts ?? []).flatMap((p) => [p.today, p.after, p.checked])].join("\u0001");
+  if (!linkMemo.has(key)) { if (linkMemo.size > 200) linkMemo.clear(); linkMemo.set(key, scanLinks(ask)); }
+  return linkMemo.get(key);
+}
+function scanLinks(ask) {
   const text = [ask.question, ask.body, ask.today, ask.after, ask.checked, ask.whyYou, ...(ask.parts ?? []).flatMap((p) => [p.today, p.after, p.checked])].filter(Boolean).join("\n");
   const found = [];
   const add = (kind, target) => { if (target && !found.some((f) => f.target === target)) found.push({ kind, label: kind === "pr" ? "open PR" : `open ${kind}`, target }); };

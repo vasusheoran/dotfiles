@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, props, terminals, panes, spaces, focused, theme, readTextFile, home, closeOverlay } from "herdr";
-import { rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
+import { waitingLines, rightPane, pressedText, doneText, failText, viewModel, flatRows, ageText, shortCard, askKeyAction, acceptRecommended, answerArgv, noteArgv, isAskKey, composeAnswer, selectTarget, rightPaneId, perform, runFiles, askView, checklistStep, noteStep, footerHint, composeKey, nudgeArgv, visualArgv, replaceArgv, enterAction,
   answerLine, hideKey, subKey, partLabel, askState, sentReceipt, openLinks, boardStep, listWindow, ASK_H, resizeAskH, dragAskH, storedAskH, partStep, partNotes, linkSegments, linkTarget, focusStep, submitAnswer, BOARD_EPIC, epicList, inboxTabSteps, inTab, liveAgents, bottomPlan, pickerStep, originView, originKey, goStep, lanesLine, phoneBar, stepAsk, askAt, isNarrow, otherArgv, messageArgv, messageTarget, threadView, messageState, inputStep, paneFor, defaultKey, narrowLanes, speaker, deskNew, headerLine } from "./lib.js";
 
 export const PANE_ON = "agents-view.pane";
@@ -35,7 +35,7 @@ export default class AgentsView extends View {
     this.sel = null; this.selIdx = 0; this.armed = null; this.q = 1; this.hidden = new Set(); this.explicit = this.loadExpanded(); this.openSet = new Set(); this.sentOpen = false; this.outbox = new Map(); this.picks = new Map(); this.shown = null; this.note = ""; this.touched = false;
     this.showRun = false; this.input = null; this.checklist = null; this.kept = new Map(); this.sent = new Set(); this.picOff = new Set(); this.pos = {}; this.width = null; this.back = 0; this.status = new Map(); this.last = null; this.recent = null;
     this.askH = storedAskH(this.loadSize()); this.drag = null; this.notes = new Map(); this.filter = null; this.typing = false; this.unfolded = false; this.qSet = false;
-    this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
+    this.waits = {}; this.screenAt = {}; this.pinned = null; this.picker = null; this.flash = null; this.bottomShown = null; this.lastAgent = null; 
     this.read(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.read(cx));
   }
@@ -80,12 +80,32 @@ export default class AgentsView extends View {
     this.note = ""; // a note lasts one refresh, so the usage warning comes back
     this.deskIfGone();
     cx.notify();
+    this.readScreens(cx);
   }
 
+  // a lead that is not working may be asking in its terminal only: read its last 15 lines, each lead at most every 30s; the epic row shows a question there (waitingLines)
+  async readScreens(cx) {
+    const now = Date.now(), leads = this.model().vm.groups.flatMap((g) => g.rows).filter((r) => r.role === "lead" && r.address && r.state !== "working" && now - (this.screenAt[r.address] ?? 0) >= 30_000);
+    if (!leads.length) return;
+    for (const l of leads) this.screenAt[l.address] = now;
+    const got = await Promise.all(leads.map((l) => exec("hc", ["read", l.address, "--lines", "15"]).then((x) => (x?.code === 0 ? String(x.stdout ?? "") : ""), () => "")));
+    leads.forEach((l, i) => { this.waits[l.address] = waitingLines(got[i]); }); // the regexes run here, once per read, never in render: the engine interrupts a slow render
+    const live = this.model().vm.groups.flatMap((g) => g.rows).filter((r) => r.state !== "working").map((r) => r.address);
+    for (const a of Object.keys(this.waits)) if (!live.includes(a)) delete this.waits[a]; // working again, or gone
+    cx.notify();
+  }
+
+  // the view model is the heavy part of a render (the run file is parsed and every ask scanned), and the engine interrupts a slow render: rebuild it only when an input changed, or every 30s for the ages
   model() {
-    const vm = viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden, outbox: [...this.outbox.values()] });
+    const f = this.files, key = [f.asks, f.events, f.usage, f.upNext, f.settings, f.closed, f.stuck, JSON.stringify(terminals()), [...this.hidden].join(), JSON.stringify([...this.outbox.values()]), JSON.stringify(this.waits), Math.floor(Date.now() / 30_000)];
+    if (!this.memo || key.some((k, i) => k !== this.memo.key[i])) this.memo = { key, vm: this.buildModel() };
+    const vm = this.memo.vm;
     this.openSet = this.expandedSet(vm);
     return { vm, rows: flatRows(vm, { showRun: this.showRun, filter: this.filter ?? "", unfolded: this.unfolded, sentOpen: this.sentOpen, expanded: this.openSet }).filter((r) => r.section !== "others") }; // other sessions show as one count line
+  }
+
+  buildModel() {
+    return viewModel({ terminals: terminals(), asksText: this.files.asks, eventsText: this.files.events, usageJson: this.files.usage, upNextJson: this.files.upNext, settingsJson: this.files.settings, closedJson: this.files.closed, stuckJson: this.files.stuck, nowMs: Date.now(), hiddenIds: this.hidden, waits: this.waits, outbox: [...this.outbox.values()] });
   }
 
   pane() { return rightPaneId(panes(), focused()?.tab); }
@@ -462,7 +482,7 @@ export default class AgentsView extends View {
     const el = h_flex().id(r.key).w_full().flex_none().gap(8).items_baseline().py(3).rounded(6).when(sel, (x) => x.bg(t.selected).border_l_2().border_color(t.accent))
       .on_click((_e, cx) => { this.select(r); cx.notify(); });
     return q ? el.pl(52).pr(14).child(sans(12, sel ? t.foreground : t.muted, partLabel(a, q, picks)).flex_1().min_w(0).truncate())
-      : el.pl(34).pr(14).child(sans(12, t.foreground, a.title).flex_1().min_w(0).truncate()).child(mono(11, t.muted, ageText(a.ageMs)).flex_none()).child(sans(11, a.reply ? t.working : t.dim, askState(a, picks)).flex_none());
+      : el.pl(34).pr(14).child(sans(12, a.older ? t.dim : t.foreground, a.title).flex_1().min_w(0).truncate()).when(!!a.older, (x) => x.child(sans(11, t.dim, "older").flex_none())).child(mono(11, t.muted, ageText(a.ageMs)).flex_none()).child(sans(11, a.reply ? t.working : t.dim, askState(a, picks)).flex_none());
   }
 
   // a sent ask: its state (sent, received, done), "not picked up" after ten minutes and the . key nudges; what was sent shows in the pane below when it is selected
@@ -552,7 +572,9 @@ export default class AgentsView extends View {
     const od = e.origin?.summary;
     return v_flex().w_full().px(14).py(10).gap(4)
       .child(h_flex().w_full().gap(8).items_baseline().child(sans(14, t.foreground, e.title).flex_1().min_w(0)).child(mono(11, t.dim, `#${e.num}`)))
-      .child(sans(12, t.muted, e.line || "nothing reported yet"))
+      .child(sans(12, e.waiting ? t.working : t.muted, e.line || "nothing reported yet"))
+      .when(!!e.waiting, (x) => x.child(v_flex().w_full().gap(1).px(8).py(8).rounded(6).bg(t.raised).child(sans(11, t.dim, `${e.lead.name} says, in its terminal`)).children(e.waiting.lines.map((l) => mono(12, t.foreground, l).w_full().min_w(0))).child(h_flex().gap(6).items_center().pt(4).child(this.keycap(t, "t")).child(sans(11, t.dim, "opens its terminal")))))
+      .when(!!e.waiting && e.asks.length > 0, (x) => x.child(sans(11, t.dim, `${e.asks.length} older ask${e.asks.length === 1 ? "" : "s"} below: ${e.asks.map((a) => ageText(a.ageMs)).join(", ")}`)))
       .child(h_flex().w_full().gap(6).items_baseline().child(sans(11, t.dim, e.group)).child(sans(11, t.dim, e.lead ? "lead" : "no lead running")).when(!!e.lead, (x) => x.child(this.agentLink(t, e.lead)))
         .child(sans(11, t.dim, `${e.workers.length} worker${e.workers.length === 1 ? "" : "s"}${e.prs.length ? " · " : ""}${e.prs.map((p) => `#${p.pr} ${p.state}`).join(" · ")}`)))
       .when(!!od, (x) => x.child(this.rich(t, 12, t.dim, od, String(e.ref).split("#")[0], `ov:${e.key}`)))
