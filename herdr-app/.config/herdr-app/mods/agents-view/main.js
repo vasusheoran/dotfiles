@@ -1,10 +1,13 @@
 // The leads side list (kuchbhi#1115, 16 Nov direction): one row per lead, grouped Waiting on you / Stuck / Working, the rest folded. Selecting a lead switches the
 // main area to that lead's own tab (agent.focus), where the owner reads and answers; this list never answers anything. The logic is in lib.js (leadRows).
 // Reads asks.jsonl, closed-cards.json, stuck.json and each lead's last screen lines (hc read, at most every 30s per lead); no network.
+// kuchbhi#1360: the same mod with props { badge: true } is the count of open asks in the tab bar (layouts/main-agents.json), always on screen;
+// a click opens it again as a popup with props { asks: true }, where a click on an option answers through `work ask answer` (a merge, roll or money
+// ask takes a second click, as the keyboard takes a second press) and a click on the title opens the lead's tab.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home } from "herdr";
-import { viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
+import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home, props, openOverlay, closeOverlay } from "herdr";
+import { badgeText, inboxItems, clickStep, leadFor, DOUBLE_PRESS_MS, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
 const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
@@ -15,11 +18,13 @@ const sans = (size, color, text) => div().font_family(SANS).text_size(size).text
 
 export default class LeadsList extends View {
   init(_props, cx) {
-    this.h = cx.focus_handle(); this.h.focus();
-    this.files = { asks: null, events: null, closed: null, stuck: null };
+    this.mode = props()?.badge ? "badge" : props()?.asks ? "asks" : "leads";
+    this.h = cx.focus_handle();
+    if (this.mode !== "badge") this.h.focus();
+    this.files = { asks: null, events: null, closed: null, stuck: null }; this.asks = []; this.sent = new Set(); this.armed = null; this.flashAt = 0;
     this.sel = null; this.selIdx = 0; this.unfolded = false; this.flash = ""; this.memo = null;
     this.waits = {}; this.lastLines = {}; this.screenAt = {};
-    cx.timer.every(250, () => this.watchFocus());
+    if (this.mode === "leads") cx.timer.every(250, () => this.watchFocus()); // only the panel's list answers to cmd-shift-a
     this.read(cx);
     cx.timer.every(REFRESH_MS, (c) => this.read(c));
   }
@@ -34,6 +39,14 @@ export default class LeadsList extends View {
 
   async read(cx) {
     const read1 = (p) => readTextFile(p).catch(() => null), f = runFiles(home(), false);
+    if (this.mode !== "leads") {
+      // the count and the popup need the asks and the closed cards only, parsed here every 5s, never in render
+      const [asks, closed] = await Promise.all([f.asks, f.closed].map(read1));
+      this.files = { asks, events: null, closed, stuck: null }; this.readDone = true; // a failed read stays null: the popup says so
+      this.asks = viewModel({ terminals: terminals(), asksText: asks, closedJson: closed, nowMs: Date.now() }).asks;
+      if (this.flash && Date.now() - this.flashAt > 2 * REFRESH_MS) this.flash = "";
+      return cx.notify();
+    }
     const [asks, events, closed, stuck] = await Promise.all([f.asks, f.events, f.closed, f.stuck].map(read1));
     this.files = { asks, events, closed, stuck };
     cx.notify();
@@ -111,7 +124,64 @@ export default class LeadsList extends View {
       .child(v_flex().w_full().pl(15).gap(1).child(this.line(t, r.last, repo, r.key)).child(mono(11, t.dim, r.meta).w_full().truncate()));
   }
 
+  // the tab-bar count: nothing when no ask is open
+  badge(t) {
+    const text = badgeText(this.asks);
+    return h_flex().size_full().px(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
+      .when(!!text, (e) => e.child(h_flex().id("asks-badge").h(26).px(10).gap(6).items_center().rounded(6).bg(t.accent).text_color(t.background).cursor_pointer()
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(() => openOverlay({ mod: "agents-view", kind: "popup", width: 560, height: 0.7, props: { asks: true } }))
+        .child(sans(12, t.background, text).font_semibold())));
+  }
+
+  // a click on an option answers (or arms a merge, roll or money ask); the ask leaves the list at once and comes back if `work` refuses the answer
+  answer(item, b, cx) {
+    const ask = this.asks.find((a) => a.id === item.id), step = ask && clickStep(ask, b, this.armed, Date.now());
+    this.flashAt = Date.now();
+    if (step?.type === "arm") { this.armed = step.armed; this.flash = `click again to confirm: ${b.label}`; return cx.notify(); }
+    this.armed = null;
+    if (step?.type !== "post") return;
+    this.sent.add(item.id); this.flash = `sent: ${item.title}`;
+    exec("work", step.argv).then((r) => {
+      // ask.sh prints "already answered" and exits 0 on an ask answered elsewhere: nothing was recorded, so the ask stays
+      if (r?.code === 0 && /already answered/.test(String(r?.stdout ?? ""))) { this.sent.delete(item.id); this.flash = "already answered: open the lead's tab"; }
+      else if (r?.code !== 0) { this.sent.delete(item.id); this.flash = `not sent: ${String(r?.stderr ?? "").trim().split("\n").pop() || "work ask answer failed"}`; } cx.notify(); },
+      () => { this.sent.delete(item.id); this.flash = "not sent: work ask answer failed"; cx.notify(); });
+    cx.notify();
+  }
+
+  // the title opens the lead's tab for the ask (never a card's): the same steps as selecting a lead in the list
+  openLead(item) {
+    const ask = this.asks.find((a) => a.id === item.id), l = ask && leadFor(ask, terminals());
+    if (!l) { this.flash = "no lead holds this ask"; this.flashAt = Date.now(); return; }
+    if (!l.tab) run("agent.focus", { terminal: l.address });
+    else { if (l.space && l.space !== spaces().find((s) => s.active)?.id) run("space.select", { id: l.space }); run("tab.select", { id: l.tab }); }
+    closeOverlay(props()?.overlay);
+  }
+
+  popup(t) {
+    const items = inboxItems(this.asks.filter((a) => !this.sent.has(a.id)), terminals());
+    const armed = (item, b) => this.armed?.id === item.id && this.armed.key === b.key && this.armed.q === b.q && Date.now() - this.armed.at <= DOUBLE_PRESS_MS;
+    const button = (item, b, i) => div().id(`${item.id}:b${i}`).px(10).py(5).rounded(6).border_1().border_color(b.recommended ? t.accent : t.border).bg(b.recommended ? t.accent : t.raised)
+      .text_color(b.recommended ? t.background : t.foreground).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.answer(item, b, cx); }).child(armed(item, b) ? `Confirm: ${b.label}` : b.label);
+    const row = (item) => v_flex().id(item.id).w_full().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border)
+      .child(div().id(`${item.id}:title`).w_full().cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child(sans(13, t.foreground, item.title).font_semibold().underline()))
+      .child(h_flex().gap(8).child(mono(11, t.dim, [item.epic, item.kind].filter(Boolean).join(" · "))).when(item.notFromLead, (e) => e.child(mono(11, t.blocked, "not from the lead"))))
+      .when(!!item.reply, (e) => e.child(sans(12, t.foreground, `Reply: ${item.reply}`).w_full()))
+      .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i)))
+        : div().id(`${item.id}:open`).px(10).py(5).rounded(6).border_1().border_color(t.border).bg(t.raised).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child("Open the lead's tab"));
+    return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
+      .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
+      .child(sans(13, t.foreground, this.files.asks == null ? (this.readDone ? "Cannot read the asks file" : "Reading…") : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
+      .child(v_flex().id("asks-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.map(row)))
+      .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)));
+  }
+
   render(cx) {
+    if (this.mode === "badge") return this.badge(theme());
+    if (this.mode === "asks") return this.popup(theme());
     const t = theme(), { list, rows } = this.model();
     if (this.selIdx >= rows.length) this.selIdx = Math.max(0, rows.length - 1);
     if (!this.sel && rows[0]) this.sel = rows[0].key; // nothing is focused until the owner moves

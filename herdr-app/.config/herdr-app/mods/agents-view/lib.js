@@ -54,9 +54,11 @@ export const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…
 
 export function openAsks(lines, nowMs, closed = []) {
   const parts = new Map(), open = new Map(), seen = new Map(), ended = new Map(), msgs = [], seq = [], noted = new Set(), landed = new Set(), asked = new Set(), urls = new Map(), replaced = new Map(), groomed = new Map();
-  for (const l of lines) {
+  const keys = new Map(), kOf = (l) => keys.get(l) ?? askKey(l), bOf = (l) => l.batch ?? kOf(l);
+  for (const [i, l] of lines.entries()) {
     if (l.event === "message" && l.thread) { msgs.push(l); continue; }
-    const k = askKey(l);
+    const k = askKey(l) ?? (l.event === "ask" ? `row-${i}` : undefined);
+    if (k != null && askKey(l) == null) keys.set(l, k);
     if (l.event === "ask") { if (!open.has(k)) { open.set(k, l); seq.push(l); if (!seen.has(k)) seen.set(k, l); } }
     else if (k != null && END_EVENTS.has(l.event)) { open.delete(k); noted.delete(k); ended.set(k, l); }
     else if (k != null && l.event === "noted") noted.add(k);
@@ -77,24 +79,24 @@ export function openAsks(lines, nowMs, closed = []) {
     open.set(k, row); seq.push(row);
   }
   const live = [...open.values()].filter((l) => !closed.includes(l.card)
-    && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && batchOf(n) !== batchOf(l) && (l.kind !== "merge" || sameTarget(n, l))))
+    && !seq.slice(seq.indexOf(l) + 1).some((n) => l.card != null && n.card === l.card && roleOf(n) === roleOf(l) && (n.kind ?? "decide") === (l.kind ?? "decide") && bOf(n) !== bOf(l) && (l.kind !== "merge" || sameTarget(n, l))))
   const groups = new Map();
-  for (const l of live) groups.set(batchOf(l), [...(groups.get(batchOf(l)) ?? []), l]);
+  for (const l of live) groups.set(bOf(l), [...(groups.get(bOf(l)) ?? []), l]);
   return [...groups.values()]
     .map((rows) => {
       const l = rows[0];
-      const targets = rows.length > 1 ? rows.map((r) => ({ id: askKey(r), repo: r.target?.repo, pr: r.target?.pr, head: r.target?.head, landed: landed.has(askKey(r)) })) : [];
+      const targets = rows.length > 1 ? rows.map((r) => ({ id: kOf(r), repo: r.target?.repo, pr: r.target?.pr, head: r.target?.head, landed: landed.has(kOf(r)) })) : [];
       return {
-        id: askKey(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
+        id: kOf(l), card: l.card, epic: l.epic ?? null, url: l.url ?? null, question: l.question, title: l.title ?? plainTitle(l.question), titled: l.title != null,
         ts: l.ts, ageMs: nowMs - Date.parse(l.ts), from: roleOf(l),
-        options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : [...(Array.isArray(l.options) ? l.options : []), ...(parts.get(askKey(l)) ?? []).flatMap((p) => p.options ?? [])],
-        parts: (parts.get(askKey(l)) ?? []).map((p) => ({ q: p.q, card: p.card, title: p.title, question: p.question, today: p.today, after: p.after, checked: p.checked, whyYou: p.why_you })), landed: landed.has(askKey(l)),
-        kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: (l.body ?? "") + (parts.get(askKey(l)) ?? []).map((p) => `\n${p.body ?? ""}`).join(""), targets,
-        today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(askKey(l)),
-        visual: urls.has(askKey(l)) ? "ready" : asked.has(askKey(l)) ? "coming" : "none", visualUrl: urls.get(askKey(l)) ?? null,
-        reply: l.reply ?? null, terminal: l.terminal ?? null, target: l.target ?? null, replaced: (replaced.get(askKey(l)) ?? 0) > 0, askerGone: false, replaceable: false,
+        options: targets.length ? [{ q: 1, key: "a", label: `Merge all ${targets.length}, in order (Recommended)` }, { q: 1, key: "b", label: "Pick which to merge" }] : [...(Array.isArray(l.options) ? l.options : []), ...(parts.get(kOf(l)) ?? []).flatMap((p) => p.options ?? [])],
+        parts: (parts.get(kOf(l)) ?? []).map((p) => ({ q: p.q, card: p.card, title: p.title, question: p.question, today: p.today, after: p.after, checked: p.checked, whyYou: p.why_you })), landed: landed.has(kOf(l)),
+        kind: l.kind ?? "decide", lane: laneOf(l.kind), plan: l.plan ?? null, body: (l.body ?? "") + (parts.get(kOf(l)) ?? []).map((p) => `\n${p.body ?? ""}`).join(""), targets,
+        today: l.today ?? null, after: l.after ?? null, checked: l.checked ?? null, whyYou: l.why_you ?? null, batchKey: l.batch_key ?? null, noteSent: noted.has(kOf(l)),
+        visual: urls.has(kOf(l)) ? "ready" : asked.has(kOf(l)) ? "coming" : "none", visualUrl: urls.get(kOf(l)) ?? null,
+        reply: l.reply ?? null, terminal: l.terminal ?? null, askedFrom: "asked_from" in l ? l.asked_from : null, target: l.target ?? null, replaced: (replaced.get(kOf(l)) ?? 0) > 0, askerGone: false, replaceable: false,
         // a groom batch: its cards that are still not ready, with their open choices (kuchbhi#1119)
-        cards: Object.values(groomed.get(askKey(l)) ?? {}).filter((g) => !g.ready).map((g) => ({ card: g.member, choices: g.choices ?? [] })),
+        cards: Object.values(groomed.get(kOf(l)) ?? {}).filter((g) => !g.ready).map((g) => ({ card: g.member, choices: g.choices ?? [] })),
       };
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -229,6 +231,42 @@ export const noteArgv = (ask, text) => ["ask", "answer", askId(ask), "--note", t
 
 // An answer of the owner's own words: recorded with pick other; the asker applies it or replies in the ask's thread.
 export const otherArgv = (ask, text) => answerArgv(ask, text, { key: "other" });
+
+// ---- the tab-bar count and its popup (kuchbhi#1360): the owner sees open asks without opening the panel and answers with one click ----
+export const badgeText = (asks) => (asks.length ? `${asks.length} ask${asks.length === 1 ? "" : "s"} for you` : "");
+// One entry per open ask with its buttons; a button is the key the panel's keyboard would press (`enter` accepts every part's
+// recommendation). Picking a batch's PRs or writing an answer of one's own stays in the lead's tab.
+// notFromLead marks an ask the lead did not raise: a worker's, one from a shell that is no terminal (asked_from empty), or one asked from a live
+// terminal that is not a lead (a lead's ask whose tab is gone keeps its mark). A reopened ask (the agent replied after the answer) carries the
+// reply and no buttons: the answer is on file, so the owner reads on in the lead's tab.
+// A lead terminal as the leads list knows one: the role=lead label, or a lead-* name (a resumed session has no labels, #1127).
+const isLead = (t) => t.labels.role === "lead" || /^lead-/.test(t.name ?? "");
+const askerOf = (ask, ts) => { const at = ask.askedFrom || ask.terminal; return ts.find((t) => at && (t.address === at || t.name === at)); };
+export function inboxItems(asks, terminals = []) {
+  const live = (terminals ?? []).map(normalize).filter((t) => t.live);
+  return asks.map((ask) => {
+    const asker = askerOf(ask, live), notFromLead = ask.from !== "lead" || ask.askedFrom === "" || (!!asker && !isLead(asker));
+    const qs = questionsOf(ask), rec = recommended(ask), buttons = [];
+    if (ask.kind === "you" && !ask.options.length) buttons.push({ label: "Done", key: "x", q: 1, recommended: true });
+    else if (qs.length > 1) { if (qs.every((q) => rec[q])) buttons.push({ label: "Accept the recommended answers", key: "enter", q: 0, recommended: true }); }
+    else for (const o of ask.options) buttons.push({ label: `${o.key}) ${o.label}`, key: o.key, q: o.q, recommended: rec[o.q] === o.key });
+    // only a button whose click answers (or arms): the keyboard's own keys (b on a batch, v, p, r) and an Accept with nothing to accept drop out
+    return { id: ask.id, title: ask.title, epic: ask.epic ?? ask.card, kind: ask.kind, buttons: ask.reply ? [] : buttons.filter((b) => clickStep(ask, b, null, 0)), notFromLead, reply: ask.reply?.text ?? null };
+  });
+}
+// A click on a button: the keyboard's rules (askKeyAction, acceptRecommended), so a merge, roll or money ask needs a second click on the
+// same button within 10s. Returns { type: "post", argv } | { type: "arm", armed } | null.
+export function clickStep(ask, button, armed, nowMs) {
+  const r = button.key === "enter" ? acceptRecommended(ask, armed, nowMs) : askKeyAction(ask, button.key, armed, nowMs, button.q);
+  if (r?.type === "post") return { type: "post", argv: answerArgv(ask, r.text, r.key ? { key: r.key } : {}) };
+  return r?.type === "arm" ? { type: "arm", armed: r.armed } : null;
+}
+// The lead's tab an ask opens: the asker when it is a lead, else the lead that holds the ask's epic. A card's or worker's own tab never.
+export function leadFor(ask, terminals) {
+  const leads = (terminals ?? []).map(normalize).filter((t) => t.live && isLead(t));
+  const t = askerOf(ask, leads) ?? leads.find((x) => x.epics.includes(ask.epic ?? ask.card));
+  return t ? { address: t.address, tab: t.labels["herdr.tab"] ?? null, space: t.labels["herdr.space"] ?? null } : null;
+}
 
 // ---- messages (kuchbhi#1116): `message` and `message_delivered` events of asks.jsonl, grouped by thread (an ask id, or `desk`)
 // Returns { thread: [{ mid, from, to, text, ts, received }] }, oldest first. Sent = the message line; received = a message_delivered line,
@@ -398,6 +436,8 @@ export function normalize(raw) {
     name: raw.name ?? null,
     live: raw.state == null || raw.state === "live",
     labels,
+    // the epics a terminal works for: `epic`, plus the comma list a /lead claim sets as `epics`
+    epics: [...new Set([labels.epic, ...String(labels.epics ?? "").split(",")].map((s) => String(s ?? "").trim()).filter(Boolean))],
     state: typeof raw.status === "string" ? raw.status : raw.status?.state ?? null,
     kind: raw.report?.kind ?? raw.status?.kind ?? null,
     msg: raw.report?.msg ?? raw.status?.msg ?? null,
@@ -437,7 +477,7 @@ export function stuckRows(terminals, events, asks, nowMs) {
     if (ageMs < GONE_MAX_MS) rows.push({ kind: "gone", name, text: "terminal gone, no question", ageMs, address: null });
   }
 
-  const leads = new Set(live.filter((t) => t.labels.role === "lead").map((t) => t.labels.epic));
+  const leads = new Set(live.filter((t) => t.labels.role === "lead").flatMap((t) => t.epics ?? [t.labels.epic]));
   take("no-lead", (t) => t.labels.role === "worker" && t.labels.epic && !leads.has(t.labels.epic) && { text: "no lead running" });
   return rows;
 }
@@ -941,9 +981,11 @@ export function leadRows({ terminals, asks, stuck, statuses, titles, waits, last
   const known = [...Object.keys(titles ?? {}), ...Object.keys(statuses ?? {}), ...(asks ?? []).map((a) => a.epic ?? a.card)].filter(Boolean);
   const epicOf = (t) => t.labels.epic ?? known.find((k) => /\d+$/.test(t.name ?? "") && k.endsWith(`#${/(\d+)$/.exec(t.name)[1]}`)) ?? null;
   const out = [];
-  for (const t of ts.filter((x) => x.labels.role === "lead" || /^lead-/.test(x.name ?? ""))) {
-    const epic = epicOf(t), mine = (asks ?? []).filter((a) => epic && (a.epic ?? a.card) === epic);
-    const workers = ts.filter((x) => x.labels.role === "worker" && epic && x.labels.epic === epic), own = new Set([t, ...workers].flatMap((x) => [x.address, x.name]));
+  for (const t of ts.filter(isLead)) {
+    // a /lead claim labels its terminal with every epic it holds (`epics`): the row shows the first with an open ask, else the first
+    const held = t.epics, hasAsk = (e) => (asks ?? []).some((a) => (a.epic ?? a.card) === e);
+    const epic = held.find(hasAsk) ?? held[0] ?? epicOf(t), mine = (asks ?? []).filter((a) => epic && [epic, ...held].includes(a.epic ?? a.card));
+    const workers = ts.filter((x) => x.labels.role === "worker" && epic && [epic, ...held].includes(x.labels.epic)), own = new Set([t, ...workers].flatMap((x) => [x.address, x.name]));
     const stucks = (stuck ?? []).filter((s) => s.kind !== "blocked" && (own.has(s.address) || own.has(s.name)));
     const asked = mine.length > 0, quoted = (waits?.[t.address] ?? []).length > 0 && t.state !== "working";
     const group = t.state === "blocked" || asked || quoted ? "waiting" : stucks.length ? "stuck" : t.state === "working" ? "working" : "rest";

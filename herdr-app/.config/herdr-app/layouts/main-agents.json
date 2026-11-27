@@ -87,15 +87,35 @@
       "resizable": false,
       "children": [
         {
-          "id": "tabs",
-          "type": "block",
+          "id": "tabs-row",
+          "type": "row",
           "size": {
             "px": 42
           },
-          "window_drag": true,
-          "content": {
-            "mod": "tabs-agents"
-          }
+          "children": [
+            {
+              "id": "tabs",
+              "type": "block",
+              "window_drag": true,
+              "content": {
+                "mod": "tabs-agents"
+              }
+            },
+            {
+              "id": "inbox",
+              "type": "block",
+              "size": {
+                "px": 150
+              },
+              "window_drag": true,
+              "content": {
+                "mod": "agents-view",
+                "props": {
+                  "badge": true
+                }
+              }
+            }
+          ]
         },
         {
           "id": "work-body",
