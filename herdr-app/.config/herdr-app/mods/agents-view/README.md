@@ -6,7 +6,7 @@ The Leads list for Herdr, plus the asks count in the tab bar and the asks popup.
 
 - **Leads list** (`main.js` `LeadsList`, mode `leads`): one row per lead, grouped into Waiting on you, Stuck and Working. Idle leads are folded under a single line; `space` unfolds them. Selecting a lead switches the main area to that lead's tab. The list never answers anything.
 - **Asks count** (mode `badge`, placed in `layouts/main-agents.json`): the number of open asks, shown in the tab bar. Nothing shows when no ask is open.
-- **Asks popup** (mode `asks`): opened by clicking the count. Each open ask shows its question and its options. A click on an option answers it through `work ask answer`. A merge, roll or money ask takes a second click. A click on the title opens the lead's tab.
+- **Asks popup** (mode `asks`): opened by clicking the count. Each open ask shows its title (the ask's title, or the first line of its question), a Reply line when there is one, and its option buttons. A click on an option answers it through `work ask answer`. A merge, roll or money ask takes a second click. A click on the title opens the lead's tab.
 
 The grouping and row logic live in `lib.js`. `main.js` only reads inputs, draws and handles keys.
 
@@ -20,6 +20,7 @@ The grouping and row logic live in `lib.js`. `main.js` only reads inputs, draws 
 Inputs, all read locally with no network:
 
 - `~/handoffs/run/asks.jsonl`
+- `~/handoffs/run/events.jsonl`
 - `~/handoffs/run/closed-cards.json`
 - `~/handoffs/run/stuck.json`
 - each lead's last screen lines, read with `hc read` at most every 30 seconds per lead
