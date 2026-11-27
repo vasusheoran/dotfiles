@@ -6,8 +6,8 @@
 // ask takes a second click, as the keyboard takes a second press) and a click on the title opens the lead's tab.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home, props, openOverlay, closeOverlay } from "herdr";
-import { badgeText, inboxItems, clickStep, leadFor, DOUBLE_PRESS_MS, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
+import { exec, run, shared, setShared, terminals, panes, spaces, theme, home, props, openOverlay, closeOverlay } from "herdr";
+import { readRunFile, badgeText, inboxItems, clickStep, leadFor, DOUBLE_PRESS_MS, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
 const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
@@ -38,7 +38,7 @@ export default class LeadsList extends View {
   }
 
   async read(cx) {
-    const read1 = (p) => readTextFile(p).catch(() => null), f = runFiles(home(), false);
+    const read1 = (p) => readRunFile(p, { exec }), f = runFiles(home(), false);
     if (this.mode !== "leads") {
       // the count and the popup need the asks and the closed cards only, parsed here every 5s, never in render
       const [asks, closed] = await Promise.all([f.asks, f.closed].map(read1));
