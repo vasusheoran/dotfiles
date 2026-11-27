@@ -142,7 +142,10 @@ export default class LeadsList extends View {
     this.armed = null;
     if (step?.type !== "post") return;
     this.sent.add(item.id); this.flash = `sent: ${item.title}`;
-    exec("work", step.argv).then((r) => { if (r?.code !== 0) { this.sent.delete(item.id); this.flash = `not sent: ${String(r?.stderr ?? "").trim().split("\n").pop() || "work ask answer failed"}`; } cx.notify(); },
+    exec("work", step.argv).then((r) => {
+      // ask.sh prints "already answered" and exits 0 on an ask answered elsewhere: nothing was recorded, so the ask stays
+      if (r?.code === 0 && /already answered/.test(String(r?.stdout ?? ""))) { this.sent.delete(item.id); this.flash = "already answered: open the lead's tab"; }
+      else if (r?.code !== 0) { this.sent.delete(item.id); this.flash = `not sent: ${String(r?.stderr ?? "").trim().split("\n").pop() || "work ask answer failed"}`; } cx.notify(); },
       () => { this.sent.delete(item.id); this.flash = "not sent: work ask answer failed"; cx.notify(); });
     cx.notify();
   }
@@ -165,7 +168,10 @@ export default class LeadsList extends View {
     const row = (item) => v_flex().id(item.id).w_full().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border)
       .child(div().id(`${item.id}:title`).w_full().cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child(sans(13, t.foreground, item.title).font_semibold().underline()))
       .child(h_flex().gap(8).child(mono(11, t.dim, [item.epic, item.kind].filter(Boolean).join(" · "))).when(item.notFromLead, (e) => e.child(mono(11, t.blocked, "not from the lead"))))
-      .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i))) : sans(12, t.muted, "Answer this one in the lead's tab: click the title."));
+      .when(!!item.reply, (e) => e.child(sans(12, t.foreground, `Reply: ${item.reply}`).w_full()))
+      .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i)))
+        : div().id(`${item.id}:open`).px(10).py(5).rounded(6).border_1().border_color(t.border).bg(t.raised).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child("Open the lead's tab"));
     return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
       .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
       .child(sans(13, t.foreground, this.files.asks == null ? (this.readDone ? "Cannot read the asks file" : "Reading…") : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))

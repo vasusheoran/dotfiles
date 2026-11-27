@@ -152,5 +152,5 @@ test("popup: 'already answered' from work is never shown as sent; the ask stays 
 test("popup: a reopened ask shows the agent's reply and an Open the lead's tab button", () => {
   const rows = [JSON.parse(askLine), { ts: iso(10), event: "answered", id: "a-9", key: "a", text: "1a", by: "owner", via: "screen" }, { ts: iso(5), event: "message", thread: "a-9", mid: "m1", from: "agent", text: "PR moved, still land it?" }].map((r) => JSON.stringify(r)).join("\n");
   const d = drawAs({ asks: true }, rows).drawn;
-  has(d, "PR moved, still land it?"); has(d, "Open the lead's tab"); lacks(d, "a) Merges now (Recommended)");
+  has(d, "Reply: PR moved, still land it?"); has(d, "Open the lead's tab"); lacks(d, "a) Merges now (Recommended)");
 });
