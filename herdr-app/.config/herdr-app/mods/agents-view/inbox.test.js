@@ -1,8 +1,7 @@
 // The Inbox count in the tab bar and its one-click answers (kuchbhi#1360). All data is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as lib from "./lib.js";
-const { viewModel, leadRows } = lib, badgeText = (a) => lib.badgeText(a), inboxItems = (a) => lib.inboxItems(a);
+import { viewModel, badgeText, inboxItems, leadRows } from "./lib.js";
 
 const NOW = Date.parse("2030-01-10T12:00:00Z"), MIN = 60_000, iso = (ago) => new Date(NOW - ago * MIN).toISOString();
 const jsonl = (...rows) => rows.map((r) => JSON.stringify(r)).join("\n");

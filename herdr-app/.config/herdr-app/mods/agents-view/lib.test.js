@@ -530,7 +530,8 @@ test("main-agents layout: the leads list is the agents-view block in the side pa
   const find = (n, f) => (f(n) ? [n] : (n.children ?? []).flatMap((c) => find(c, f)));
   const [stack] = find(l, (n) => n.id === "panel-body");
   assert.deepEqual(stack.children.map((c) => c.id), ["files", "changes", "token-cost", "agents-view"]);
-  assert.equal(find(l, (n) => n.content?.mod === "agents-view").length, 1, "the leads list is one block of the side panel: no Inbox space or tab");
+  assert.deepEqual(find(l, (n) => n.content?.mod === "agents-view").map((n) => n.id), ["inbox", "agents-view"], "the leads list is one block of the side panel; the ask count sits in the tab bar (kuchbhi#1360)");
+  assert.deepEqual(find(l, (n) => n.id === "tabs-row")[0].children.map((c) => [c.id, c.content.props ?? null]), [["tabs", null], ["inbox", { badge: true }]]);
   assert.equal(find(l, (n) => n.id === "tabs")[0].content.mod, "tabs-agents");
   const ids = find(l, () => true).map((n) => n.id);
   assert.equal(new Set(ids).size, ids.length, "block ids are unique (a clash drew the view in the sidebar)");

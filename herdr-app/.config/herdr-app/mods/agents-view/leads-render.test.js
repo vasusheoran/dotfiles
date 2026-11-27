@@ -10,7 +10,7 @@ const mods = {
   "gpui-kit": `${chain} export class View {} export const div = () => chain();`,
   "gpui-base": `${chain} export const v_flex = () => chain(); export const h_flex = () => chain();`,
   herdr: `const chain = () => new Proxy(function () {}, { get: () => chain(), apply: () => chain() });
-    export const shared = (k) => (globalThis.__shared ??= {})[k], setShared = (k, v) => { (globalThis.__shared ??= {})[k] = v; }, exec = async (c, a) => (globalThis.__exec ? globalThis.__exec(c, a) : { code: 0, stdout: "", stderr: "" }), run = (...a) => { (globalThis.__runs ??= []).push(a); }, props = () => globalThis.__props ?? {}, panes = () => globalThis.__panes ?? [], focused = () => globalThis.__focused ?? null, spaces = () => globalThis.__spaces ?? [], agents = () => [], readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {};
+    export const shared = (k) => (globalThis.__shared ??= {})[k], setShared = (k, v) => { (globalThis.__shared ??= {})[k] = v; }, exec = async (c, a) => (globalThis.__exec ? globalThis.__exec(c, a) : { code: 0, stdout: "", stderr: "" }), run = (...a) => { (globalThis.__runs ??= []).push(a); }, props = () => globalThis.__props ?? {}, panes = () => globalThis.__panes ?? [], focused = () => globalThis.__focused ?? null, spaces = () => globalThis.__spaces ?? [], agents = () => [], readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {}, openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return "ov1"; };
     export const terminals = () => globalThis.__terms ?? [], theme = () => new Proxy({}, { get: () => "#000" });`,
 };
 const hooks = `export const resolve = (s, c, next) => ({ ${Object.keys(mods).map((k) => `"${k}": 1`).join(", ")} })[s] ? { url: "stub:" + s, shortCircuit: true } : next(s, c);
@@ -99,4 +99,34 @@ test("the list publishes whether it holds the keyboard, for the toggle to read",
 });
 test("the hint line says cmd-shift-a comes back here", () => {
   has(draw().drawn, /cmd-shift-a back here/);
+});
+
+// kuchbhi#1360: the same mod as the tab-bar count ({ badge: true }) and as the asks popup ({ asks: true })
+const { viewModel, inboxItems } = await import("./lib.js");
+const askLine = JSON.stringify({ ts: iso(30), event: "ask", id: "a-9", card: "o/r#9", epic: "o/r#2", kind: "merge", from: "lead", title: "Land PR 97", question: "1. Land?", options: [{ q: 1, key: "a", label: "Merges now (Recommended)" }, { q: 1, key: "b", label: "Hold" }] });
+const drawAs = (p, asksText) => {
+  globalThis.__props = p; globalThis.__terms = []; globalThis.__shared = {};
+  const v = new AgentsView();
+  globalThis.__focus = 0; v.init({}, { focus_handle: () => ({ focus() { globalThis.__focus++; }, is_focused: () => false }), timer: { every() {} }, spawn() {}, notify() {} });
+  v.asks = viewModel({ terminals: [], asksText, nowMs: Date.now() }).asks;
+  v.drawn = paint(v); globalThis.__props = undefined; return v;
+};
+const tick = () => new Promise((r) => setTimeout(r, 0));
+test("badge: the tab bar shows the open-ask count and nothing when none is open; it never takes the keyboard or the cmd-shift-a flag", () => {
+  const v = drawAs({ badge: true }, askLine);
+  has(v.drawn, "1 ask for you"); lacks(v.drawn, "Leads");
+  assert.equal(globalThis.__focus, 0); assert.equal(globalThis.__shared["agents-view.focused"], undefined);
+  lacks(drawAs({ badge: true }, "").drawn, /ask.* for you/);
+});
+test("popup: each open ask with its options; a click answers through work ask answer with the key and drops the ask; a refused answer brings it back", async () => {
+  const calls = []; globalThis.__exec = async (c, a) => { calls.push([c, a]); return { code: 0, stdout: "", stderr: "" }; };
+  const v = drawAs({ asks: true }, askLine), [item] = inboxItems(v.asks);
+  has(v.drawn, "Land PR 97"); has(v.drawn, "a) Merges now (Recommended)"); has(v.drawn, "b) Hold");
+  v.answer(item, item.buttons[0], tcx); await tick();
+  assert.deepEqual(calls, [["work", ["ask", "answer", "a-9", "--text", "1a: Merges now (Recommended)", "--via", "screen", "--key", "a"]]]);
+  has(paint(v), "Nothing waiting on you");
+  globalThis.__exec = async () => ({ code: 1, stdout: "", stderr: "ask.sh: a-9 is closed" });
+  const w = drawAs({ asks: true }, askLine); w.answer(item, item.buttons[0], tcx); await tick();
+  const d = paint(w); has(d, "Land PR 97"); has(d, "not sent: ask.sh: a-9 is closed");
+  globalThis.__exec = undefined;
 });
