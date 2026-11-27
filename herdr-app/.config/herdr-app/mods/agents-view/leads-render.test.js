@@ -154,3 +154,13 @@ test("popup: a reopened ask shows the agent's reply and an Open the lead's tab b
   const d = drawAs({ asks: true }, rows).drawn;
   has(d, "Reply: PR moved, still land it?"); has(d, "Open the lead's tab"); lacks(d, "a) Merges now (Recommended)");
 });
+test("badge: read() counts the asks of a run file past 1 MiB (read through cat, not readTextFile)", async () => {
+  const filler = JSON.stringify({ ts: iso(60), event: "lead_status", epic: "o/r#2", text: "x".repeat(200) });
+  const big = [...Array(6000).fill(filler), askLine].join("\n");
+  assert.ok(big.length > 1024 * 1024);
+  globalThis.__exec = async (c, a) => (c === "cat" && a[0].endsWith("/asks.jsonl") ? { code: 0, stdout: big, stderr: "" } : { code: 1, stdout: "", stderr: "absent" });
+  const v = drawAs({ badge: true }, ""); v.asks = [];
+  await Promise.race([v.read(tcx), new Promise((r) => setTimeout(r, 1000))]);
+  has(paint(v), "1 ask for you");
+  globalThis.__exec = undefined;
+});
