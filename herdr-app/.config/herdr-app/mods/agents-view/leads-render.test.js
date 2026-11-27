@@ -141,3 +141,16 @@ test("popup: the title opens the lead's tab for the ask, in its space, and close
   assert.deepEqual(globalThis.__runs, [["space.select", { id: "spL" }], ["tab.select", { id: "tbL" }]]);
   const w = drawAs({ asks: true }, askLine); w.files.asks = null; has(paint(w), "Reading…");
 });
+test("popup: 'already answered' from work is never shown as sent; the ask stays and the flash says so", async () => {
+  globalThis.__exec = async () => ({ code: 0, stdout: "already answered\n", stderr: "" });
+  const dec = JSON.stringify({ ts: iso(30), event: "ask", id: "a-10", card: "o/r#10", epic: "o/r#2", from: "lead", title: "Pick a name", question: "1. Name?", options: [{ q: 1, key: "a", label: "Alpha (Recommended)", then: "x" }] });
+  const v = drawAs({ asks: true }, dec), [item] = inboxItems(v.asks);
+  v.answer(item, item.buttons[0], tcx); await tick();
+  const d = paint(v); has(d, "Pick a name"); has(d, "already answered: open the lead's tab"); lacks(d, /^sent:/);
+  globalThis.__exec = undefined;
+});
+test("popup: a reopened ask shows the agent's reply and an Open the lead's tab button", () => {
+  const rows = [JSON.parse(askLine), { ts: iso(10), event: "answered", id: "a-9", key: "a", text: "1a", by: "owner", via: "screen" }, { ts: iso(5), event: "message", thread: "a-9", mid: "m1", from: "agent", text: "PR moved, still land it?" }].map((r) => JSON.stringify(r)).join("\n");
+  const d = drawAs({ asks: true }, rows).drawn;
+  has(d, "PR moved, still land it?"); has(d, "Open the lead's tab"); lacks(d, "a) Merges now (Recommended)");
+});

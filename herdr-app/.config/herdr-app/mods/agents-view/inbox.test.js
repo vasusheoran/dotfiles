@@ -101,3 +101,23 @@ test("a terminal named lead-* with no role label counts as a lead, as in the lea
   assert.deepEqual(leadFor(ask, [named]), { address: "t7", tab: "tb7", space: null });
   assert.equal(inboxItems([ask], [named])[0].notFromLead, false);
 });
+
+test("a reopened ask (the agent wrote on its thread after the answer) shows the reply and offers no option buttons", () => {
+  const rows = [decide, { ts: iso(10), event: "answered", id: "a-2", key: "a", text: "1a: Alpha", by: "owner", via: "screen" },
+    { ts: iso(5), event: "message", thread: "a-2", mid: "m1", from: "agent", text: "Alpha is taken; still want it?" }];
+  const [item] = inboxItems(asksOf(jsonl(...rows)));
+  assert.equal(item.id, "a-2"); assert.equal(item.reply, "Alpha is taken; still want it?");
+  assert.deepEqual(item.buttons, []);
+});
+
+test("an ask raised from a shell that is no terminal (asked_from empty) is marked not from the lead", () => {
+  const [ask] = asksOf(jsonl({ ...merge, asked_from: "" }));
+  assert.equal(inboxItems([ask], [lead])[0].notFromLead, true);
+  const [own] = asksOf(jsonl({ ...merge, asked_from: "t18w" }));
+  assert.equal(inboxItems([own], [lead])[0].notFromLead, false);
+});
+
+test("rows with no id and no url are separate asks, not one", () => {
+  const bare = (card, ago) => ({ ts: iso(ago), event: "ask", card, from: "lead", title: `Bare ${card}`, question: "1. Q?", options: [] });
+  assert.equal(badgeText(asksOf(jsonl(bare("o/r#20", 9), bare("o/r#21", 8)))), "2 asks for you");
+});
