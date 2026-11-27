@@ -12,6 +12,7 @@ import { readRunFile, badgeText, inboxItems, clickStep, leadFor, DOUBLE_PRESS_MS
 const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
 const REFRESH_MS = 5000, SCREEN_MS = 30_000;
+const POPUP_W = 560, POPUP_LIST_H = 480; // the asks popup: its width and its list's height
 const LIST_ITEMS = 12; // rows shown at once (group heads count); the selected one sits a third of the way down
 const mono = (size, color, text) => div().font_family(MONO).text_size(size).text_color(color).child(text);
 const sans = (size, color, text) => div().font_family(SANS).text_size(size).text_color(color).child(text);
@@ -130,7 +131,7 @@ export default class LeadsList extends View {
     return h_flex().size_full().px(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
       .when(!!text, (e) => e.child(h_flex().id("asks-badge").h(26).px(10).gap(6).items_center().rounded(6).bg(t.accent).text_color(t.background).cursor_pointer()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click(() => openOverlay({ mod: "agents-view", kind: "popup", width: 560, height: 0.7, props: { asks: true } }))
+        .on_click(() => openOverlay({ mod: "agents-view", kind: "popup", props: { asks: true } }))
         .child(sans(12, t.background, text).font_semibold())));
   }
 
@@ -172,10 +173,11 @@ export default class LeadsList extends View {
       .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i)))
         : div().id(`${item.id}:open`).px(10).py(5).rounded(6).border_1().border_color(t.border).bg(t.raised).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child("Open the lead's tab"));
-    return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
+    return v_flex().id("asks").w(POPUP_W).bg(t.background).text_color(t.foreground).track_focus(this.h)
       .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
       .child(sans(13, t.foreground, this.files.asks == null ? (this.readDone ? "Cannot read the asks file" : "Reading…") : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
-      .child(v_flex().id("asks-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.map(row)))
+      // a popup is as big as its content: a flex_1 list with min_h(0) collapses to nothing, so the list has its own height (#14 hit the same)
+      .child(v_flex().id("asks-body").w_full().min_h(items.length ? POPUP_LIST_H : 0).max_h(POPUP_LIST_H).overflow_y_scrollbar().children(items.map(row)))
       .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)));
   }
 

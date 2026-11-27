@@ -5,7 +5,7 @@ import { register } from "node:module";
 
 const stub = (src) => `data:text/javascript,${encodeURIComponent(src)}`;
 // every string handed to a call of the stubbed UI (text, labels, children) lands in globalThis.__drawn, so a test can assert what was drawn
-const chain = `const chain = () => new Proxy(function () {}, { get: (_t, k) => k === "when" ? (c, f) => (c ? f(chain()) : chain()) : k === Symbol.toPrimitive ? () => "" : (...a) => { if (k === "w" && typeof a[0] === "number") (globalThis.__drawn ??= []).push("@w:" + a[0]); for (const x of a) if (typeof x === "string") (globalThis.__drawn ??= []).push(x); return chain(); }, apply: () => chain() });`;
+const chain = `const chain = () => new Proxy(function () {}, { get: (_t, k) => k === "when" ? (c, f) => (c ? f(chain()) : chain()) : k === Symbol.toPrimitive ? () => "" : (...a) => { if ((k === "w" || k === "min_h") && typeof a[0] === "number") (globalThis.__drawn ??= []).push("@" + k + ":" + a[0]); for (const x of a) if (typeof x === "string") (globalThis.__drawn ??= []).push(x); return chain(); }, apply: () => chain() });`;
 const mods = {
   "gpui-kit": `${chain} export class View {} export const div = () => chain();`,
   "gpui-base": `${chain} export const v_flex = () => chain(); export const h_flex = () => chain();`,
@@ -163,4 +163,9 @@ test("badge: read() counts the asks of a run file past 1 MiB (read through cat, 
   await Promise.race([v.read(tcx), new Promise((r) => setTimeout(r, 1000))]);
   has(paint(v), "1 ask for you");
   globalThis.__cat = undefined;
+});
+test("popup: the asks list has its own height, so its rows show in a popup that sizes to its content (it collapsed to the header line)", () => {
+  const d = drawAs({ asks: true }, askLine).drawn;
+  has(d, "Land PR 97");
+  assert.ok(d.some((s) => /^@min_h:([1-9]\d{2,})$/.test(s)), `no fixed min_h on the asks list; got ${d.filter((s) => s.startsWith("@")).join(" ")}`);
 });
