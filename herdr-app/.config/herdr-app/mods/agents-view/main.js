@@ -7,7 +7,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home, props, openOverlay, closeOverlay } from "herdr";
-import { badgeText, inboxItems, clickStep, leadFor, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
+import { badgeText, inboxItems, clickStep, leadFor, DOUBLE_PRESS_MS, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
 const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
@@ -42,7 +42,7 @@ export default class LeadsList extends View {
     if (this.mode !== "leads") {
       // the count and the popup need the asks and the closed cards only, parsed here every 5s, never in render
       const [asks, closed] = await Promise.all([f.asks, f.closed].map(read1));
-      this.files = { asks: asks ?? "", events: null, closed, stuck: null };
+      this.files = { asks, events: null, closed, stuck: null }; this.readDone = true; // a failed read stays null: the popup says so
       this.asks = viewModel({ terminals: terminals(), asksText: asks, closedJson: closed, nowMs: Date.now() }).asks;
       if (this.flash && Date.now() - this.flashAt > 2 * REFRESH_MS) this.flash = "";
       return cx.notify();
@@ -158,7 +158,7 @@ export default class LeadsList extends View {
 
   popup(t) {
     const items = inboxItems(this.asks.filter((a) => !this.sent.has(a.id)), terminals());
-    const armed = (item, b) => this.armed?.id === item.id && this.armed.key === b.key && this.armed.q === b.q;
+    const armed = (item, b) => this.armed?.id === item.id && this.armed.key === b.key && this.armed.q === b.q && Date.now() - this.armed.at <= DOUBLE_PRESS_MS;
     const button = (item, b, i) => div().id(`${item.id}:b${i}`).px(10).py(5).rounded(6).border_1().border_color(b.recommended ? t.accent : t.border).bg(b.recommended ? t.accent : t.raised)
       .text_color(b.recommended ? t.background : t.foreground).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { cx.stop_propagation(); this.answer(item, b, cx); }).child(armed(item, b) ? `Confirm: ${b.label}` : b.label);
@@ -168,7 +168,7 @@ export default class LeadsList extends View {
       .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i))) : sans(12, t.muted, "Answer this one in the lead's tab: click the title."));
     return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
       .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
-      .child(sans(13, t.foreground, this.files.asks == null ? "Reading…" : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
+      .child(sans(13, t.foreground, this.files.asks == null ? (this.readDone ? "Cannot read the asks file" : "Reading…") : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
       .child(v_flex().id("asks-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.map(row)))
       .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)));
   }

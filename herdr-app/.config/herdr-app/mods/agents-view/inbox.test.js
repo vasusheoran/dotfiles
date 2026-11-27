@@ -85,3 +85,19 @@ test("an ask not raised by the lead is marked: a worker's ask, or one from a liv
   const marks = Object.fromEntries(inboxItems(asks, [lead, worker, side]).map((i) => [i.id, i.notFromLead]));
   assert.deepEqual(marks, { "a-1": false, "a-2": true, "a-7": true, "a-8": false }, "a lead's ask whose tab is gone keeps its lead mark");
 });
+
+test("only buttons that answer are offered: no Accept on a multi-part you-ask, no button for an option keyed v (the picture key)", () => {
+  const youTwo = { ts: iso(5), event: "ask", id: "a-11", card: "o/r#11", kind: "you", from: "lead", title: "Two steps", question: "1. A\n2. B",
+    options: [{ q: 1, key: "a", label: "Now (Recommended)" }, { q: 2, key: "a", label: "Later (Recommended)" }] };
+  const vee = { ...decide, id: "a-12", card: "o/r#12", options: [{ q: 1, key: "a", label: "Alpha (Recommended)" }, { q: 1, key: "v", label: "Vee" }] };
+  const [v, y] = inboxItems(asksOf(jsonl(youTwo, vee))); // oldest first
+  assert.deepEqual(y.buttons, []);
+  assert.deepEqual(v.buttons.map((b) => b.label), ["a) Alpha (Recommended)"]);
+});
+
+test("a terminal named lead-* with no role label counts as a lead, as in the leads list", () => {
+  const named = { address: "t7", name: "lead-r-1", state: "live", labels: ["epic=o/r#1", "herdr.tab=tb7"] };
+  const [ask] = asksOf(jsonl({ ...decide, terminal: "lead-r-1" }));
+  assert.deepEqual(leadFor(ask, [named]), { address: "t7", tab: "tb7", space: null });
+  assert.equal(inboxItems([ask], [named])[0].notFromLead, false);
+});
