@@ -10,7 +10,7 @@ const mods = {
   "gpui-kit": `${chain} export class View {} export const div = () => chain();`,
   "gpui-base": `${chain} export const v_flex = () => chain(); export const h_flex = () => chain();`,
   herdr: `const chain = () => new Proxy(function () {}, { get: () => chain(), apply: () => chain() });
-    export const shared = (k) => (globalThis.__shared ??= {})[k], setShared = (k, v) => { (globalThis.__shared ??= {})[k] = v; }, exec = async (c, a) => (globalThis.__exec ? globalThis.__exec(c, a) : { code: 0, stdout: "", stderr: "" }), run = (...a) => { (globalThis.__runs ??= []).push(a); }, props = () => globalThis.__props ?? {}, panes = () => globalThis.__panes ?? [], focused = () => globalThis.__focused ?? null, spaces = () => globalThis.__spaces ?? [], agents = () => [], readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {}, openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return "ov1"; };
+    export const shared = (k) => (globalThis.__shared ??= {})[k], setShared = (k, v) => { (globalThis.__shared ??= {})[k] = v; }, exec = async (c, a) => (c === "cat" ? (globalThis.__cat ? globalThis.__cat(a) : new Promise(() => {})) : globalThis.__exec ? globalThis.__exec(c, a) : { code: 0, stdout: "", stderr: "" }), run = (...a) => { (globalThis.__runs ??= []).push(a); }, props = () => globalThis.__props ?? {}, panes = () => globalThis.__panes ?? [], focused = () => globalThis.__focused ?? null, spaces = () => globalThis.__spaces ?? [], agents = () => [], readTextFile = () => new Promise(() => {}), home = () => "/h", closeOverlay = () => {}, openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return "ov1"; };
     export const terminals = () => globalThis.__terms ?? [], theme = () => new Proxy({}, { get: () => "#000" });`,
 };
 const hooks = `export const resolve = (s, c, next) => ({ ${Object.keys(mods).map((k) => `"${k}": 1`).join(", ")} })[s] ? { url: "stub:" + s, shortCircuit: true } : next(s, c);
@@ -153,4 +153,14 @@ test("popup: a reopened ask shows the agent's reply and an Open the lead's tab b
   const rows = [JSON.parse(askLine), { ts: iso(10), event: "answered", id: "a-9", key: "a", text: "1a", by: "owner", via: "screen" }, { ts: iso(5), event: "message", thread: "a-9", mid: "m1", from: "agent", text: "PR moved, still land it?" }].map((r) => JSON.stringify(r)).join("\n");
   const d = drawAs({ asks: true }, rows).drawn;
   has(d, "Reply: PR moved, still land it?"); has(d, "Open the lead's tab"); lacks(d, "a) Merges now (Recommended)");
+});
+test("badge: read() counts the asks of a run file past 1 MiB (read through cat, not readTextFile)", async () => {
+  const filler = JSON.stringify({ ts: iso(60), event: "lead_status", epic: "o/r#2", text: "x".repeat(200) });
+  const big = [...Array(6000).fill(filler), askLine].join("\n");
+  assert.ok(big.length > 1024 * 1024);
+  globalThis.__cat = async (a) => (a[0].endsWith("/asks.jsonl") ? { code: 0, stdout: big, stderr: "" } : { code: 1, stdout: "", stderr: "absent" });
+  const v = drawAs({ badge: true }, ""); v.asks = [];
+  await Promise.race([v.read(tcx), new Promise((r) => setTimeout(r, 1000))]);
+  has(paint(v), "1 ask for you");
+  globalThis.__cat = undefined;
 });

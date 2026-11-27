@@ -368,6 +368,12 @@ export function headerLine(vm) {
 export const rightPaneId = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal)?.pane ?? null;
 export const rightPane = (panes, tab) => panes.find((p) => p.tab === tab && p.terminal) ?? null;
 
+// A run file, whole, through cat: readTextFile stops at 1 MiB and asks.jsonl is past 2 MB (kuchbhi#1360). null when it can't be read.
+// ponytail: exec caps output at 8 MiB; past that the asks file needs rotating, not a bigger read.
+export async function readRunFile(path, io) {
+  try { const r = await io.exec("cat", [path]); return r?.code === 0 ? String(r.stdout ?? "") : null; } catch { return null; }
+}
+
 // Where the view reads: the live run files, or the screenshot fixture folder when it exists.
 export function runFiles(home, fixture) {
   if (fixture) { const d = `${home}/.config/herdr-app/agents-view-fixture`; return { asks: `${d}/asks.jsonl`, events: `${d}/events.jsonl`, usage: `${d}/usage.json`, upNext: `${d}/up-next.json`, settings: `${d}/settings.json`, closed: `${d}/closed-cards.json`, stuck: `${d}/stuck.json` }; }

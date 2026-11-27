@@ -121,3 +121,13 @@ test("rows with no id and no url are separate asks, not one", () => {
   const bare = (card, ago) => ({ ts: iso(ago), event: "ask", card, from: "lead", title: `Bare ${card}`, question: "1. Q?", options: [] });
   assert.equal(badgeText(asksOf(jsonl(bare("o/r#20", 9), bare("o/r#21", 8)))), "2 asks for you");
 });
+
+test("readRunFile reads the whole run file through cat (readTextFile stops at 1 MiB; asks.jsonl is past 2 MB); a failed read is null", async () => {
+  const { readRunFile } = await import("./lib.js");
+  const big = `${JSON.stringify(merge)}\n`.repeat(8000), calls = [];
+  assert.ok(big.length > 1024 * 1024);
+  assert.equal(await readRunFile("/h/handoffs/run/asks.jsonl", { exec: async (c, a) => { calls.push([c, a]); return { code: 0, stdout: big, stderr: "" }; } }), big);
+  assert.deepEqual(calls, [["cat", ["/h/handoffs/run/asks.jsonl"]]]);
+  assert.equal(await readRunFile("/nope", { exec: async () => ({ code: 1, stdout: "", stderr: "No such file" }) }), null);
+  assert.equal(await readRunFile("/nope", { exec: async () => { throw new Error("cannot start"); } }), null);
+});
