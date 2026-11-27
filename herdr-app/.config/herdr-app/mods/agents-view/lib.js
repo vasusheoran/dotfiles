@@ -234,13 +234,16 @@ export const otherArgv = (ask, text) => answerArgv(ask, text, { key: "other" });
 export const badgeText = (asks) => (asks.length ? `${asks.length} ask${asks.length === 1 ? "" : "s"} for you` : "");
 // One entry per open ask with its buttons; a button is the key the panel's keyboard would press (`enter` accepts every part's
 // recommendation). Picking a batch's PRs or writing an answer of one's own stays in the lead's tab.
-export function inboxItems(asks) {
+// notFromLead marks an ask the lead did not raise: a worker's, or one asked from a live terminal that is not a lead (a lead's ask whose tab is gone keeps its mark).
+export function inboxItems(asks, terminals = []) {
+  const live = (terminals ?? []).map(normalize).filter((t) => t.live);
   return asks.map((ask) => {
+    const asker = live.find((t) => ask.terminal && (t.address === ask.terminal || t.name === ask.terminal)), notFromLead = ask.from !== "lead" || (!!asker && asker.labels.role !== "lead");
     const qs = questionsOf(ask), rec = recommended(ask), buttons = [];
     if (ask.kind === "you" && !ask.options.length) buttons.push({ label: "Done", key: "x", q: 1, recommended: true });
     else if (qs.length > 1) { if (qs.every((q) => rec[q])) buttons.push({ label: "Accept the recommended answers", key: "enter", q: 0, recommended: true }); }
     else for (const o of ask.options) if (!(ask.targets?.length > 1 && o.key === "b")) buttons.push({ label: `${o.key}) ${o.label}`, key: o.key, q: o.q, recommended: rec[o.q] === o.key });
-    return { id: ask.id, title: ask.title, epic: ask.epic ?? ask.card, kind: ask.kind, buttons };
+    return { id: ask.id, title: ask.title, epic: ask.epic ?? ask.card, kind: ask.kind, buttons, notFromLead };
   });
 }
 // A click on a button: the keyboard's rules (askKeyAction, acceptRecommended), so a merge, roll or money ask needs a second click on the
@@ -253,7 +256,7 @@ export function clickStep(ask, button, armed, nowMs) {
 // The lead's tab an ask opens: the asker when it is a lead, else the lead that holds the ask's epic. A card's or worker's own tab never.
 export function leadFor(ask, terminals) {
   const leads = (terminals ?? []).map(normalize).filter((t) => t.live && t.labels.role === "lead");
-  const t = leads.find((x) => x.address === ask.terminal) ?? leads.find((x) => x.epics.includes(ask.epic ?? ask.card));
+  const t = leads.find((x) => ask.terminal && (x.address === ask.terminal || x.name === ask.terminal)) ?? leads.find((x) => x.epics.includes(ask.epic ?? ask.card));
   return t ? { address: t.address, tab: t.labels["herdr.tab"] ?? null, space: t.labels["herdr.space"] ?? null } : null;
 }
 

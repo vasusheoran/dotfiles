@@ -77,3 +77,11 @@ test("a worker under a lead that holds its epic in `epics` is not flagged 'no le
   const rows = stuckRows([lead, worker].map(normalize), [], [], NOW);
   assert.ok(!rows.some((r) => /no lead/.test(r.text ?? "")), JSON.stringify(rows));
 });
+
+test("an ask not raised by the lead is marked: a worker's ask, or one from a live terminal that is not a lead", () => {
+  const worker = { address: "w1", name: "card-r-5", state: "live", labels: ["role=worker", "epic=o/r#1"] };
+  const side = { address: "t5", name: "side", state: "live", labels: [] };
+  const asks = asksOf(jsonl(merge, { ...decide, from: "worker", terminal: "card-r-5" }, { ...decide, id: "a-7", card: "o/r#9", terminal: "t5" }, { ...decide, id: "a-8", card: "o/r#10", terminal: "gone-lead" }));
+  const marks = Object.fromEntries(inboxItems(asks, [lead, worker, side]).map((i) => [i.id, i.notFromLead]));
+  assert.deepEqual(marks, { "a-1": false, "a-2": true, "a-7": true, "a-8": false }, "a lead's ask whose tab is gone keeps its lead mark");
+});

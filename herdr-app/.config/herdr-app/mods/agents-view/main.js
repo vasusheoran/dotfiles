@@ -157,14 +157,14 @@ export default class LeadsList extends View {
   }
 
   popup(t) {
-    const items = inboxItems(this.asks.filter((a) => !this.sent.has(a.id)));
+    const items = inboxItems(this.asks.filter((a) => !this.sent.has(a.id)), terminals());
     const armed = (item, b) => this.armed?.id === item.id && this.armed.key === b.key && this.armed.q === b.q;
     const button = (item, b, i) => div().id(`${item.id}:b${i}`).px(10).py(5).rounded(6).border_1().border_color(b.recommended ? t.accent : t.border).bg(b.recommended ? t.accent : t.raised)
       .text_color(b.recommended ? t.background : t.foreground).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { cx.stop_propagation(); this.answer(item, b, cx); }).child(armed(item, b) ? `Confirm: ${b.label}` : b.label);
     const row = (item) => v_flex().id(item.id).w_full().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border)
       .child(div().id(`${item.id}:title`).w_full().cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child(sans(13, t.foreground, item.title).font_semibold().underline()))
-      .child(mono(11, t.dim, [item.epic, item.kind].filter(Boolean).join(" · ")))
+      .child(h_flex().gap(8).child(mono(11, t.dim, [item.epic, item.kind].filter(Boolean).join(" · "))).when(item.notFromLead, (e) => e.child(mono(11, t.blocked, "not from the lead"))))
       .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i))) : sans(12, t.muted, "Answer this one in the lead's tab: click the title."));
     return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
       .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
