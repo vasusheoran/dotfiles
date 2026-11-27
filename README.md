@@ -57,6 +57,7 @@ Each top-level directory is a stow package that maps to `~` or `~/.config/`:
 | `hyprpaper/`, `hyprlock/`, `hyprmocha/` | `~/.config/` | Arch |
 | `rofi/`, `waybar/`, `swaync/`, `wlogout/` | `~/.config/` | Arch |
 | `backgrounds/` | `~/.config/backgrounds/` | Arch |
+| [`herdr-app/`](herdr-app/.config/herdr-app/mods/agents-view/README.md) | `~/.config/herdr-app/` | Not in `configure.sh` |
 
 ---
 
