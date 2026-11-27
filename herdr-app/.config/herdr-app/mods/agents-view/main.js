@@ -2,11 +2,12 @@
 // main area to that lead's own tab (agent.focus), where the owner reads and answers; this list never answers anything. The logic is in lib.js (leadRows).
 // Reads asks.jsonl, closed-cards.json, stuck.json and each lead's last screen lines (hc read, at most every 30s per lead); no network.
 // kuchbhi#1360: the same mod with props { badge: true } is the count of open asks in the tab bar (layouts/main-agents.json), always on screen;
-// a click opens it again as a popup with props { asks: true }, where one click on an option answers through `work ask answer`.
+// a click opens it again as a popup with props { asks: true }, where a click on an option answers through `work ask answer` (a merge, roll or money
+// ask takes a second click, as the keyboard takes a second press) and a click on the title opens the lead's tab.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, shared, setShared, terminals, panes, spaces, theme, readTextFile, home, props, openOverlay, closeOverlay } from "herdr";
-import { badgeText, inboxItems, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
+import { badgeText, inboxItems, clickStep, leadFor, viewModel, leadRows, leadStatuses, parseJsonl, waitingLines, lastScreenLine, boardStep, BOARD_EPIC, runFiles, ageText, listWindow, linkSegments, linkTarget, perform } from "./lib.js";
 
 const LIST_FOCUS = "agents-view.focus", LIST_HAS_FOCUS = "agents-view.focused"; // the same names as tabs-agents/lib.js: a mod cannot import another
 const MONO = "JetBrains Mono", SANS = "Geist";
@@ -20,7 +21,7 @@ export default class LeadsList extends View {
     this.mode = props()?.badge ? "badge" : props()?.asks ? "asks" : "leads";
     this.h = cx.focus_handle();
     if (this.mode !== "badge") this.h.focus();
-    this.files = { asks: null, events: null, closed: null, stuck: null }; this.asks = []; this.sent = new Set();
+    this.files = { asks: null, events: null, closed: null, stuck: null }; this.asks = []; this.sent = new Set(); this.armed = null; this.flashAt = 0;
     this.sel = null; this.selIdx = 0; this.unfolded = false; this.flash = ""; this.memo = null;
     this.waits = {}; this.lastLines = {}; this.screenAt = {};
     if (this.mode === "leads") cx.timer.every(250, () => this.watchFocus()); // only the panel's list answers to cmd-shift-a
@@ -38,12 +39,18 @@ export default class LeadsList extends View {
 
   async read(cx) {
     const read1 = (p) => readTextFile(p).catch(() => null), f = runFiles(home(), false);
+    if (this.mode !== "leads") {
+      // the count and the popup need the asks and the closed cards only, parsed here every 5s, never in render
+      const [asks, closed] = await Promise.all([f.asks, f.closed].map(read1));
+      this.files = { asks: asks ?? "", events: null, closed, stuck: null };
+      this.asks = viewModel({ terminals: terminals(), asksText: asks, closedJson: closed, nowMs: Date.now() }).asks;
+      if (this.flash && Date.now() - this.flashAt > 2 * REFRESH_MS) this.flash = "";
+      return cx.notify();
+    }
     const [asks, events, closed, stuck] = await Promise.all([f.asks, f.events, f.closed, f.stuck].map(read1));
     this.files = { asks, events, closed, stuck };
-    // the count and the popup parse the run file here, every 5s, never in render
-    if (this.mode !== "leads") this.asks = viewModel({ terminals: terminals(), asksText: asks, closedJson: closed, nowMs: Date.now() }).asks;
     cx.notify();
-    if (this.mode === "leads") this.readScreens(cx);
+    this.readScreens(cx);
   }
 
   // each lead's last 15 screen lines, at most every 30s per lead: its last line, and whether it ends with a question for the owner. The regexes run here, never in render:
@@ -127,26 +134,41 @@ export default class LeadsList extends View {
         .child(sans(12, t.background, text).font_semibold())));
   }
 
-  // one click on an option answers; the ask leaves the list at once and comes back if `work` refuses the answer
+  // a click on an option answers (or arms a merge, roll or money ask); the ask leaves the list at once and comes back if `work` refuses the answer
   answer(item, b, cx) {
+    const ask = this.asks.find((a) => a.id === item.id), step = ask && clickStep(ask, b, this.armed, Date.now());
+    this.flashAt = Date.now();
+    if (step?.type === "arm") { this.armed = step.armed; this.flash = `click again to confirm: ${b.label}`; return cx.notify(); }
+    this.armed = null;
+    if (step?.type !== "post") return;
     this.sent.add(item.id); this.flash = `sent: ${item.title}`;
-    exec("work", b.argv).then((r) => { if (r?.code !== 0) { this.sent.delete(item.id); this.flash = `not sent: ${String(r?.stderr ?? "").trim().split("\n").pop() || "work ask answer failed"}`; } cx.notify(); },
+    exec("work", step.argv).then((r) => { if (r?.code !== 0) { this.sent.delete(item.id); this.flash = `not sent: ${String(r?.stderr ?? "").trim().split("\n").pop() || "work ask answer failed"}`; } cx.notify(); },
       () => { this.sent.delete(item.id); this.flash = "not sent: work ask answer failed"; cx.notify(); });
     cx.notify();
   }
 
+  // the title opens the lead's tab for the ask (never a card's): the same steps as selecting a lead in the list
+  openLead(item) {
+    const ask = this.asks.find((a) => a.id === item.id), l = ask && leadFor(ask, terminals());
+    if (!l) { this.flash = "no lead holds this ask"; this.flashAt = Date.now(); return; }
+    if (!l.tab) run("agent.focus", { terminal: l.address });
+    else { if (l.space && l.space !== spaces().find((s) => s.active)?.id) run("space.select", { id: l.space }); run("tab.select", { id: l.tab }); }
+    closeOverlay(props()?.overlay);
+  }
+
   popup(t) {
     const items = inboxItems(this.asks.filter((a) => !this.sent.has(a.id)));
-    const button = (item, b, i) => div().id(`${item.id}:b${i}`).px(10).py(5).rounded(6).border_1().border_color(i === 0 ? t.accent : t.border).bg(i === 0 ? t.accent : t.raised)
-      .text_color(i === 0 ? t.background : t.foreground).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_click((_e, cx) => { cx.stop_propagation(); this.answer(item, b, cx); }).child(b.label);
+    const armed = (item, b) => this.armed?.id === item.id && this.armed.key === b.key && this.armed.q === b.q;
+    const button = (item, b, i) => div().id(`${item.id}:b${i}`).px(10).py(5).rounded(6).border_1().border_color(b.recommended ? t.accent : t.border).bg(b.recommended ? t.accent : t.raised)
+      .text_color(b.recommended ? t.background : t.foreground).text_size(12).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.answer(item, b, cx); }).child(armed(item, b) ? `Confirm: ${b.label}` : b.label);
     const row = (item) => v_flex().id(item.id).w_full().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border)
-      .child(sans(13, t.foreground, item.title).font_semibold().w_full())
+      .child(div().id(`${item.id}:title`).w_full().cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.openLead(item); cx.notify(); }).child(sans(13, t.foreground, item.title).font_semibold().underline()))
       .child(mono(11, t.dim, [item.epic, item.kind].filter(Boolean).join(" · ")))
-      .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i))) : sans(12, t.muted, "Answer this one in the asker's tab."));
+      .child(item.buttons.length ? h_flex().w_full().flex_wrap().gap(6).children(item.buttons.map((b, i) => button(item, b, i))) : sans(12, t.muted, "Answer this one in the lead's tab: click the title."));
     return v_flex().id("asks").size_full().min_h(0).bg(t.background).text_color(t.foreground).track_focus(this.h)
       .on_key_down((e) => { if (e.keystroke === "escape") closeOverlay(props()?.overlay); })
-      .child(sans(13, t.foreground, items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
+      .child(sans(13, t.foreground, this.files.asks == null ? "Reading…" : items.length ? badgeText(items.map((x) => x.id)) : "Nothing waiting on you").font_semibold().w_full().flex_none().px(14).py(10).border_b(1).border_color(t.border))
       .child(v_flex().id("asks-body").w_full().flex_1().min_h(0).overflow_y_scrollbar().children(items.map(row)))
       .when(!!this.flash, (e) => e.child(sans(12, t.working, this.flash).w_full().flex_none().px(14).py(4)));
   }

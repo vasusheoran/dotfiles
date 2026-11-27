@@ -232,18 +232,29 @@ export const otherArgv = (ask, text) => answerArgv(ask, text, { key: "other" });
 
 // ---- the tab-bar count and its popup (kuchbhi#1360): the owner sees open asks without opening the panel and answers with one click ----
 export const badgeText = (asks) => (asks.length ? `${asks.length} ask${asks.length === 1 ? "" : "s"} for you` : "");
-// One entry per open ask with its buttons, each the `work` argv that answers it. The click is the deliberate second press a merge,
-// roll or money ask needs, so no arming. Picking a batch's PRs or writing an answer of one's own stays in the asker's tab.
+// One entry per open ask with its buttons; a button is the key the panel's keyboard would press (`enter` accepts every part's
+// recommendation). Picking a batch's PRs or writing an answer of one's own stays in the lead's tab.
 export function inboxItems(asks) {
   return asks.map((ask) => {
-    const qs = new Set(ask.options.map((o) => o.q)), buttons = [];
-    if (ask.kind === "you" && !ask.options.length) buttons.push({ label: "Done", argv: answerArgv(ask, "Done.") });
-    else if (qs.size > 1) {
-      const r = acceptRecommended(ask, { id: ask.id, key: "enter", q: 0, at: 0 }, 0);
-      if (r?.type === "post") buttons.push({ label: "Accept the recommended answers", argv: answerArgv(ask, r.text, { key: r.key }) });
-    } else for (const o of ask.options) if (!(ask.targets?.length > 1 && o.key === "b")) buttons.push({ label: `${o.key}) ${o.label}`, argv: answerArgv(ask, `${o.q}${o.key}: ${o.label}`, { key: o.key }) });
+    const qs = questionsOf(ask), rec = recommended(ask), buttons = [];
+    if (ask.kind === "you" && !ask.options.length) buttons.push({ label: "Done", key: "x", q: 1, recommended: true });
+    else if (qs.length > 1) { if (qs.every((q) => rec[q])) buttons.push({ label: "Accept the recommended answers", key: "enter", q: 0, recommended: true }); }
+    else for (const o of ask.options) if (!(ask.targets?.length > 1 && o.key === "b")) buttons.push({ label: `${o.key}) ${o.label}`, key: o.key, q: o.q, recommended: rec[o.q] === o.key });
     return { id: ask.id, title: ask.title, epic: ask.epic ?? ask.card, kind: ask.kind, buttons };
   });
+}
+// A click on a button: the keyboard's rules (askKeyAction, acceptRecommended), so a merge, roll or money ask needs a second click on the
+// same button within 10s. Returns { type: "post", argv } | { type: "arm", armed } | null.
+export function clickStep(ask, button, armed, nowMs) {
+  const r = button.key === "enter" ? acceptRecommended(ask, armed, nowMs) : askKeyAction(ask, button.key, armed, nowMs, button.q);
+  if (r?.type === "post") return { type: "post", argv: answerArgv(ask, r.text, r.key ? { key: r.key } : {}) };
+  return r?.type === "arm" ? { type: "arm", armed: r.armed } : null;
+}
+// The lead's tab an ask opens: the asker when it is a lead, else the lead that holds the ask's epic. A card's or worker's own tab never.
+export function leadFor(ask, terminals) {
+  const leads = (terminals ?? []).map(normalize).filter((t) => t.live && t.labels.role === "lead");
+  const t = leads.find((x) => x.address === ask.terminal) ?? leads.find((x) => x.epics.includes(ask.epic ?? ask.card));
+  return t ? { address: t.address, tab: t.labels["herdr.tab"] ?? null, space: t.labels["herdr.space"] ?? null } : null;
 }
 
 // ---- messages (kuchbhi#1116): `message` and `message_delivered` events of asks.jsonl, grouped by thread (an ask id, or `desk`)
@@ -414,6 +425,8 @@ export function normalize(raw) {
     name: raw.name ?? null,
     live: raw.state == null || raw.state === "live",
     labels,
+    // the epics a terminal works for: `epic`, plus the comma list a /lead claim sets as `epics`
+    epics: [...new Set([labels.epic, ...String(labels.epics ?? "").split(",")].map((s) => String(s ?? "").trim()).filter(Boolean))],
     state: typeof raw.status === "string" ? raw.status : raw.status?.state ?? null,
     kind: raw.report?.kind ?? raw.status?.kind ?? null,
     msg: raw.report?.msg ?? raw.status?.msg ?? null,
@@ -453,7 +466,7 @@ export function stuckRows(terminals, events, asks, nowMs) {
     if (ageMs < GONE_MAX_MS) rows.push({ kind: "gone", name, text: "terminal gone, no question", ageMs, address: null });
   }
 
-  const leads = new Set(live.filter((t) => t.labels.role === "lead").map((t) => t.labels.epic));
+  const leads = new Set(live.filter((t) => t.labels.role === "lead").flatMap((t) => t.epics ?? [t.labels.epic]));
   take("no-lead", (t) => t.labels.role === "worker" && t.labels.epic && !leads.has(t.labels.epic) && { text: "no lead running" });
   return rows;
 }
@@ -958,9 +971,9 @@ export function leadRows({ terminals, asks, stuck, statuses, titles, waits, last
   const epicOf = (t) => t.labels.epic ?? known.find((k) => /\d+$/.test(t.name ?? "") && k.endsWith(`#${/(\d+)$/.exec(t.name)[1]}`)) ?? null;
   const out = [];
   for (const t of ts.filter((x) => x.labels.role === "lead" || /^lead-/.test(x.name ?? ""))) {
-    // a /lead claim labels its terminal with every epic it holds (`epics`, comma-separated): the row is the one with an open ask, else the first
-    const held = String(t.labels.epics ?? "").split(",").map((s) => s.trim()).filter(Boolean), hasAsk = (e) => (asks ?? []).some((a) => (a.epic ?? a.card) === e);
-    const epic = t.labels.epic ?? held.find(hasAsk) ?? held[0] ?? epicOf(t), mine = (asks ?? []).filter((a) => epic && [epic, ...held].includes(a.epic ?? a.card));
+    // a /lead claim labels its terminal with every epic it holds (`epics`): the row shows the first with an open ask, else the first
+    const held = t.epics, hasAsk = (e) => (asks ?? []).some((a) => (a.epic ?? a.card) === e);
+    const epic = held.find(hasAsk) ?? held[0] ?? epicOf(t), mine = (asks ?? []).filter((a) => epic && [epic, ...held].includes(a.epic ?? a.card));
     const workers = ts.filter((x) => x.labels.role === "worker" && epic && [epic, ...held].includes(x.labels.epic)), own = new Set([t, ...workers].flatMap((x) => [x.address, x.name]));
     const stucks = (stuck ?? []).filter((s) => s.kind !== "blocked" && (own.has(s.address) || own.has(s.name)));
     const asked = mine.length > 0, quoted = (waits?.[t.address] ?? []).length > 0 && t.state !== "working";

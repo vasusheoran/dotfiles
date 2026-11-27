@@ -108,7 +108,7 @@ const drawAs = (p, asksText) => {
   globalThis.__props = p; globalThis.__terms = []; globalThis.__shared = {};
   const v = new AgentsView();
   globalThis.__focus = 0; v.init({}, { focus_handle: () => ({ focus() { globalThis.__focus++; }, is_focused: () => false }), timer: { every() {} }, spawn() {}, notify() {} });
-  v.asks = viewModel({ terminals: [], asksText, nowMs: Date.now() }).asks;
+  v.asks = viewModel({ terminals: [], asksText, nowMs: Date.now() }).asks; v.files.asks = asksText;
   v.drawn = paint(v); globalThis.__props = undefined; return v;
 };
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -123,10 +123,21 @@ test("popup: each open ask with its options; a click answers through work ask an
   const v = drawAs({ asks: true }, askLine), [item] = inboxItems(v.asks);
   has(v.drawn, "Land PR 97"); has(v.drawn, "a) Merges now (Recommended)"); has(v.drawn, "b) Hold");
   v.answer(item, item.buttons[0], tcx); await tick();
+  assert.deepEqual(calls, [], "a merge ask: the first click only arms");
+  has(paint(v), "Confirm: a) Merges now (Recommended)");
+  v.answer(item, item.buttons[0], tcx); await tick();
   assert.deepEqual(calls, [["work", ["ask", "answer", "a-9", "--text", "1a: Merges now (Recommended)", "--via", "screen", "--key", "a"]]]);
   has(paint(v), "Nothing waiting on you");
   globalThis.__exec = async () => ({ code: 1, stdout: "", stderr: "ask.sh: a-9 is closed" });
-  const w = drawAs({ asks: true }, askLine); w.answer(item, item.buttons[0], tcx); await tick();
+  const w = drawAs({ asks: true }, askLine); w.answer(item, item.buttons[0], tcx); w.answer(item, item.buttons[0], tcx); await tick();
   const d = paint(w); has(d, "Land PR 97"); has(d, "not sent: ask.sh: a-9 is closed");
   globalThis.__exec = undefined;
+});
+test("popup: the title opens the lead's tab for the ask, in its space, and closes the popup; before the first read it says Reading", () => {
+  const v = drawAs({ asks: true }, askLine), [item] = inboxItems(v.asks);
+  globalThis.__terms = [{ address: "t18w", state: "live", labels: ["role=lead", "epics=o/r#2", "herdr.tab=tbL", "herdr.space=spL"] }, { address: "w1", state: "live", labels: ["role=worker", "epic=o/r#2", "herdr.tab=tbW"] }];
+  globalThis.__runs = []; globalThis.__spaces = [{ id: "spA", active: true }];
+  v.openLead(item);
+  assert.deepEqual(globalThis.__runs, [["space.select", { id: "spL" }], ["tab.select", { id: "tbL" }]]);
+  const w = drawAs({ asks: true }, askLine); w.files.asks = null; has(paint(w), "Reading…");
 });

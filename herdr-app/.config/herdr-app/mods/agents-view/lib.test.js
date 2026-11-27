@@ -91,7 +91,7 @@ test("usageText", () => {
 
 test("normalize: the terminals() shape", () => {
   const n = normalize({ address: "t9", name: "x", state: "live", labels: ["role=worker", "epic=acme/app#10"], status: "blocked", report: { kind: "permission", msg: "run rm?", status_ms: 123 }, where: "w" });
-  assert.deepEqual(n, { address: "t9", name: "x", live: true, labels: { role: "worker", epic: "acme/app#10" }, state: "blocked", kind: "permission", msg: "run rm?", statusMs: 123, where: "w" });
+  assert.deepEqual(n, { address: "t9", name: "x", live: true, labels: { role: "worker", epic: "acme/app#10" }, epics: ["acme/app#10"], state: "blocked", kind: "permission", msg: "run rm?", statusMs: 123, where: "w" });
 });
 
 test("normalize: object status, null labels, finished, where from labels", () => {

@@ -1,10 +1,8 @@
 // The Inbox count in the tab bar and its one-click answers (kuchbhi#1360). All data is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as lib from "./lib.js";
+import { viewModel, badgeText, inboxItems, clickStep, leadFor, leadRows, stuckRows, normalize } from "./lib.js";
 
-const { viewModel, badgeText, inboxItems, leadRows, stuckRows } = lib;
-const clickStep = (...a) => lib.clickStep(...a), leadFor = (...a) => lib.leadFor(...a);
 const NOW = Date.parse("2030-01-10T12:00:00Z"), MIN = 60_000, iso = (ago) => new Date(NOW - ago * MIN).toISOString();
 const jsonl = (...rows) => rows.map((r) => JSON.stringify(r)).join("\n");
 const merge = { ts: iso(30), event: "ask", id: "a-1", card: "o/r#5", epic: "o/r#1", kind: "merge", from: "lead", terminal: "t18w", title: "Land PR 97", question: "1. Land PR 97?",
@@ -76,6 +74,6 @@ test("a lead that holds several epics (the `epics` label /lead sets) is waiting 
 
 test("a worker under a lead that holds its epic in `epics` is not flagged 'no lead running'", () => {
   const worker = { address: "w1", name: "card-r-5", state: "live", status: { state: "working" }, labels: ["role=worker", "epic=o/r#9"] };
-  const rows = stuckRows([lead, worker].map(lib.normalize), [], [], NOW);
+  const rows = stuckRows([lead, worker].map(normalize), [], [], NOW);
   assert.ok(!rows.some((r) => /no lead/.test(r.text ?? "")), JSON.stringify(rows));
 });
